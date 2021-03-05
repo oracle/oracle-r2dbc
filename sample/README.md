@@ -1,5 +1,5 @@
 # Oracle R2DBC code examples
-A simple R2DBC program that connects to ADB and executes a query
+A simple R2DBC program that connects to Autonomous Database and executes a query
 
 # Building manually
 
