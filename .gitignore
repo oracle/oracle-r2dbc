@@ -1,0 +1,6 @@
+/target/
+.DS_Store
+/src/test/resources/config.properties
+/sample/.gradle/
+/sample/build/
+/sample/config.properties
