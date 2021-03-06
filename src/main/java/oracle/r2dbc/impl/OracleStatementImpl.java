@@ -24,7 +24,6 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
-import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingRunnable;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -547,6 +546,7 @@ final class OracleStatementImpl implements Statement {
    * signal.
    * </p>
    * @param jdbcStatement A JDBC statement
+   * @param bindValues A set of bind values
    * @return A publisher that emits the {@code Result} of executing the JDBC
    * statement.
    */
@@ -625,7 +625,7 @@ final class OracleStatementImpl implements Statement {
    * {@link PreparedStatement#addBatch()},
    *
    * @param jdbcStatement A JDBC statement
-   * @param batch A batch of bind values
+   * @param bindValues A set of bind values
    * @return A publisher that emits the {@code Results} of executing the
    * JDBC statement for each set of bind values in the {@code batch}
    */
