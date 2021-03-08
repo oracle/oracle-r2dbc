@@ -32,8 +32,6 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
-import static java.sql.Connection.TRANSACTION_READ_UNCOMMITTED;
-import static java.sql.Connection.TRANSACTION_REPEATABLE_READ;
 import static java.sql.Connection.TRANSACTION_SERIALIZABLE;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;

@@ -24,7 +24,6 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
-import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
@@ -34,7 +33,6 @@ import reactor.core.publisher.Mono;
 import java.math.BigDecimal;
 import java.sql.RowId;
 import java.util.Collections;
-import java.util.List;
 
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.DatabaseConfig.connectTimeout;
@@ -42,7 +40,6 @@ import static oracle.r2dbc.DatabaseConfig.newConnection;
 import static oracle.r2dbc.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
-import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitQuery;
@@ -62,7 +59,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#bind(int, Object)}
    */
   @Test
-  void testBindByIndex() {
+  public void testBindByIndex() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -184,7 +181,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#bind(String, Object)}
    */
   @Test
-  void testBindByName() {
+  public void testBindByName() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -326,7 +323,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#bindNull(int, Class)}
    */
   @Test
-  void testBindNullByIndex() {
+  public void testBindNullByIndex() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -464,7 +461,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#bindNull(String, Class)}
    */
   @Test
-  void testBindNullByName() {
+  public void testBindNullByName() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -633,7 +630,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#add()}
    */
   @Test
-  void testAdd() {
+  public void testAdd() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -744,7 +741,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#execute()}
    */
   @Test
-  void testExecute() {
+  public void testExecute() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -849,7 +846,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#returnGeneratedValues(String...)}
    */
   @Test
-  void testReturnGeneratedValues() {
+  public void testReturnGeneratedValues() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -995,7 +992,7 @@ public class OracleStatementImplTest {
    * {@link OracleStatementImpl#fetchSize(int)
    */
   @Test
-  void testFetchSize() {
+  public void testFetchSize() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {

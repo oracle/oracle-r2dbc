@@ -26,10 +26,11 @@ package oracle.r2dbc;
 
 import io.r2dbc.spi.*;
 import io.r2dbc.spi.test.TestKit;
-import oracle.r2dbc.util.OracleTestKitSupport;
+import oracle.jdbc.datasource.OracleDataSource;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcOperations;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.support.AbstractLobCreatingPreparedStatementCallback;
 import org.springframework.jdbc.support.lob.DefaultLobHandler;
 import org.springframework.jdbc.support.lob.LobCreator;
@@ -46,7 +47,17 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.function.Function;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
+import static io.r2dbc.spi.ConnectionFactoryOptions.DRIVER;
+import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
+import static oracle.r2dbc.DatabaseConfig.host;
+import static oracle.r2dbc.DatabaseConfig.password;
+import static oracle.r2dbc.DatabaseConfig.port;
+import static oracle.r2dbc.DatabaseConfig.serviceName;
+import static oracle.r2dbc.DatabaseConfig.user;
 
 /**
  * <p>
@@ -73,13 +84,38 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * @author  harayuanwang, Michael-A-McMahon
  * @since   0.1.0
  */
-public class OracleTestKit
-  extends OracleTestKitSupport implements TestKit<Integer> {
+public class OracleTestKit implements TestKit<Integer> {
 
-  static <T> Mono<T> close(Connection connection) {
-    return Mono.from(connection
-      .close())
-      .then(Mono.empty());
+  private final JdbcOperations jdbcOperations;
+  {
+    try {
+      OracleDataSource dataSource = new oracle.jdbc.pool.OracleDataSource();
+      dataSource.setURL(String.format("jdbc:oracle:thin:@%s:%d/%s",
+        host(), port(), serviceName()));
+      dataSource.setUser(user());
+      dataSource.setPassword(password());
+      this.jdbcOperations = new JdbcTemplate(dataSource);
+    }
+    catch (SQLException sqlException) {
+      throw new RuntimeException(sqlException);
+    }
+  }
+
+  private final ConnectionFactory connectionFactory;
+  {
+    connectionFactory = ConnectionFactories.get(
+      ConnectionFactoryOptions.builder()
+        .option(DRIVER, "oracle")
+        .option(DATABASE, serviceName())
+        .option(HOST, host())
+        .option(PORT, port())
+        .option(PASSWORD, password())
+        .option(USER, user())
+        .build());
+  }
+
+  public JdbcOperations getJdbcOperations() {
+    return jdbcOperations;
   }
 
   @Override
@@ -106,17 +142,6 @@ public class OracleTestKit
   @Override
   public Integer getIdentifier(int index) {
     return index;
-  }
-
-  @Override
-  public JdbcOperations getJdbcOperations() {
-    JdbcOperations jdbcOperations = CONFIG.getJDBCOperations();
-
-    if (jdbcOperations == null) {
-      throw new IllegalStateException("JdbcOperations not yet initialized");
-    }
-
-    return jdbcOperations;
   }
 
   /**
@@ -402,7 +427,6 @@ public class OracleTestKit
       .verifyComplete();
   }
 
-
   @Disabled("Compound statements are not supported by Oracle Database")
   @Test
   @Override
@@ -417,6 +441,11 @@ public class OracleTestKit
   @Test
   @Override
   public void savePointStartsTransaction() {}
+
+  static <T> Mono<T> close(Connection connection) {
+    return Mono.from(connection.close())
+      .then(Mono.empty());
+  }
 
 }
 
