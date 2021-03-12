@@ -24,7 +24,7 @@
  * @provides io.r2dbc.spi.ConnectionFactoryProvider
  * @since 0.1.1
  */
-module oracle.r2dbc {
+module com.oracle.database.r2dbc {
 
   provides io.r2dbc.spi.ConnectionFactoryProvider
     with oracle.r2dbc.impl.OracleConnectionFactoryProviderImpl;
