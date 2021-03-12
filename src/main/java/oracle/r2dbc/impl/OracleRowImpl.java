@@ -25,15 +25,10 @@ import io.r2dbc.spi.Blob;
 import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Row;
-import oracle.jdbc.OracleType;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.sql.JDBCType;
 import java.sql.ResultSet;
-import java.sql.SQLType;
 import java.sql.Types;
-import java.util.Objects;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 

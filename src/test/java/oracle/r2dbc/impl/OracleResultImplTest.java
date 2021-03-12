@@ -30,7 +30,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Signal;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.BiFunction;
 
@@ -42,7 +41,6 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
-import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -50,14 +48,14 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@link OracleResultImpl} implements behavior that is specified in it's
  * class and method level javadocs.
  */
-class OracleResultImplTest {
+public class OracleResultImplTest {
 
   /**
    * Verifies the implementation of
    * {@link OracleResultImpl#getRowsUpdated()}
    */
   @Test
-  void testGetRowsUpdated() {
+  public void testGetRowsUpdated() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
@@ -178,7 +176,7 @@ class OracleResultImplTest {
    * {@link OracleResultImpl#map(BiFunction)}
    */
   @Test
-  void testMap() {
+  public void testMap() {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {

@@ -25,8 +25,6 @@ import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.Option;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcTimeoutException;
-import io.r2dbc.spi.Result;
-import io.r2dbc.spi.Row;
 import oracle.jdbc.OracleBlob;
 import oracle.jdbc.OracleClob;
 import oracle.jdbc.OracleConnection;
@@ -49,17 +47,12 @@ import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.RowId;
 import java.sql.SQLException;
-import java.sql.Statement;
-import java.sql.Types;
 import java.sql.Wrapper;
 import java.time.Duration;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
@@ -426,10 +419,11 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   @Override
   public DataSource createDataSource(ConnectionFactoryOptions options) {
 
-    oracle.jdbc.pool.OracleDataSource oracleDataSource =
+    OracleDataSource oracleDataSource =
       getOrHandleSQLException(oracle.jdbc.pool.OracleDataSource::new);
 
-    oracleDataSource.setURL(composeJdbcUrl(options));
+    runOrHandleSQLException(() ->
+      oracleDataSource.setURL(composeJdbcUrl(options)));
     configureStandardOptions(oracleDataSource, options);
     configureExtendedOptions(oracleDataSource, options);
     configureJdbcDefaults(oracleDataSource);
