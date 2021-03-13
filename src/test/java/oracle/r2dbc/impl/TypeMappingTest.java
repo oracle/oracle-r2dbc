@@ -42,10 +42,9 @@ import java.time.LocalTime;
 import java.time.Month;
 import java.time.OffsetDateTime;
 import java.time.Period;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
-import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -60,8 +59,6 @@ import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * <p>
@@ -460,7 +457,7 @@ public class TypeMappingTest {
           "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
           .execute())
           .flatMap(result ->
-              result.map((row, metadata) -> row.get("javaValue"))
+            result.map((row, metadata) -> row.get("javaValue"))
           )));
 
       awaitOne(true,
