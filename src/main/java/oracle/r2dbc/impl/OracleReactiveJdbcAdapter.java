@@ -419,10 +419,11 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   @Override
   public DataSource createDataSource(ConnectionFactoryOptions options) {
 
-    oracle.jdbc.pool.OracleDataSource oracleDataSource =
+    OracleDataSource oracleDataSource =
       getOrHandleSQLException(oracle.jdbc.pool.OracleDataSource::new);
 
-    oracleDataSource.setURL(composeJdbcUrl(options));
+    runOrHandleSQLException(() ->
+      oracleDataSource.setURL(composeJdbcUrl(options)));
     configureStandardOptions(oracleDataSource, options);
     configureExtendedOptions(oracleDataSource, options);
     configureJdbcDefaults(oracleDataSource);
