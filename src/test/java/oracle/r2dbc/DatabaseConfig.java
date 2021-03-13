@@ -29,14 +29,11 @@ import oracle.r2dbc.util.SharedConnectionFactory;
 import org.reactivestreams.Publisher;
 
 import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.io.InputStream;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Properties;
-
-import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Stores configuration used by integration tests that connect to a database.
@@ -194,12 +191,13 @@ public final class DatabaseConfig {
 
       if (inputStream == null) {
         throw new FileNotFoundException(
-          "property file '" + CONFIG_FILE_NAME
-            + "' not found in the classpath");
+          CONFIG_FILE_NAME + " resource not found. " +
+          "Check if it exists under src/test/resources/");
       }
 
       Properties prop = new Properties();
       prop.load(inputStream);
+
       HOST = prop.getProperty("HOST");
       PORT = Integer.parseInt(prop.getProperty("PORT"));
       SERVICE_NAME = prop.getProperty("DATABASE");
@@ -224,8 +222,17 @@ public final class DatabaseConfig {
         CONNECTION_FACTORY.create(),
         CONNECTION_FACTORY.getMetadata());
     }
-    catch (IOException loadFileException) {
-      throw new RuntimeException(loadFileException);
+    catch (Throwable initializationFailure) {
+      // Most test cases require a database connection; If it can't be
+      // configured, then the test run can not proceed. Print the failure and
+      // terminate the JVM:
+      initializationFailure.printStackTrace();
+      System.exit(-1);
+
+      // This throw is dead code; exit(-1) doesn't return. This throw helps
+      // javac to understand that the final fields are always initialized when
+      // this static initialization block returns successfully.
+      throw new RuntimeException(initializationFailure);
     }
   }
 }
