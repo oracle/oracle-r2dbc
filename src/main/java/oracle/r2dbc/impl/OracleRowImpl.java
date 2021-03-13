@@ -25,15 +25,13 @@ import io.r2dbc.spi.Blob;
 import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Row;
-import oracle.jdbc.OracleType;
+import oracle.jdbc.OracleTypes;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.sql.JDBCType;
 import java.sql.ResultSet;
-import java.sql.SQLType;
+import java.sql.Timestamp;
 import java.sql.Types;
-import java.util.Objects;
+import java.time.LocalDateTime;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 
@@ -42,7 +40,7 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
  * Implementation of the {@link Row} SPI for Oracle Database.
  * </p><p>
  * Instances of this class supply the column values of a
- * {@link ReactiveJdbcAdapter.JdbcRow} which represents one row of data
+ * {@link ReactiveJdbcAdapter.JdbcRow} that represents one row of data
  * from a JDBC {@link ResultSet}.
  * </p>
  *
@@ -62,7 +60,7 @@ final class OracleRowImpl implements Row {
 
   /**
    * <p>
-   * Constructs a new row which supplies column values from the specified
+   * Constructs a new row that supplies column values from the specified
    * {@code jdbcRow}, and uses the specified {@code rowMetadata} to determine
    * the default type mapping of column values.
    * </p>
@@ -112,7 +110,7 @@ final class OracleRowImpl implements Row {
   /**
    * {@inheritDoc}
    * <p>
-   * Implements the R2DBC SPI method by using the JDBC ResultSet which backs
+   * Implements the R2DBC SPI method by using the JDBC ResultSet that backs
    * this row to convert the specified column value into the specified {@code
    * type}.
    * </p><p>
@@ -145,7 +143,7 @@ final class OracleRowImpl implements Row {
   /**
    * {@inheritDoc}
    * <p>
-   * Implements the R2DBC SPI method by using the JDBC ResultSet which backs
+   * Implements the R2DBC SPI method by using the JDBC ResultSet that backs
    * this row to convert the specified column value into the Oracle R2DBC
    * Driver's default Java type mapping for the column's SQL type.
    * </p><p>
@@ -181,7 +179,7 @@ final class OracleRowImpl implements Row {
   /**
    * {@inheritDoc}
    * <p>
-   * Implements the R2DBC SPI method by using the JDBC ResultSet which backs
+   * Implements the R2DBC SPI method by using the JDBC ResultSet that backs
    * this row to convert the specified column value into the specified {@code
    * type}.
    * </p><p>
@@ -234,7 +232,7 @@ final class OracleRowImpl implements Row {
    * Converts the value of a column at a specified {@code index} to the
    * specified {@code type}. This method implements conversions to target
    * types that are not supported by JDBC drivers. The Oracle R2DBC Driver
-   * will implement some conversions which adapt JDBC supported types into
+   * will implement some conversions that adapt JDBC supported types into
    * R2DBC supported types.
    *
    * @param index 0-based index of a column
@@ -252,6 +250,8 @@ final class OracleRowImpl implements Row {
       return type.cast(getBlob(index));
     else if (type.equals(io.r2dbc.spi.Clob.class))
       return type.cast(getClob(index));
+    else if (type.equals(LocalDateTime.class))
+      return type.cast(getLocalDateTime(index));
     else
       return jdbcRow.getObject(index, type);
   }
@@ -263,7 +263,7 @@ final class OracleRowImpl implements Row {
    * </p><p>
    * A JDBC driver is not required to support {@code ByteBuffer} conversions
    * for any SQL type, so this method is necessary to implement the
-   * conversion to {@code ByteBuffer} from a type which is supported by JDBC.
+   * conversion to {@code ByteBuffer} from a type that is supported by JDBC.
    * </p><p>
    * This method should NOT be called when the database column type is BLOB.
    * The JDBC driver may require blocking network I/O in order to materialize a
@@ -285,7 +285,7 @@ final class OracleRowImpl implements Row {
    * </p><p>
    * A JDBC driver is not required to support {@code io.r2dbc.spi.Blob}
    * conversions for any SQL type, so this method is necessary to implement the
-   * conversion to {@code Blob} from a type which is supported by JDBC.
+   * conversion to {@code Blob} from a type that is supported by JDBC.
    * </p>
    * @param index 0 based column index
    * @return A column value as a {@code Blob}, or null if the column
@@ -307,33 +307,62 @@ final class OracleRowImpl implements Row {
    * </p><p>
    * A JDBC driver is not required to support {@code io.r2dbc.spi.Clob}
    * conversions for any SQL type, so this method is necessary to implement the
-   * conversion to {@code Clob} from a type which is supported by JDBC.
+   * conversion to {@code Clob} from a type that is supported by JDBC.
    * </p>
    * @param index 0 based column index
    * @return A column value as a {@code Clob}, or null if the column
    * value is NULL.
    */
   private Clob getClob(int index) {
-    Integer columnTypeCode =
-      rowMetadata.getColumnMetadata(index)
-        .getNativeTypeMetadata()
-        .getVendorTypeNumber();
 
-    boolean isNChar = columnTypeCode != null &&
-      (columnTypeCode == Types.NCLOB
-        || columnTypeCode == Types.NCHAR
-        || columnTypeCode == Types.NVARCHAR
-        || columnTypeCode == Types.LONGNVARCHAR);
-
-    java.sql.Clob jdbcClob = isNChar
-      ? jdbcRow.getObject(index, java.sql.NClob.class)
-      : jdbcRow.getObject(index, java.sql.Clob.class);
+    // Convert to a JDBC NClob or Clob, depending on the column type
+    final java.sql.Clob jdbcClob;
+    switch (getColumnTypeNumber(index)) {
+      case Types.NCLOB:
+      case Types.LONGNVARCHAR:
+      case Types.NVARCHAR:
+      case Types.NCHAR:
+        jdbcClob = jdbcRow.getObject(index, java.sql.NClob.class);
+        break;
+      default:
+        jdbcClob = jdbcRow.getObject(index, java.sql.Clob.class);
+        break;
+    }
 
     return jdbcClob == null
       ? null
       : OracleLargeObjects.createClob(
           adapter.publishClobRead(jdbcClob),
           adapter.publishClobFree(jdbcClob));
+  }
+
+  /**
+   * <p>
+   * Converts the value of a column at the specified {@code index} to a
+   * {@code LocalDateTime}.
+   * </p><p>
+   * A JDBC driver is not required to support {@code LocalDateTime} conversions
+   * for any SQL type. The Oracle JDBC driver is known to support {@code
+   * LocalDateTime} conversions for DATE, TIMESTAMP, TIMESTAMP WITH TIME ZONE.
+   * </p><p>
+   * The 21.1 Oracle JDBC Driver does not implement a correct conversion for
+   * TIMESTAMP WITH LOCAL TIME ZONE; The driver returns a value in the database
+   * timezone rather than the session time zone. A correct conversion is
+   * implemented for {@code java.sql.Timestamp}, so this method is implemented
+   * to convert that into a {@code LocalDateTime}.
+   * </p>
+   * @param index 0 based column index
+   * @return A column value as a {@code Clob}, or null if the column
+   * value is NULL.
+   */
+  private LocalDateTime getLocalDateTime(int index) {
+    if (getColumnTypeNumber(index) == OracleTypes.TIMESTAMPLTZ) {
+      Timestamp timestamp = jdbcRow.getObject(index, Timestamp.class);
+      return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+    else {
+      return jdbcRow.getObject(index, LocalDateTime.class);
+    }
   }
 
   /**
@@ -361,7 +390,7 @@ final class OracleRowImpl implements Row {
    * as {@code type}.
    * </p><p>
    * This method handles cases where the JDBC driver may support a mapping 
-   * which the Oracle R2DBC Driver does not support. For instance, the JDBC
+   * that the Oracle R2DBC Driver does not support. For instance, the JDBC
    * driver may support mapping CLOB columns to String, but the Oracle R2DBC
    * Driver does not support this as the JDBC driver may require blocking 
    * network I/O to convert a CLOB into a String.
@@ -372,15 +401,8 @@ final class OracleRowImpl implements Row {
    * @throws R2dbcException if the type mapping is not supported
    */
   private void requireSupportedTypeMapping(int index, Class<?> type) {
-    Integer sqlTypeCode =
-      rowMetadata.getColumnMetadata(index)
-        .getNativeTypeMetadata()
-        .getVendorTypeNumber();
 
-    if (sqlTypeCode == null)
-      return;
-
-    switch (sqlTypeCode) {
+    switch (getColumnTypeNumber(index)) {
       case Types.BLOB:
         if (! type.equals(Blob.class))
           throw unsupportedTypeMapping("BLOB", index, type);
@@ -393,6 +415,23 @@ final class OracleRowImpl implements Row {
   }
 
   /**
+   * Returns the SQL type number of the column at a given {@code index}. The
+   * returned number identifies either a standard type defined by
+   * {@link Types} or a vendor specific type defined by the JDBC driver. This
+   * method returns {@link Types#OTHER} if the JDBC driver does not provide a
+   * type code for the column.
+   * @param index 0 based column index
+   * @return A SQL type number
+   */
+  private int getColumnTypeNumber(int index) {
+    Integer typeNumber = rowMetadata.getColumnMetadata(index)
+      .getNativeTypeMetadata()
+      .getVendorTypeNumber();
+
+    return typeNumber == null ? Types.OTHER : typeNumber;
+  }
+
+  /**
    * Returns an exception indicating that the Oracle R2DBC Driver does
    * not support mapping the database type specified as {@code sqlTypeName}
    * to the Java type specified as {@code type}.
@@ -401,7 +440,7 @@ final class OracleRowImpl implements Row {
    * @param type Java type to which mapping is not supported
    * @return An exception that expresses the unsupported mapping
    */
-  private R2dbcException unsupportedTypeMapping(
+  private static R2dbcException unsupportedTypeMapping(
     String sqlTypeName, int index, Class<?> type) {
     return OracleR2dbcExceptions.newNonTransientException(
       String.format("Unsupported SQL to Java type mapping. " +

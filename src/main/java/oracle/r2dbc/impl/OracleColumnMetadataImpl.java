@@ -204,11 +204,10 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
 
       case Types.DATE:
         // Override JDBC's java.sql.Date type mapping to use LocalDate
-        return newMetadata(
-          LocalDate.class, resultSetMetaData, jdbcIndex);
+        return newMetadata(LocalDate.class, resultSetMetaData, jdbcIndex);
 
-      case OracleTypes.TIMESTAMPLTZ:
       case Types.TIMESTAMP:
+      case OracleTypes.TIMESTAMPLTZ:
         // Override JDBC's java.sql.Timestamp type mapping, and Oracle JDBC's
         // oracle.sql.TIMESTAMPLTZ type mapping to use LocalDateTime, and to
         // use an appropriate precision value. Note that the Oracle type
