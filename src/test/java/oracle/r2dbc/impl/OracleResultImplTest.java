@@ -98,13 +98,13 @@ public class OracleResultImplTest {
         // Expect update count publisher to support multiple subscribers
         awaitOne(1, insertCountPublisher1);
 
-        // Expect no update count from UPDATE of zero rows
+        // Expect an update count of zero from UPDATE of zero rows
         Result noUpdateResult = awaitOne(connection.createStatement(
           "UPDATE testGetRowsUpdated SET y = 99 WHERE x = 99")
           .execute());
         Publisher<Integer> noUpdateCountPublisher =
           noUpdateResult.getRowsUpdated();
-        awaitNone(noUpdateCountPublisher);
+        awaitOne(0, noUpdateCountPublisher);
 
         // Expect IllegalStateException from multiple Result consumptions.
         assertThrows(IllegalStateException.class,
@@ -112,7 +112,7 @@ public class OracleResultImplTest {
         assertThrows(IllegalStateException.class, noUpdateResult::getRowsUpdated);
 
         // Expect update count publisher to support multiple subscribers
-        awaitNone(noUpdateCountPublisher);
+        awaitOne(0, noUpdateCountPublisher);
 
         // Expect update count of 2 from UPDATE of 2 rows
         Result updateResult = awaitOne(connection.createStatement(

@@ -68,17 +68,21 @@ abstract class OracleResultImpl implements Result {
 
   /**
    * Creates a {@code Result} that publishes either an empty stream of row
-   * data, or publishes an {@code updateCount} if it is greater than zero. An
-   * {@code updateCount} less than 1 is published as an empty stream.
+   * data, or publishes an {@code updateCount} if it is greater than or equal
+   * to zero. An {@code updateCount} less than zero is published as an empty
+   * stream.
    * @param updateCount Update count to publish
    * @return An update count {@code Result}
    */
   public static Result createUpdateCountResult(int updateCount) {
     return new OracleResultImpl() {
 
+      final Publisher<Integer> updateCountPublisher =
+        updateCount < 0 ? Mono.empty() : Mono.just(updateCount);
+
       @Override
       Publisher<Integer> publishUpdateCount() {
-        return updateCount < 1 ? Mono.empty() : Mono.just(updateCount);
+        return updateCountPublisher;
       }
 
       @Override
