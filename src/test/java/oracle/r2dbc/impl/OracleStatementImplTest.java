@@ -168,6 +168,7 @@ public class OracleStatementImplTest {
           asList(row.get(0, Integer.class), row.get(1,Integer.class)),
         connection.createStatement(
           "SELECT x, y FROM testBindByIndex WHERE x = 3 ORDER BY y"));
+
     }
     finally {
       awaitExecution(connection.createStatement(
@@ -311,6 +312,43 @@ public class OracleStatementImplTest {
           asList(row.get(0, Integer.class), row.get(1,Integer.class)),
         connection.createStatement(
           "SELECT x, y FROM testBindByName WHERE x = 3 ORDER BY y"));
+
+      // When the same name is used for multiple parameters, expect a value
+      // bound to that name to be set as the value for all of those parameters.
+      // Expect a value bound to the index of one of those parameters to be
+      // set only for the parameter at that index.
+      awaitUpdate(asList(1, 1, 1),
+        connection
+          .createStatement("INSERT INTO testBindByName VALUES (:same, :same)")
+          .bind("same", 4).add()
+          .bind("same", 4).bind(1, 5).add()
+          .bind(0, 4).bind(1, 6));
+      awaitQuery(asList(asList(4,4)),
+        row ->
+          asList(row.get(0, Integer.class), row.get(1,Integer.class)),
+        connection.createStatement(
+          "SELECT x, y FROM testBindByName WHERE x = :x_and_y AND y = :x_and_y")
+          .bind("x_and_y", 4));
+      awaitQuery(
+        asList(asList(4, 5), asList(4, 6)),
+        row ->
+          asList(row.get(0, Integer.class), row.get(1,Integer.class)),
+        connection.createStatement(
+          "SELECT x, y FROM testBindByName" +
+            " WHERE x = :both AND y <> :both" +
+            " ORDER BY y")
+          .bind("both", 4));
+      awaitQuery(asList(asList(4,4)),
+        row ->
+          asList(row.get(0, Integer.class), row.get(1,Integer.class)),
+        connection.createStatement(
+          "SELECT x, y FROM testBindByName" +
+            " WHERE x = :x_and_y" +
+            " AND (x * y) = :x_times_y" +
+            " AND y = :x_and_y")
+          .bind("x_times_y", 16)
+          .bind("x_and_y", 4));
+
     }
     finally {
       awaitExecution(connection.createStatement("DROP TABLE testBindByName"));
@@ -617,6 +655,34 @@ public class OracleStatementImplTest {
           asList(row.get(0, Integer.class), row.get(1,Integer.class)),
         connection.createStatement(
           "SELECT x, y FROM testNullBindByName WHERE x = 3 ORDER BY y"));
+
+      // When the same name is used for multiple parameters, expect a value
+      // bound to that name to be set as the value for all of those parameters.
+      // Expect a value bound to the index of one of those parameters to be
+      // set only for the parameter at that index.
+      awaitOne(connection.createStatement(
+        "DELETE FROM testNullBindByName WHERE x IS NULL AND y IS NULL")
+        .execute());
+      awaitUpdate(asList(1, 1, 1),
+        connection
+          .createStatement(
+            "INSERT INTO testNullBindByName VALUES (:same, :same)")
+          .bindNull("same", Integer.class).add()
+          .bindNull("same", Integer.class).bind(0, 4).add()
+          .bind(0, 5).bindNull(1, Integer.class));
+      awaitQuery(asList(asList(null, null)),
+        row ->
+          asList(row.get(0, Integer.class), row.get(1,Integer.class)),
+        connection.createStatement(
+          "SELECT x, y FROM testNullBindByName" +
+            " WHERE x IS NULL AND y IS NULL"));
+      awaitQuery(asList(asList(4, null), asList(5, null)),
+        row ->
+          asList(row.get(0, Integer.class), row.get(1,Integer.class)),
+        connection.createStatement(
+          "SELECT x, y FROM testNullBindByName" +
+            " WHERE x >= 4 AND x IS NOT NULL AND y IS NULL" +
+            " ORDER BY x, y"));
     }
     finally {
       awaitExecution(connection.createStatement(
