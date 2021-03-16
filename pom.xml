@@ -196,6 +196,13 @@
         </includes>
         <targetPath>META-INF</targetPath>
       </resource>
+      <resource>
+        <directory>${project.basedir}/src/main/resources/META-INF/services/</directory>
+        <includes>
+          <include>io.r2dbc.spi.ConnectionFactoryProvider</include>
+        </includes>
+        <targetPath>META-INF/services/</targetPath>
+      </resource>
     </resources>
   </build>
 
