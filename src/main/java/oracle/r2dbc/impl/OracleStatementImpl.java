@@ -63,14 +63,14 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
  * Database and an ORA-01000 error will be raised. The Oracle R2DBC Driver
  * will close cursors after each {@link Result} emitted by the
  * {@link #execute()} publisher has been fully consumed.
- * </p><p>
+ * </p><p id="fully-consumed-result">
  * To ensure that cursors are eventually closed, application code MUST
- * fully consume the {@link Result} objects emitted by the {@link #execute()}
- * publisher. A {@code Result} is fully consumed by subscribing to it's
+ * fully consume {@link Result} objects emitted by the {@link #execute()}
+ * {@code Publisher}. A {@code Result} is fully consumed by subscribing to it's
  * {@linkplain Result#getRowsUpdated() update count} or
  * {@linkplain Result#map(BiFunction) row data} {@code Publisher} and then
- * requesting items until the publisher emits {@code onComplete/onError} or
- * cancelling the subscription.
+ * requesting items until the {@code Publisher} emits {@code onComplete/onError}
+ * or it's {@code Subscription} is cancelled.
  * </p><p>
  * To improve performance when the same SQL statement is executed multiple
  * times, implementations of {@link ReactiveJdbcAdapter} are expected to
