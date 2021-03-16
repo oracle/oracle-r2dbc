@@ -316,10 +316,10 @@ final class OracleStatementImpl implements Statement {
    * If the specified {@code identifier} matches more than one parameter name,
    * then this method binds the SQL {@code NULL} value to all parameters
    * having a matching name. For instance, when {@code NULL} is bound to the
-   * parameter named "x", the following SQL would return all names having a
-   * birthday with {@code NULL} day and month values:
+   * parameter named "x", the following SQL would create a birthday with
+   * {@code NULL} values for month and day:
    * <pre>
-   * SELECT name FROM birthday WHERE month=:x AND day=:x
+   * INSERT INTO birthday (name, month, day) VALUES ('Plato', :x, :x)
    * </pre>
    * </p>
    * @throws IllegalArgumentException {@inheritDoc}
