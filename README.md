@@ -25,9 +25,16 @@ Oracle R2DBC can be built from source using Maven:
 
 `mvn clean install -DskipTests=true`
 
-> The build is not yet available on the Maven Central Repository. It will be published there soon.
-
 > Omitting -DskipTests=true from the command above will execute the test suite, where end-to-end tests connect to an Oracle Database instance. The connection configuration is read from [src/test/resources/config.properties](src/test/resources/example-config.properties).
+
+Artifacts can also be found on Maven Central.
+```
+<dependency>
+  <groupId>com.oracle.database.r2dbc</groupId>
+  <artifactId>oracle-r2dbc</artifactId>
+  <version>${version}</version>
+</dependency>
+```
 
 Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime dependencies:
 - R2DBC SPI 0.8.2
