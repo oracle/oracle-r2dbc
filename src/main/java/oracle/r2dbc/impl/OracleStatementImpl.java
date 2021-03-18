@@ -66,7 +66,7 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
  * </p><p id="fully-consumed-result">
  * To ensure that cursors are eventually closed, application code MUST
  * fully consume {@link Result} objects emitted by the {@link #execute()}
- * {@code Publisher}. A {@code Result} is fully consumed by subscribing to it's
+ * {@code Publisher}. A {@code Result} is fully consumed by subscribing to its
  * {@linkplain Result#getRowsUpdated() update count} or
  * {@linkplain Result#map(BiFunction) row data} {@code Publisher} and then
  * requesting items until the {@code Publisher} emits {@code onComplete/onError}
