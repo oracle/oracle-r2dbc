@@ -70,7 +70,7 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
  * {@linkplain Result#getRowsUpdated() update count} or
  * {@linkplain Result#map(BiFunction) row data} {@code Publisher} and then
  * requesting items until the {@code Publisher} emits {@code onComplete/onError}
- * or it's {@code Subscription} is cancelled.
+ * or its {@code Subscription} is cancelled.
  * </p><p>
  * To improve performance when the same SQL statement is executed multiple
  * times, implementations of {@link ReactiveJdbcAdapter} are expected to
