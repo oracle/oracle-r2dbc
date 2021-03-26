@@ -22,9 +22,9 @@
  * Implements the R2DBC SPI for Oracle Database.
  *
  * @provides io.r2dbc.spi.ConnectionFactoryProvider
- * @since 0.1.1
+ * @since 0.1.0
  */
-module oracle.r2dbc {
+module com.oracle.database.r2dbc {
 
   provides io.r2dbc.spi.ConnectionFactoryProvider
     with oracle.r2dbc.impl.OracleConnectionFactoryProviderImpl;

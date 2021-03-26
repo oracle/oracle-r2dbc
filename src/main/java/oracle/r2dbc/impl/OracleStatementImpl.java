@@ -226,7 +226,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bind(int index, Object value) {
-    requireNonNull(value, "value must not be null");
+    requireNonNull(value, "value is null");
     requireValidIndex(index);
     bindValues[index] = convertToJdbcBindValue(value);
     return this;
@@ -249,11 +249,13 @@ final class OracleStatementImpl implements Statement {
    * syntax.
    * </p><p>
    * If the specified {@code identifier} matches more than one parameter name,
-   * this method binds the {@code value} to the first matching parameter that
-   * appears when the SQL command is read from left to right. (Note: It is
-   * not recommended to use duplicate parameter names. Use
-   * {@link #bind(int, Object)} to set a value for a duplicate parameter name
-   * at a given index).
+   * then this method binds the {@code value} to all parameters having a
+   * matching name. For instance, when {@code 9} is bound to the parameter
+   * named "x", the following SQL would return all names having a birthday on
+   * the 9th day of the 9th month:
+   * <pre>
+   * SELECT name FROM birthday WHERE month=:x AND day=:x
+   * </pre>
    * </p>
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code identifier} does match a
@@ -264,9 +266,9 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bind(String identifier, Object value) {
-    requireNonNull(identifier, "identifier must not be null");
-    requireNonNull(value, "value must not be null");
-    bindValues[indexOfIdentifier(identifier)] = convertToJdbcBindValue(value);
+    requireNonNull(identifier, "identifier is null");
+    requireNonNull(value, "value is null");
+    bindNamedParameter(identifier, value);
     return this;
   }
 
@@ -281,7 +283,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bindNull(int index, Class<?> type) {
-    requireNonNull(type, "class type must not be null");
+    requireNonNull(type, "type is null");
     requireValidIndex(index);
     bindValues[index] = null;
     return this;
@@ -310,6 +312,16 @@ final class OracleStatementImpl implements Statement {
    * duplicate parameter names. Use {@link #bindNull(int, Class)} to set the
    * SQL {@code NULL} value for a duplicate parameter name at a given index).
    * </p>
+   * </p><p>
+   * If the specified {@code identifier} matches more than one parameter name,
+   * then this method binds the SQL {@code NULL} value to all parameters
+   * having a matching name. For instance, when {@code NULL} is bound to the
+   * parameter named "x", the following SQL would create a birthday with
+   * {@code NULL} values for month and day:
+   * <pre>
+   * INSERT INTO birthday (name, month, day) VALUES ('Plato', :x, :x)
+   * </pre>
+   * </p>
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code identifier} does match a
    * case sensitive parameter name that appears in this {@code Statement's}
@@ -317,9 +329,9 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bindNull(String identifier, Class<?> type) {
-    requireNonNull(identifier, "identifier must not be null");
-    requireNonNull(type, "class type must not be null");
-    bindValues[indexOfIdentifier(identifier)] = null;
+    requireNonNull(identifier, "identifier is null");
+    requireNonNull(type, "type is null");
+    bindNamedParameter(identifier, null);
     return this;
   }
 
@@ -694,21 +706,26 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * Returns the 0-based index of a named parameter matching the specified
-   * {@code identifier}. The match is case-sensitive.
-   * @param identifier A parameter identifier
-   * @return The 0-based parameter index of the {@code identifier}
+   * Binds a {@code value} to all named parameters matching the specified
+   * {@code name}. The match is case-sensitive.
+   * @param name A parameter name. Not null.
+   * @param value A value to bind. May be null.
    * @throws IllegalArgumentException if no named parameter matches the
    *   {@code identifier}
    */
-  private int indexOfIdentifier(String identifier) {
-    int index = parameterNames.indexOf(identifier);
-    if (index == -1) {
-      throw new IllegalArgumentException(
-        "Unrecognized parameter identifier: " + identifier);
+  private void bindNamedParameter(String name, Object value) {
+    boolean isMatched = false;
+
+    for (int i = 0; i < parameterNames.size(); i++) {
+      if (name.equals(parameterNames.get(i))) {
+        isMatched = true;
+        bindValues[i] = convertToJdbcBindValue(value);
+      }
     }
-    else {
-      return index;
+
+    if (! isMatched) {
+      throw new IllegalArgumentException(
+        "Unrecognized parameter identifier: " + name);
     }
   }
 
@@ -730,7 +747,7 @@ final class OracleStatementImpl implements Statement {
    */
   private Object convertToJdbcBindValue(Object bindValue) {
     if (bindValue == null) {
-      return bindValue;
+      return null;
     }
     else if (bindValue instanceof io.r2dbc.spi.Blob) {
       return convertBlobBind((io.r2dbc.spi.Blob) bindValue);
