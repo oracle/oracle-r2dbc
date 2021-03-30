@@ -37,6 +37,7 @@ import java.time.Duration;
 import static oracle.r2dbc.samples.DatabaseConfig.HOST;
 import static oracle.r2dbc.samples.DatabaseConfig.PASSWORD;
 import static oracle.r2dbc.samples.DatabaseConfig.PORT;
+import static oracle.r2dbc.samples.DatabaseConfig.SERVICE_NAME;
 import static oracle.r2dbc.samples.DatabaseConfig.USER;
 import static oracle.r2dbc.samples.DatabaseConfig.WALLET_LOCATION;
 
@@ -91,7 +92,7 @@ public class TcpsConnectDemo {
         USER + ":" + PASSWORD, // userInfo
         HOST, // host
         PORT, // port
-        "/" + DatabaseConfig.SERVICE_NAME, // path
+        "/" + SERVICE_NAME, // path
         "oracle.net.wallet_location=" + WALLET_LOCATION
           + "&oracle.jdbc.fanEnabled=false",  // query
         null) // fragment
@@ -114,7 +115,7 @@ public class TcpsConnectDemo {
         .option(ConnectionFactoryOptions.DRIVER, "oracle")
         .option(ConnectionFactoryOptions.HOST, HOST)
         .option(ConnectionFactoryOptions.PORT, PORT)
-        .option(ConnectionFactoryOptions.DATABASE, DatabaseConfig.SERVICE_NAME)
+        .option(ConnectionFactoryOptions.DATABASE, SERVICE_NAME)
         .option(ConnectionFactoryOptions.USER, USER)
         .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
         // To configure a TCPS/SSL/TLS enabled ConnectionFactory, set the SSL
