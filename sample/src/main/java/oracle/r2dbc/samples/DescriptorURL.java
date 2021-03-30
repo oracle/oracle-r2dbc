@@ -70,5 +70,24 @@ public class DescriptorURL {
           .concatWith(Mono.from(connection.close()).cast(String.class)))
       .toStream()
       .forEach(System.out::println);
+
+    // A descriptor may also be specified as the value of
+    // ConnectionFactoryOptions.HOST
+    Mono.from(ConnectionFactories.get(ConnectionFactoryOptions.builder()
+      .option(ConnectionFactoryOptions.DRIVER, "oracle")
+      .option(ConnectionFactoryOptions.HOST, DESCRIPTOR)
+      .option(ConnectionFactoryOptions.USER, USER)
+      .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
+      .build())
+      .create())
+      .flatMapMany(connection ->
+        Mono.from(connection.createStatement(
+          "SELECT 'Connected with TNS descriptor' FROM sys.dual")
+          .execute())
+          .flatMapMany(result ->
+            result.map((row, metadata) -> row.get(0, String.class)))
+          .concatWith(Mono.from(connection.close()).cast(String.class)))
+      .toStream()
+      .forEach(System.out::println);
   }
 }
