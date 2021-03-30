@@ -199,7 +199,7 @@ be used when setting the bind value of an unnamed parameter.
 colon character (:) is followed by an alphanumeric parameter name. A name
 or numeric index may be used when setting the bind value of a named parameter.
 - Parameter names are case-sensitive.
-- When an empty set of column names is specified to Statement.returnGeneratedValues(String...), the returned value is the [ROWID](https://docs.oracle.com/en/database/oracle/oracle-database/21/cncpt/tables-and-table-clusters.html#GUID-0258C4C2-2BF2-445F-B1E1-F282A57A6859) 
+- When an empty set of column names is specified to Statement.returnGeneratedValues(String...), executing that ```Statement``` returns the [ROWID](https://docs.oracle.com/en/database/oracle/oracle-database/21/cncpt/tables-and-table-clusters.html#GUID-0258C4C2-2BF2-445F-B1E1-F282A57A6859) 
 of each row affected by an INSERT or UPDATE.
   - This behavior may change in a later release.
   - Programmers are advised not to use the ROWID as if it were a primary key.
