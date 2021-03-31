@@ -19,6 +19,8 @@
   limitations under the License.
 */
 
+package oracle.r2dbc.samples;
+
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
@@ -28,14 +30,16 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Properties;
+
+import static oracle.r2dbc.samples.DatabaseConfig.HOST;
+import static oracle.r2dbc.samples.DatabaseConfig.PASSWORD;
+import static oracle.r2dbc.samples.DatabaseConfig.PORT;
+import static oracle.r2dbc.samples.DatabaseConfig.SERVICE_NAME;
+import static oracle.r2dbc.samples.DatabaseConfig.USER;
+import static oracle.r2dbc.samples.DatabaseConfig.WALLET_LOCATION;
 
 /**
  * Sample code that uses an Oracle Wallet to authenticate with an Oracle
@@ -67,40 +71,6 @@ import java.util.Properties;
  */
 public class TcpsConnectDemo {
 
-  /** Path to a configuration file: config.properties */
-  private static final Path CONFIG_PATH =
-    Path.of(System.getProperty("CONFIG_FILE", "config.properties"));
-
-  /** Configuration that is read from a file at {@link #CONFIG_PATH} */
-  private static final Properties CONFIG;
-  static {
-    try (var fileStream = Files.newInputStream(CONFIG_PATH)) {
-      CONFIG = new Properties();
-      CONFIG.load(fileStream);
-    }
-    catch (IOException readFailure) {
-      throw new UncheckedIOException(readFailure);
-    }
-  }
-
-  /** Host name where an Oracle Database instance is running */
-  private static final String HOST = CONFIG.getProperty("HOST");
-
-  /** Port number where an Oracle Database instance is listening */
-  private static final int PORT = Integer.parseInt(CONFIG.getProperty("PORT"));
-
-  /** Service name of an Oracle Database */
-  private static final String SERVICE_NAME = CONFIG.getProperty("SERVICE_NAME");
-
-  /** User name that connects to an Oracle Database */
-  private static final String USER = CONFIG.getProperty("USER");
-
-  /** Password of the user that connects to an Oracle Database */
-  private static final String PASSWORD = CONFIG.getProperty("PASSWORD");
-
-  /** The file system path of a wallet directory */
-  private static final String WALLET_LOCATION =
-    CONFIG.getProperty("WALLET_LOCATION");
 
   public static void main(String[] args) throws URISyntaxException {
 
