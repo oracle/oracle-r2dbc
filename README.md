@@ -157,6 +157,10 @@ Options. For Options having any of the following names, a CharSequence value may
   - [oracle.net.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_SSL_CONTEXT_PROTOCOL)
   - [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
   - [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
+- Descriptor URLs of the form ```(DESCRIPTION=...)``` may be specified in a tnsnames.ora file. 
+  - The directory containing the tnsnames.ora file may be specified as an ```Option``` having the name "TNS_ADMIN"
+  - An alias of a tnsnames.ora file may be specified as the value of ```ConnectionFactoryOptions.HOST```. 
+  - An alias of a tnsnames.ora file may be specified with an R2DBC URL: ```r2dbc:oracle://my_alias?TNS_ADMIN=/path/to/tnsnames/```
 
 
 ### Thread Safety and Parallel Execution
@@ -195,15 +199,25 @@ be used when setting the bind value of an unnamed parameter.
 colon character (:) is followed by an alphanumeric parameter name. A name
 or numeric index may be used when setting the bind value of a named parameter.
 - Parameter names are case-sensitive.
-- The [ROWID](https://docs.oracle.com/en/database/oracle/oracle-database/21/cncpt/tables-and-table-clusters.html#GUID-0258C4C2-2BF2-445F-B1E1-F282A57A6859) 
-of each row affected by an INSERT or UPDATE is returned as the generated value
-for the empty set of column names.
+- When an empty set of column names is specified to Statement.returnGeneratedValues(String...), executing that ```Statement``` returns the [ROWID](https://docs.oracle.com/en/database/oracle/oracle-database/21/cncpt/tables-and-table-clusters.html#GUID-0258C4C2-2BF2-445F-B1E1-F282A57A6859) 
+of each row affected by an INSERT or UPDATE.
+  - This behavior may change in a later release.
+  - Programmers are advised not to use the ROWID as if it were a primary key.
+    - The ROWID of a row may change.
+    - After a row is deleted, it's ROWID may be reassigned to a new row.
+    - Further Reading: https://asktom.oracle.com/pls/apex/asktom.search?tag=is-it-safe-to-use-rowid-to-locate-a-row
 - A **blocking database call** is executed by a Statement returning generated 
 values for a non-empty set of column names.
   - The **blocking database call** is a known limitation that will be resolved
   with a non-blocking implementation of 
   java.sql.Connection.prepareStatement(String, String[]) in the Oracle JDBC Driver. 
   The Oracle JDBC Team is aware of this problem and is working on a fix.
+- Returning generated values is only supported for INSERT and UPDATE commands when a RETURNING INTO clause can be appended to the end of that command. (This limitation may be resolved in a later release)
+  - Example: `INSERT INTO my_table(val) VALUES (:val)` is supported because a RETURNING INTO clause may be appended to this command.
+  - Example: `INSERT INTO my_table(val) SELECT 1 FROM sys.dual` is not supported because a RETURNING INTO clause may not be appended to this command.
+  - The Oracle Database SQL Language Reference defines INSERT and UPDATE commands for which a RETURNING INTO clause is supported.
+  - INSERT: https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423
+  - UPDATE: https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/UPDATE.html#GUID-027A462D-379D-4E35-8611-410F3AC8FDA5
 
 ### Type Mappings
 - Blob and Clob objects are the default mapping implemented by Row.get(...) for 
