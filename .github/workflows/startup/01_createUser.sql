@@ -30,10 +30,12 @@
 
 -- This script will be run as sysdba connected to the container database. This
 -- script will create a test user in the xepdb1 pluggable database. The test
--- user is granted permission to connect to the database and create, query, and
--- modify tables.
+-- user is granted permission to connect to the database, create/query/modify
+-- tables, and to query v$open_cursor (to verify if cursors are being closed).
 ALTER SESSION SET CONTAINER=xepdb1;
+CREATE ROLE select_open_cursor;
+GRANT SELECT ON v_$open_cursor TO select_open_cursor;
 CREATE USER test IDENTIFIED BY test;
-GRANT connect, resource, unlimited tablespace TO test;
+GRANT connect, resource, unlimited tablespace, select_open_cursor TO test;
 ALTER USER test DEFAULT TABLESPACE users;
 ALTER USER test TEMPORARY TABLESPACE temp;
