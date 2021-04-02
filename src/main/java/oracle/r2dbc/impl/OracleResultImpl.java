@@ -35,6 +35,7 @@ import reactor.core.publisher.Mono;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 
 /**
  * <p>
@@ -90,9 +91,13 @@ abstract class OracleResultImpl implements Result {
   }
 
   /**
+   * <p>
    * Creates a {@code Result} that either publishes a {@code ResultSet} of
    * row data from a query, or publishes an update count as an empty stream.
-   *
+   * </p><p>
+   * The {@link java.sql.Statement} that created the {@code resultSet} is closed
+   * when the returned result is fully consumed.
+   * </p>
    * @param adapter Adapts {@code ResultSet} API calls into reactive streams.
    *   Not null.
    * @param resultSet Row data to publish
@@ -105,6 +110,8 @@ abstract class OracleResultImpl implements Result {
 
       @Override
       Publisher<Integer> publishUpdateCount() {
+        runOrHandleSQLException(() ->
+          resultSet.getStatement().close());
         return Mono.empty();
       }
 
@@ -112,12 +119,20 @@ abstract class OracleResultImpl implements Result {
       <T> Publisher<T> publishRows(
         BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
 
+        // Obtain a reference to the statement before the ResultSet is
+        // logically closed by its row publisher. The statement is closed when
+        // the publisher terminates.
+        java.sql.Statement jdbcStatement =
+          getOrHandleSQLException(resultSet::getStatement);
+
         OracleRowMetadataImpl metadata = new OracleRowMetadataImpl(
           getOrHandleSQLException(resultSet::getMetaData));
 
-        return Flux.from(adapter.publishRows(resultSet, jdbcRow ->
+        return Flux.<T>from(adapter.publishRows(resultSet, jdbcRow ->
           mappingFunction.apply(
-            new OracleRowImpl(jdbcRow, metadata, adapter), metadata)));
+            new OracleRowImpl(jdbcRow, metadata, adapter), metadata)))
+          .doFinally(signalType ->
+            runOrHandleSQLException(jdbcStatement::close));
       }
     };
   }
@@ -128,10 +143,15 @@ abstract class OracleResultImpl implements Result {
    * {@link PreparedStatement#getGeneratedKeys()} {@code ResultSet}, or
    * publishes an {@code updateCount}.
    * </p><p>
+   * The {@link java.sql.Statement} that created the {@code ResultSet} is closed
+   * when the {@code Publisher} returned by this method emits a
+   * {@code Result}.
+   * </p><p>
    * For compliance with R2DBC standards, a {@code Row} of generated column
    * values will remain valid after the {@code Connection} that created them
    * is closed. This behavior is verified by version 0.8.2 of
-   * {@code io.r2dbc.spi.test.TestKit#returnGeneratedValues()}.
+   * {@code io.r2dbc.spi.test.TestKit#returnGeneratedValues()}. The {@code Rows}
+   * of generated value
    * </p>
    *
    * @implNote
@@ -167,16 +187,25 @@ abstract class OracleResultImpl implements Result {
 
     // Avoid invoking ResultSet.getMetaData() on an empty ResultSet, it may
     // throw a SQLException
-    if (! getOrHandleSQLException(values::isBeforeFirst))
+    if (! getOrHandleSQLException(values::isBeforeFirst)) {
+      runOrHandleSQLException(() -> values.getStatement().close());
       return Mono.just(createUpdateCountResult(updateCount));
+    }
 
     // Obtain metadata before the ResultSet is closed by publishRows(...)
     OracleRowMetadataImpl metadata =
       new OracleRowMetadataImpl(getOrHandleSQLException(values::getMetaData));
 
+    // Obtain a reference to the statement before the ResultSet is
+    // logically closed by its row publisher. The statement is closed when
+    // the publisher terminates.
+    java.sql.Statement jdbcStatement =
+      getOrHandleSQLException(values::getStatement);
+
     return Flux.from(adapter.publishRows(
       values, ReactiveJdbcAdapter.JdbcRow::copy))
       .collectList()
+      .doFinally(signalType -> runOrHandleSQLException(jdbcStatement::close))
       .map(cachedRows -> new OracleResultImpl() {
 
         @Override
