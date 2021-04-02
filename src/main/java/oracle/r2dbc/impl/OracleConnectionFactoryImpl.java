@@ -59,7 +59,19 @@ import javax.sql.DataSource;
  *   <li>{@link ConnectionFactoryOptions#DATABASE}</li>
  *   <li>{@link ConnectionFactoryOptions#USER}</li>
  *   <li>{@link ConnectionFactoryOptions#PASSWORD}</li>
- * </ul>
+ *   <li>{@link ConnectionFactoryOptions#CONNECT_TIMEOUT}</li>
+ *   <li>{@link ConnectionFactoryOptions#SSL}</li>
+ * </ul><p>
+ * A value set for {@code CONNECT_TIMEOUT} will be rounded up to the nearest
+ * whole second. When a value is set, any connection request that exceeds the
+ * specified duration of seconds will automatically be cancelled. The
+ * cancellation will result in an {@code onError} signal delivering an
+ * {@link io.r2dbc.spi.R2dbcTimeoutException} to a connection {@code
+ * Subscriber}.
+ * </p><p>
+ * A value of {@code true} set for {@code SSL} will configure the Oracle
+ * JDBC Driver to connect using the TCPS protocol (ie: SSL/TLS).
+ * </p>
  *
  * @author  harayuanwang, michael-a-mcmahon
  * @since   0.1.0

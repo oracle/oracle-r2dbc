@@ -23,6 +23,7 @@ package oracle.r2dbc.samples;
 
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactoryOptions;
+import io.r2dbc.spi.Option;
 import reactor.core.publisher.Mono;
 
 import static oracle.r2dbc.samples.DatabaseConfig.HOST;
@@ -53,8 +54,8 @@ public class DescriptorURL {
     "(CONNECT_DATA=(SERVICE_NAME="+SERVICE_NAME+")))";
 
   public static void main(String[] args) {
-    // A descriptor may appear in the host section of an R2DBC URL:
-    String r2dbcUrl = "r2dbc:oracle://"+DESCRIPTOR;
+    // A descriptor may appear in the query section of an R2DBC URL:
+    String r2dbcUrl = "r2dbc:oracle://?oracle-net-descriptor="+DESCRIPTOR;
     Mono.from(ConnectionFactories.get(ConnectionFactoryOptions.parse(r2dbcUrl)
       .mutate()
       .option(ConnectionFactoryOptions.USER, USER)
@@ -71,11 +72,10 @@ public class DescriptorURL {
       .toStream()
       .forEach(System.out::println);
 
-    // A descriptor may also be specified as the value of
-    // ConnectionFactoryOptions.HOST
+    // A descriptor may also be specified as an Option
     Mono.from(ConnectionFactories.get(ConnectionFactoryOptions.builder()
       .option(ConnectionFactoryOptions.DRIVER, "oracle")
-      .option(ConnectionFactoryOptions.HOST, DESCRIPTOR)
+      .option(Option.valueOf("oracle-net-descriptor"), DESCRIPTOR)
       .option(ConnectionFactoryOptions.USER, USER)
       .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
       .build())
