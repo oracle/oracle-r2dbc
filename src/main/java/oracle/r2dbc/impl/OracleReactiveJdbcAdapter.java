@@ -482,7 +482,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   private static void validateDescriptorOptions(
     ConnectionFactoryOptions options) {
-    Option<?>[] overlappingOptions =
+    Option<?>[] conflictingOptions =
       Set.of(HOST, PORT, DATABASE, SSL)
         .stream()
         .filter(options::hasOption)
@@ -494,10 +494,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
           ! options.getValue(option).toString().isEmpty())
         .toArray(Option[]::new);
 
-    if (overlappingOptions.length != 0) {
+    if (conflictingOptions.length != 0) {
       throw new IllegalArgumentException(DESCRIPTOR.name()
         + " Option has been specified with potentially conflicting Options: "
-        + Arrays.toString(overlappingOptions));
+        + Arrays.toString(conflictingOptions));
     }
   }
 
