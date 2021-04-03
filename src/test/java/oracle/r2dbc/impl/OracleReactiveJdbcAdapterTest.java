@@ -61,6 +61,7 @@ import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Verifies that
@@ -173,10 +174,11 @@ public class OracleReactiveJdbcAdapterTest {
   /**
    * Verifies that
    * {@link OracleReactiveJdbcAdapter#createDataSource(ConnectionFactoryOptions)}
-   * handles the {@link OracleConnection#CONNECTION_PROPERTY_TNS_ADMIN} property
-   * correctly. This property configures a file system path to a
+   * handles Oracle Net Descriptors and the
+   * {@link OracleConnection#CONNECTION_PROPERTY_TNS_ADMIN} property
+   * correctly. The TNS ADMIN property configures a file system path to a
    * directory containing tnsnames.ora and ojdbc.properties files. If the TNS
-   * admin property is handled correctly, then TNS descriptors should be read
+   * admin property is handled correctly, then descriptors should be read
    * from tnsnames.ora, and connection properties should be read from
    * ojdbc.properties.
    */
@@ -230,6 +232,30 @@ public class OracleReactiveJdbcAdapterTest {
           .build())
           .create())
         .close());
+
+      // Expect IllegalArgumentException if HOST, PORT, DATABASE, or SSL options
+      // are provided with a descriptor
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get(
+          "r2dbc:oracle://"+host()+"?oracle-net-descriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle://"
+            +host()+":"+port()+"?oracle-net-descriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle://"+host()+":"+port()+"/"
+          +serviceName()+"?oracle-net-descriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle://"+host()+"/"
+          +serviceName()+"?oracle-net-descriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle:///"
+            +serviceName()+"?oracle-net-descriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbcs:oracle://" + // r2dbcs is SSL=true
+          "?oracle-net-descriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get(
+          "r2dbc:oracle://?oracle-net-descriptor="+descriptor+"&ssl=true"));
 
       // Create an ojdbc.properties file containing the user name
       Files.writeString(Path.of("ojdbc.properties"),

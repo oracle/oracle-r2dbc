@@ -420,6 +420,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * properly encoded by Oracle JDBC. If the data source is not configured
    * this way, the Oracle JDBC Driver uses the default character set of the
    * database, which may not support Unicode characters.
+   *
+   * @throws IllegalArgumentException If the {@code oracle-net-descriptor}
+   * {@code Option} is provided with any other options that might have
+   * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
   @Override
   public DataSource createDataSource(ConnectionFactoryOptions options) {
@@ -442,6 +446,9 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * {@link #createDataSource(ConnectionFactoryOptions)}
    * @param options R2DBC options. Not null.
    * @return An Oracle JDBC URL composed from R2DBC options
+   * @throws IllegalArgumentException If the {@code oracle-net-descriptor}
+   * {@code Option} is provided with any other options that might have
+   * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
   private static String composeJdbcUrl(ConnectionFactoryOptions options) {
     Object descriptor = options.getValue(DESCRIPTOR);
@@ -468,10 +475,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   /**
    * Validates {@code options} when the {@link #DESCRIPTOR} {@code Option} is
    * present. It is invalid to specify any other options having information
-   * that overlaps with information in the descriptor, such as
+   * that potentially conflicts with information in the descriptor, such as
    * {@link ConnectionFactoryOptions#HOST}.
    * @param options Options to validate
-   * @throws IllegalStateException If {@code options} are invalid
+   * @throws IllegalArgumentException If {@code options} are invalid
    */
   private static void validateDescriptorOptions(
     ConnectionFactoryOptions options) {
@@ -488,8 +495,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         .toArray(Option[]::new);
 
     if (overlappingOptions.length != 0) {
-      throw new IllegalStateException(DESCRIPTOR.name()
-        + " Option has been specified with overlapping Options: "
+      throw new IllegalArgumentException(DESCRIPTOR.name()
+        + " Option has been specified with potentially conflicting Options: "
         + Arrays.toString(overlappingOptions));
     }
   }

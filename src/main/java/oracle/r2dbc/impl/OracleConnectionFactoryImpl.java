@@ -31,6 +31,7 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import javax.sql.DataSource;
+import java.time.Duration;
 
 /**
  * <p>
@@ -48,30 +49,43 @@ import javax.sql.DataSource;
  * </p>
  * <h3 id="required_options">Required Options</h3><p>
  * This implementation requires the following options for connection creation:
- * </p><ul>
- *   <li>{@link ConnectionFactoryOptions#DRIVER}</li>
- *   <li>{@link ConnectionFactoryOptions#HOST}</li>
- * </ul>
+ * </p><dl>
+ *   <dt>{@link ConnectionFactoryOptions#DRIVER}</dt>
+ *   <dd>Must have the value "oracle"</dd>
+ *   <dt>{@link ConnectionFactoryOptions#HOST}</dt>
+ *   <dd>IP address or hostname of an Oracle Database</dd>
+ * </dl>
  * <h3 id="supported_options">Supported Options</h3><p>
  * This implementation supports the following options for connection creation:
- * </p><ul>
- *   <li>{@link ConnectionFactoryOptions#PORT}</li>
- *   <li>{@link ConnectionFactoryOptions#DATABASE}</li>
- *   <li>{@link ConnectionFactoryOptions#USER}</li>
- *   <li>{@link ConnectionFactoryOptions#PASSWORD}</li>
- *   <li>{@link ConnectionFactoryOptions#CONNECT_TIMEOUT}</li>
- *   <li>{@link ConnectionFactoryOptions#SSL}</li>
- * </ul><p>
- * A value set for {@code CONNECT_TIMEOUT} will be rounded up to the nearest
- * whole second. When a value is set, any connection request that exceeds the
- * specified duration of seconds will automatically be cancelled. The
- * cancellation will result in an {@code onError} signal delivering an
- * {@link io.r2dbc.spi.R2dbcTimeoutException} to a connection {@code
- * Subscriber}.
- * </p><p>
- * A value of {@code true} set for {@code SSL} will configure the Oracle
- * JDBC Driver to connect using the TCPS protocol (ie: SSL/TLS).
- * </p>
+ * </p><dl>
+ *   <dt>{@link ConnectionFactoryOptions#PORT}</dt>
+ *   <dd>Port number of an Oracle Database</dd>
+ *   <dt>{@link ConnectionFactoryOptions#DATABASE}</dt>
+ *   <dd>Service name (not an SID) of an Oracle Database</dd>
+ *   <dt>{@link ConnectionFactoryOptions#USER}</dt>
+ *   <dd>Name of an Oracle Database user</dd>
+ *   <dt>{@link ConnectionFactoryOptions#PASSWORD}</dt>
+ *   <dd>
+ *     Password of an Oracle Database user. The value may be an instance
+ *     of a mutable {@link CharSequence}, such {@link java.nio.CharBuffer},
+ *     that may be cleared after creating an instance of
+ *     {@code OracleConnectionFactoryImpl}.
+ *   </dd>
+ *   <dt>{@link ConnectionFactoryOptions#CONNECT_TIMEOUT}</dt>
+ *   <dd>
+ *     Maximum wait time when requesting a {@code Connection}. If the
+ *     duration expires, a {@code Connection} {@code Subscriber} receives
+ *     {@code onError} with an {@link io.r2dbc.spi.R2dbcTimeoutException}.
+ *     The duration is rounded up to the nearest whole second. The query
+ *     section of an R2DBC URL may provide a value in the format specified by
+ *     {@link Duration#parse(CharSequence)}.
+ *   </dd>
+ *   <dt>{@link ConnectionFactoryOptions#SSL}</dt>
+ *   <dd>
+ *     If set to {@code true}, the driver connects to Oracle Database using
+ *     TCPS (ie: SSL/TLS).
+ *   </dd>
+ * </dl>
  *
  * @author  harayuanwang, michael-a-mcmahon
  * @since   0.1.0
@@ -121,14 +135,19 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    * </p>
    *
    * @param options Options applied when opening a connection to a database.
+   *
    * @throws IllegalArgumentException If the value of a required option is
    * null.
+   *
    * @throws IllegalStateException If the value of a required option is not
    * specified.
+   *
+   * @throws IllegalArgumentException If the {@code oracle-net-descriptor}
+   * {@code Option} is provided with any other options that might have
+   * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
   OracleConnectionFactoryImpl(ConnectionFactoryOptions options) {
     OracleR2dbcExceptions.requireNonNull(options, "options is null.");
-
     adapter = ReactiveJdbcAdapter.getOracleAdapter();
     dataSource = adapter.createDataSource(options);
   }
