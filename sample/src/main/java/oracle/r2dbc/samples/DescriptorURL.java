@@ -55,7 +55,7 @@ public class DescriptorURL {
 
   public static void main(String[] args) {
     // A descriptor may appear in the query section of an R2DBC URL:
-    String r2dbcUrl = "r2dbc:oracle://?oracle-net-descriptor="+DESCRIPTOR;
+    String r2dbcUrl = "r2dbc:oracle://?oracleNetDescriptor="+DESCRIPTOR;
     Mono.from(ConnectionFactories.get(ConnectionFactoryOptions.parse(r2dbcUrl)
       .mutate()
       .option(ConnectionFactoryOptions.USER, USER)
@@ -75,7 +75,7 @@ public class DescriptorURL {
     // A descriptor may also be specified as an Option
     Mono.from(ConnectionFactories.get(ConnectionFactoryOptions.builder()
       .option(ConnectionFactoryOptions.DRIVER, "oracle")
-      .option(Option.valueOf("oracle-net-descriptor"), DESCRIPTOR)
+      .option(Option.valueOf("oracleNetDescriptor"), DESCRIPTOR)
       .option(ConnectionFactoryOptions.USER, USER)
       .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
       .build())

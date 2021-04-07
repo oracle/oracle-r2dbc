@@ -88,7 +88,7 @@ public final class OracleConnectionFactoryProviderImpl
    * @throws IllegalStateException If any option required by
    * {@link OracleConnectionFactoryImpl} is not specified by {@code options}.
    *
-   * @throws IllegalArgumentException If the {@code oracle-net-descriptor}
+   * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have
    * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */

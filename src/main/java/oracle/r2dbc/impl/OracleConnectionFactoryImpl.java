@@ -142,7 +142,7 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    * @throws IllegalStateException If the value of a required option is not
    * specified.
    *
-   * @throws IllegalArgumentException If the {@code oracle-net-descriptor}
+   * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have
    * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */

@@ -200,7 +200,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * of the form "(DESCRIPTION=...)"
    */
   private static final Option<CharSequence> DESCRIPTOR =
-    Option.valueOf("oracle-net-descriptor");
+    Option.valueOf("oracleNetDescriptor");
 
   /**
    * Java object types that are supported by
@@ -421,7 +421,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * this way, the Oracle JDBC Driver uses the default character set of the
    * database, which may not support Unicode characters.
    *
-   * @throws IllegalArgumentException If the {@code oracle-net-descriptor}
+   * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have
    * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
@@ -446,7 +446,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * {@link #createDataSource(ConnectionFactoryOptions)}
    * @param options R2DBC options. Not null.
    * @return An Oracle JDBC URL composed from R2DBC options
-   * @throws IllegalArgumentException If the {@code oracle-net-descriptor}
+   * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have
    * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
@@ -490,7 +490,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
           // Ignore options having a value that can be represented as a
           // zero-length String; It may be necessary to include a zero-length
           // host name in an R2DBC URL:
-          // r2dbc:oracle://user:password@?oracle-net-descriptor=...
+          // r2dbc:oracle://user:password@?oracleNetDescriptor=...
           ! options.getValue(option).toString().isEmpty())
         .toArray(Option[]::new);
 

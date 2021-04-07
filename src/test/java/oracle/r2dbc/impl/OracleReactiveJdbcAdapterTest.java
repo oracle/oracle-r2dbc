@@ -200,13 +200,13 @@ public class OracleReactiveJdbcAdapterTest {
       // Expect to connect with the descriptor in the R2DBC URL
       awaitNone(awaitOne(
         ConnectionFactories.get(String.format(
-          "r2dbc:oracle://%s:%s@?oracle-net-descriptor=%s",
+          "r2dbc:oracle://%s:%s@?oracleNetDescriptor=%s",
           user(), password(), descriptor))
           .create())
         .close());
       awaitNone(awaitOne(
         ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
-          "r2dbc:oracle://@?oracle-net-descriptor=%s", descriptor))
+          "r2dbc:oracle://@?oracleNetDescriptor=%s", descriptor))
           .mutate()
           .option(USER, user())
           .option(PASSWORD, password())
@@ -218,13 +218,13 @@ public class OracleReactiveJdbcAdapterTest {
       // the file path and an alias
       awaitNone(awaitOne(
         ConnectionFactories.get(String.format(
-          "r2dbc:oracle://%s:%s@?oracle-net-descriptor=%s&TNS_ADMIN=%s",
+          "r2dbc:oracle://%s:%s@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
           user(), password(), "test_alias", System.getProperty("user.dir")))
           .create())
           .close());
       awaitNone(awaitOne(
         ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
-          "r2dbc:oracle://@?oracle-net-descriptor=%s&TNS_ADMIN=%s",
+          "r2dbc:oracle://@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
           "test_alias", System.getProperty("user.dir")))
           .mutate()
           .option(USER, user())
@@ -237,25 +237,25 @@ public class OracleReactiveJdbcAdapterTest {
       // are provided with a descriptor
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get(
-          "r2dbc:oracle://"+host()+"?oracle-net-descriptor="+descriptor));
+          "r2dbc:oracle://"+host()+"?oracleNetDescriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle://"
-            +host()+":"+port()+"?oracle-net-descriptor="+descriptor));
+            +host()+":"+port()+"?oracleNetDescriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle://"+host()+":"+port()+"/"
-          +serviceName()+"?oracle-net-descriptor="+descriptor));
+          +serviceName()+"?oracleNetDescriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle://"+host()+"/"
-          +serviceName()+"?oracle-net-descriptor="+descriptor));
+          +serviceName()+"?oracleNetDescriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle:///"
-            +serviceName()+"?oracle-net-descriptor="+descriptor));
+            +serviceName()+"?oracleNetDescriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbcs:oracle://" + // r2dbcs is SSL=true
-          "?oracle-net-descriptor="+descriptor));
+          "?oracleNetDescriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get(
-          "r2dbc:oracle://?oracle-net-descriptor="+descriptor+"&ssl=true"));
+          "r2dbc:oracle://?oracleNetDescriptor="+descriptor+"&ssl=true"));
 
       // Create an ojdbc.properties file containing the user name
       Files.writeString(Path.of("ojdbc.properties"),
@@ -267,7 +267,7 @@ public class OracleReactiveJdbcAdapterTest {
         // specifies a user, and a standard option specifies the password.
         awaitNone(awaitOne(
           ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
-            "r2dbc:oracle://?oracle-net-descriptor=%s&TNS_ADMIN=%s",
+            "r2dbc:oracle://?oracleNetDescriptor=%s&TNS_ADMIN=%s",
             "test_alias", System.getProperty("user.dir")))
             .mutate()
             .option(PASSWORD, password())

@@ -157,11 +157,11 @@ Options. For Options having any of the following names, a CharSequence value may
   - [oracle.net.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_SSL_CONTEXT_PROTOCOL)
   - [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
   - [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
-- Oracle Net Descriptors of the form ```(DESCRIPTION=...)``` may be specified as an io.r2dbc.spi.Option having the name `oracle-net-descriptor`.
-  - If `oracle-net-descriptor` is specified, then it is invalid to specify any other options that might conflict with information in the descriptor, such as: `HOST`, `PORT`, `DATABASE`, and `SSL`.
-  - The `oracle-net-descriptor` option may appear in the query section of an R2DBC URL: `r2dbc:oracle://?oracle-net-descriptor=(DESCRIPTION=...)`
-  - The `oracle-net-descriptor` option may be provided programatically: `ConnectionFactoryOptions.builder().option(Option.valueOf("oracle-net-descriptor"), "(DESCRIPTION=...)")`
-  - The `oracle-net-descriptor` option may be set as the alias of a descriptor in a tnsnames.ora file. The directory of tnsnames.ora may be set using an io.r2dbc.spi.Option having the name `TNS_ADMIN`: `r2dbc:oracle://?oracle-net-descriptor=myAlias&TNS_ADMIN=/path/to/tnsnames/`
+- Oracle Net Descriptors of the form ```(DESCRIPTION=...)``` may be specified as an io.r2dbc.spi.Option having the name `oracleNetDescriptor`.
+  - If `oracleNetDescriptor` is specified, then it is invalid to specify any other options that might conflict with information in the descriptor, such as: `HOST`, `PORT`, `DATABASE`, and `SSL`.
+  - The `oracleNetDescriptor` option may appear in the query section of an R2DBC URL: `r2dbc:oracle://?oracleNetDescriptor=(DESCRIPTION=...)`
+  - The `oracleNetDescriptor` option may be provided programatically: `ConnectionFactoryOptions.builder().option(Option.valueOf("oracleNetDescriptor"), "(DESCRIPTION=...)")`
+  - The `oracleNetDescriptor` option may be set as the alias of a descriptor in a tnsnames.ora file. The directory of tnsnames.ora may be set using an io.r2dbc.spi.Option having the name `TNS_ADMIN`: `r2dbc:oracle://?oracleNetDescriptor=myAlias&TNS_ADMIN=/path/to/tnsnames/`
 
 
 ### Thread Safety and Parallel Execution
