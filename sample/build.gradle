@@ -36,7 +36,7 @@ dependencies {
 sourceCompatibility = 1.11
 targetCompatibility = 1.11
 
-mainClassName = 'TcpsConnectDemo'
+mainClassName = 'oracle.r2dbc.samples.TcpsConnectDemo'
 
 run {
   // To enable network debugging:
