@@ -27,6 +27,7 @@ import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryMetadata;
 import io.r2dbc.spi.ConnectionMetadata;
 import io.r2dbc.spi.IsolationLevel;
+import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.ValidationDepth;
 import org.reactivestreams.Publisher;
@@ -37,6 +38,8 @@ import java.util.LinkedList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static oracle.r2dbc.DatabaseConfig.user;
 
 /**
  * <p>
@@ -176,9 +179,17 @@ public class SharedConnectionFactory implements ConnectionFactory {
       .execute())
       .flatMapMany(result ->
         result.map((row, metadata) ->
-          row.get("sql_text", String.class)));
-      // Don't count the v$open_cursor query
-      //.filter();
+          row.get("sql_text", String.class)))
+      .onErrorMap(R2dbcException.class, r2dbcException ->
+        // Handle ORA-00942
+        r2dbcException.getErrorCode() == 942
+          ? new RuntimeException(
+              "V$OPEN_CUROSR is not accessible to the test user. " +
+                "Grant access as SYSDBA with: " +
+                "\"GRANT SELECT ON v_$open_cursor TO "+user()+"\", " +
+                "or disable open cursor checks with: " +
+                " -Doracle.r2bdc.disableCursorCloseVerification=true")
+        : r2dbcException);
   }
 
   /**
