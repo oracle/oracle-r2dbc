@@ -811,11 +811,9 @@ public class OracleStatementImplTest {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      // Expect DDL to result in no update count
-      awaitUpdate(
-        Collections.emptyList(),
-        connection.createStatement(
-          "CREATE TABLE testExecute (x NUMBER)"));
+      // Expect DDL to result in an update count of zero
+      awaitUpdate(0, connection.createStatement(
+        "CREATE TABLE testExecute (x NUMBER)"));
       // Expect DDL to result in no row data
       awaitQuery(
         Collections.emptyList(),

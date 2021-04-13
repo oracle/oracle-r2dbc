@@ -132,16 +132,12 @@ public final class Awaits {
   /**
    * Executes a {@code statement} and blocks until the execution
    * completes. This method verifies that the execution produces a
-   * {@link Result} with no count of updated rows.
-   * @param statement A statement that does not update rows.
+   * {@link Result} with a count of zero updated rows.
+   * @param statement A statement that does updates zero rows.
    * @throws Throwable If the statement execution results in an error.
    */
   public static void awaitExecution(Statement statement) {
-    assertNull(
-      Mono.from(statement.execute())
-        .flatMap(result -> Mono.from(result.getRowsUpdated()))
-        .block(sqlTimeout()),
-      "Expected no update count when not updating rows");
+    awaitUpdate(0, statement);
   }
 
   /**
