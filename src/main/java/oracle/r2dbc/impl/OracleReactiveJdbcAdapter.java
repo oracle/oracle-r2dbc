@@ -559,7 +559,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
     // Apply any extended options as connection properties
     for (Option<CharSequence> option : SUPPORTED_CONNECTION_PROPERTY_OPTIONS) {
-      CharSequence value = options.getValue(option);
+      // Using Object as the value type allows options to be set as types like
+      // Boolean or Integer. These types make sense for numeric or boolean
+      // connection property values, such as statement cache size, or enable x.
+      Object value = options.getValue(option);
       if (value != null) {
         runOrHandleSQLException(() ->
           oracleDataSource.setConnectionProperty(

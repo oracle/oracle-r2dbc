@@ -86,6 +86,11 @@ import java.time.Duration;
  *     TCPS (ie: SSL/TLS).
  *   </dd>
  * </dl>
+ * <h3 id="extended_options">Supported Options</h3><p>
+ * This implementation supports extended options having the name of a
+ * subset of Oracle JDBC connection properties. The list of supported
+ * connection properties is specified by {@link OracleReactiveJdbcAdapter}.
+ * </p>
  *
  * @author  harayuanwang, michael-a-mcmahon
  * @since   0.1.0
@@ -169,14 +174,15 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    * the returned publisher, so that the database can reclaim the resources
    * allocated for that connection.
    * </p><p>
-   * The returned publisher does not support multiple subscribers. After a
-   * subscriber has subscribed, the returned publisher emits {@code onError}
-   * with an {@link IllegalStateException} to all subsequent subscribers.
+   * The returned publisher supports multiple subscribers. One {@code
+   * Connection} is emitted to each subscriber that subscribes and signals
+   * demand.
    * </p>
    */
   @Override
   public Publisher<Connection> create() {
-    return Mono.fromDirect(adapter.publishConnection(dataSource))
+    return Mono.defer(() ->
+        Mono.fromDirect(adapter.publishConnection(dataSource)))
       .map(conn -> new OracleConnectionImpl(adapter, conn));
   }
 

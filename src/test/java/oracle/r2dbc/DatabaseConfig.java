@@ -25,6 +25,8 @@ import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
+import io.r2dbc.spi.Option;
+import oracle.jdbc.OracleConnection;
 import oracle.r2dbc.util.SharedConnectionFactory;
 import org.reactivestreams.Publisher;
 
@@ -216,6 +218,11 @@ public final class DatabaseConfig {
           .option(ConnectionFactoryOptions.DATABASE, SERVICE_NAME)
           .option(ConnectionFactoryOptions.USER, USER)
           .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
+          // Disable statement caching in order to verify cursor closing;
+          // Cached statements don't close their cursors
+          .option(Option.valueOf(
+            OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE),
+            0)
           .build());
 
       SHARED_CONNECTION_FACTORY = new SharedConnectionFactory(
