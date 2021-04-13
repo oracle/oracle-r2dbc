@@ -559,7 +559,7 @@ public class OracleConnectionImplTest {
             selectInSessionB);
         }
         finally {
-          awaitNone(sessionA.close());
+          awaitNone(sessionB.close());
         }
       }
       finally {

@@ -33,6 +33,8 @@ import reactor.core.publisher.Mono;
 
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -115,21 +117,24 @@ public class OracleConnectionFactoryImplTest {
             .build())
         .create();
 
-    // Expect publisher to emit 1 connection
-    AtomicInteger counter = new AtomicInteger(0);
+    // Expect publisher to emit one connection to each subscriber
+    Set<Connection> connections = new HashSet<>();
     Flux.from(connectionPublisher)
-      .doOnNext(connection -> counter.incrementAndGet())
+      .doOnNext(connections::add)
       .doOnNext(connection -> Mono.from(connection.close()).subscribe())
       .blockLast(DatabaseConfig.connectTimeout());
-    assertEquals(1, counter.get());
+    assertEquals(1, connections.size());
+    Flux.from(connectionPublisher)
+      .doOnNext(connections::add)
+      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
+      .blockLast(DatabaseConfig.connectTimeout());
+    assertEquals(2, connections.size());
+    Flux.from(connectionPublisher)
+      .doOnNext(connections::add)
+      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
+      .blockLast(DatabaseConfig.connectTimeout());
+    assertEquals(3, connections.size());
 
-    // Expect publisher to reject multiple subscribers
-    try {
-      Mono.from(connectionPublisher)
-        .block(Duration.ofSeconds(1));
-      fail("Connection publisher did not reject multiple subscribers");
-    }
-    catch (IllegalStateException expected) { }
   }
 
   /**
