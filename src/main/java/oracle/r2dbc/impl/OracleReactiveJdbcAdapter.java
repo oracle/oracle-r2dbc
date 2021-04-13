@@ -293,7 +293,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * descriptor. For instance, the descriptor element of
    * {@code (ADDRESSS=(HOST=...)(PORT=...)(PROTOCOL=...))} specifies values
    * that overlap with the standard {@code Option}s of {@code HOST}, {@code
-   * PORT}, and {@code SSL}. An {@code IllegalStateException} is thrown
+   * PORT}, and {@code SSL}. An {@code IllegalArgumentException} is thrown
    * when the descriptor is provided with any overlapping {@code Option}s.
    * </p><p>
    * Note that the alias of a descriptor within a tnsnames.ora file may be
