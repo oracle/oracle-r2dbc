@@ -44,6 +44,7 @@ import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
 import static java.sql.Connection.TRANSACTION_SERIALIZABLE;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 
@@ -120,7 +121,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public Publisher<Void> beginTransaction() {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
 
     final IsolationLevel isolationLevel;
     int jdbcIsolationLevel =
@@ -204,7 +205,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public Publisher<Void> beginTransaction(TransactionDefinition definition) {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
 
     if (definition.getAttribute(LOCK_WAIT_TIMEOUT) != null) {
       // TODO: ALTER SESSION SET ddl_lock_wait = ...
@@ -333,7 +334,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public Publisher<Void> commitTransaction() {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return adapter.publishCommit(jdbcConnection);
   }
 
@@ -356,7 +357,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public Batch createBatch() {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return new OracleBatchImpl(adapter, jdbcConnection);
   }
 
@@ -380,7 +381,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Statement createStatement(String sql) {
     requireNonNull(sql, "sql is null");
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return new OracleStatementImpl(adapter, jdbcConnection, sql);
   }
 
@@ -394,7 +395,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public boolean isAutoCommit() {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return getOrHandleSQLException(jdbcConnection::getAutoCommit);
   }
 
@@ -408,7 +409,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public ConnectionMetadata getMetadata() {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return new OracleConnectionMetadataImpl(
       getOrHandleSQLException(jdbcConnection::getMetaData));
   }
@@ -425,7 +426,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Void> createSavepoint(String name) {
     requireNonNull(name, "name is null");
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     // TODO: Execute SQL to create a savepoint. Examine and understand the
     // Oracle JDBC driver's implementation of
     // OracleConnection.oracleSetSavepoint(), and replicate it without
@@ -444,7 +445,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Void> releaseSavepoint(String name) {
     requireNonNull(name, "name is null");
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return Mono.empty();
   }
 
@@ -468,7 +469,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public Publisher<Void> rollbackTransaction() {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return adapter.publishRollback(jdbcConnection);
   }
 
@@ -484,7 +485,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Void> rollbackTransactionToSavepoint(String name) {
     requireNonNull(name, "name is null");
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     // TODO: Use the JDBC connection to rollback to a savepoint without blocking
     // a thread.
     throw new UnsupportedOperationException(
@@ -508,7 +509,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public Publisher<Void> setAutoCommit(boolean autoCommit) {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return Mono.defer(() -> getOrHandleSQLException(() -> {
       if (autoCommit == jdbcConnection.getAutoCommit()) {
         return Mono.empty(); // No change
@@ -542,7 +543,7 @@ final class OracleConnectionImpl implements Connection {
    */
   @Override
   public IsolationLevel getTransactionIsolationLevel() {
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
     return READ_COMMITTED;
   }
 
@@ -579,7 +580,7 @@ final class OracleConnectionImpl implements Connection {
   public Publisher<Void> setTransactionIsolationLevel(
     IsolationLevel isolationLevel) {
     requireNonNull(isolationLevel, "isolationLevel is null");
-    requireOpenConnection();
+    requireOpenConnection(jdbcConnection);
 
     // TODO: Need to add a connection factory option that disables Oracle
     //  JDBC's Result Set caching function before SERIALIZABLE can be supported.
@@ -614,12 +615,10 @@ final class OracleConnectionImpl implements Connection {
    * @implNote Remote validation executes a SQL query against the {@code sys
    * .dual} table. It is assumed that all Oracle Databases have the {@code
    * sys.dual} table.
-   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Boolean> validate(ValidationDepth depth) {
     requireNonNull(depth, "depth is null");
-    requireOpenConnection();
     return Mono.defer(() -> getOrHandleSQLException(() -> {
       if (jdbcConnection.isClosed()) {
         return Mono.just(false);
@@ -639,16 +638,6 @@ final class OracleConnectionImpl implements Connection {
       }
     }))
     .cache();
-  }
-
-  /**
-   * Checks if the JDBC connection is open, and throws an exception if the
-   * check fails.
-   * @throws IllegalStateException If the JDBC connection is closed
-   */
-  private void requireOpenConnection() {
-    if (getOrHandleSQLException(jdbcConnection::isClosed))
-      throw new IllegalStateException("Connection is closed");
   }
 
 }

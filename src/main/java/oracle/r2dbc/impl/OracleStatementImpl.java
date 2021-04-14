@@ -41,10 +41,10 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
-import java.util.function.Function;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 
 /**
@@ -227,6 +227,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bind(int index, Object value) {
+    requireOpenConnection(jdbcConnection);
     requireNonNull(value, "value is null");
     requireValidIndex(index);
     bindValues[index] = convertToJdbcBindValue(value);
@@ -267,6 +268,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bind(String identifier, Object value) {
+    requireOpenConnection(jdbcConnection);
     requireNonNull(identifier, "identifier is null");
     requireNonNull(value, "value is null");
     bindNamedParameter(identifier, value);
@@ -284,6 +286,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bindNull(int index, Class<?> type) {
+    requireOpenConnection(jdbcConnection);
     requireNonNull(type, "type is null");
     requireValidIndex(index);
     bindValues[index] = null;
@@ -330,6 +333,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement bindNull(String identifier, Class<?> type) {
+    requireOpenConnection(jdbcConnection);
     requireNonNull(identifier, "identifier is null");
     requireNonNull(type, "type is null");
     bindNamedParameter(identifier, null);
@@ -351,6 +355,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement add() {
+    requireOpenConnection(jdbcConnection);
     requireAllParametersSet(bindValues);
     batch.add(bindValues.clone());
     Arrays.fill(bindValues, BIND_NOT_SET);
@@ -386,6 +391,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement returnGeneratedValues(String... columns) {
+    requireOpenConnection(jdbcConnection);
     requireNonNull(columns, "Column names are null");
 
     for (int i = 0; i < columns.length; i++) {
@@ -406,6 +412,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Statement fetchSize(int rows) {
+    requireOpenConnection(jdbcConnection);
     if (rows < 0) {
       throw new IllegalArgumentException(
         "Fetch size is less than zero: " + rows);
@@ -466,6 +473,7 @@ final class OracleStatementImpl implements Statement {
    */
   @Override
   public Publisher<? extends Result> execute() {
+    requireOpenConnection(jdbcConnection);
 
     if (batch.isEmpty())
       add(); // Add a single set of binds to the batch, if all are set

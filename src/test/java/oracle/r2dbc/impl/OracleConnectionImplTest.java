@@ -21,21 +21,27 @@
 
 package oracle.r2dbc.impl;
 
+import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.IsolationLevel;
+import io.r2dbc.spi.Option;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
+import io.r2dbc.spi.TransactionDefinition;
 import io.r2dbc.spi.ValidationDepth;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
+import static io.r2dbc.spi.TransactionDefinition.*;
 import static oracle.r2dbc.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.DatabaseConfig.newConnection;
@@ -139,6 +145,122 @@ public class OracleConnectionImplTest {
 
   /**
    * Verifies the implementation of
+   * {@link OracleConnectionImpl#beginTransaction(TransactionDefinition)}
+   */
+  @Test
+  public void testBeginTransactionDefined() {
+    Connection sessionA =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Insert into this table after beginning a transaction
+      awaitExecution(sessionA.createStatement(
+        "CREATE TABLE testBeginTransactionDefined (value VARCHAR(10))"));
+
+      try {
+        // Expect IllegalArgumentException to be thrown for unsupported
+        // descriptions
+        assertThrows(IllegalArgumentException.class,
+          () -> sessionA.beginTransaction(IsolationLevel.SERIALIZABLE));
+        assertThrows(IllegalArgumentException.class,
+          () -> sessionA.beginTransaction(IsolationLevel.READ_UNCOMMITTED));
+        assertThrows(IllegalArgumentException.class,
+          () -> sessionA.beginTransaction(IsolationLevel.REPEATABLE_READ));
+        assertThrows(IllegalArgumentException.class,
+          () -> sessionA.beginTransaction(transactionDefinition(Map.of(
+            ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
+            READ_ONLY, true))));
+        assertThrows(IllegalArgumentException.class,
+          () -> sessionA.beginTransaction(transactionDefinition(Map.of(
+            ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
+            READ_ONLY, false))));
+        assertThrows(IllegalArgumentException.class,
+          () -> sessionA.beginTransaction(transactionDefinition(Map.of(
+            LOCK_WAIT_TIMEOUT, Duration.ofSeconds(10)))));
+
+        // Expect the publisher to set auto-commit false when the first
+        // subscriber subscribes
+        assertTrue(
+          sessionA.isAutoCommit(),
+          "Unexpected return value from isAutoCommit() before" +
+            " beginTransaction()");
+        Publisher<Void> beginTransactionPublisher =
+          sessionA.beginTransaction(IsolationLevel.READ_COMMITTED);
+        awaitNone(beginTransactionPublisher);
+        assertFalse(
+          sessionA.isAutoCommit(),
+          "Unexpected return value from isAutoCommit() after" +
+            " beginTransaction(IsolationLevel.READ_COMMITTED)");
+
+        // Expect the publisher to NOT repeatedly set auto-commit to false
+        // for each subscriber
+        awaitNone(sessionA.setAutoCommit(true));
+        awaitNone(beginTransactionPublisher);
+        assertTrue(
+          sessionA.isAutoCommit(),
+          "Unexpected return value from isAutoCommit() after multiple " +
+            "subscriptions to a beginTransaction(IsolationLevel" +
+            ".READ_COMMITTED) publisher");
+
+        // Now begin a transaction and verify that a table INSERT is not visible
+        // until the transaction is committed.
+        awaitNone(sessionA.beginTransaction(IsolationLevel.READ_COMMITTED));
+        assertFalse(
+          sessionA.isAutoCommit(),
+          "Unexpected return value from isAutoCommit() after" +
+            " beginTransaction()");
+        awaitUpdate(
+          1,
+          sessionA.createStatement(
+            "INSERT INTO testBeginTransactionDefined VALUES ('A')"));
+
+        // sessionB doesn't see the INSERT made in sessionA's open transaction
+        Connection sessionB =
+          Mono.from(newConnection()).block(connectTimeout());
+        try {
+          Statement selectInSessionB = sessionB.createStatement(
+            "SELECT value FROM testBeginTransactionDefined");
+          awaitQuery(
+            Collections.emptyList(), row -> 0, selectInSessionB);
+
+          // Now sessionA COMMITs and sessionB can now see the INSERT
+          awaitNone(sessionA.commitTransaction());
+          awaitQuery(
+            List.of("A"), row -> row.get("value"), selectInSessionB);
+        }
+        finally {
+          awaitNone(sessionB.close());
+        }
+      }
+      finally {
+        awaitExecution(sessionA.createStatement(
+          "DROP TABLE testBeginTransactionDefined"));
+      }
+    }
+    finally {
+      awaitNone(sessionA.close());
+    }
+  }
+
+  /**
+   * Returns a {@code TransactionDefinition} having a set of {@code Option} to
+   * value mappings specified as {@code optionValues}.
+   * @param optionValues {@code Option} to value mappings. Not null.
+   * @return {@code TransactionDefintion} specified by {@code optionValues}.
+   */
+  private static TransactionDefinition transactionDefinition(
+    Map<Option<?>, Object> optionValues) {
+    return new TransactionDefinition() {
+      @Override
+      public <T> T getAttribute(Option<T> option) {
+        @SuppressWarnings("unchecked")
+        T value = (T) optionValues.get(option);
+        return value;
+      }
+    };
+  }
+
+  /**
+   * Verifies the implementation of
    * {@link OracleConnectionImpl#close()}
    * TODO: Verify resource release upon Subscription.request(long). Consider
    * querying V$SESSION to check if JDBC connections are being closed correctly.
@@ -156,18 +278,36 @@ public class OracleConnectionImplTest {
     // connection is open
     awaitOne(true, connection.validate(ValidationDepth.LOCAL));
     awaitOne(true, connection.validate(ValidationDepth.REMOTE));
-    Statement statement = connection.createStatement("SELECT 1 FROM dual");
+    Statement statement = connection.createStatement("SELECT 1 FROM sys.dual");
     awaitQuery(List.of(1), row -> row.get(0, Integer.class), statement);
+    Batch batch = connection.createBatch()
+      .add("SELECT 2 FROM sys.dual");
+    awaitOne(2, Flux.from(batch.execute())
+      .flatMap(result ->
+        result.map((row, metadata) -> row.get(0, Integer.class))));
 
-    // Expect the connection and objects it created to be invalid after the
-    // connection is closed.
+    // Expect the close() Publisher to repeat signals to multiple subscribers
     awaitNone(closePublisher);
+
+    // Expect the validate(ValidationDepth) Publisher to emit false
     awaitOne(false, connection.validate(ValidationDepth.LOCAL));
     awaitOne(false, connection.validate(ValidationDepth.REMOTE));
-    awaitError(R2dbcException.class, statement.execute());
 
-    // Expect any synchronous methods to throw IllegalStateException when the
-    // connection is closed
+    // Expect the closed connection and objects it created to throw
+    // IllegalStateException when methods requiring an open connection are
+    // called
+    assertThrows(
+      IllegalStateException.class,
+      () -> statement.fetchSize(100));
+    assertThrows(
+      IllegalStateException.class,
+      statement::execute);
+    assertThrows(
+      IllegalStateException.class,
+      () -> batch.add("SELECT 100 FROM sys.dual"));
+    assertThrows(
+      IllegalStateException.class,
+      batch::execute);
     assertThrows(
       IllegalStateException.class,
       () -> connection.createStatement("SELECT 2 FROM dual"));
@@ -183,6 +323,35 @@ public class OracleConnectionImplTest {
     assertThrows(
       IllegalStateException.class,
       () -> connection.getTransactionIsolationLevel());
+    assertThrows(IllegalStateException.class,
+      () -> connection.beginTransaction());
+    assertThrows(IllegalStateException.class,
+      () -> connection.beginTransaction(IsolationLevel.READ_COMMITTED));
+    assertThrows(IllegalStateException.class,
+      () -> connection.commitTransaction());
+    assertThrows(IllegalStateException.class,
+      () -> connection.createBatch());
+    assertThrows(IllegalStateException.class,
+      () -> connection.createSavepoint("test"));
+    assertThrows(IllegalStateException.class,
+      () -> connection.createStatement("SELECT 2 FROM sys.daul"));
+    assertThrows(IllegalStateException.class,
+      () -> connection.getMetadata());
+    assertThrows(IllegalStateException.class,
+      () -> connection.getTransactionIsolationLevel());
+    assertThrows(IllegalStateException.class,
+      () -> connection.isAutoCommit());
+    assertThrows(IllegalStateException.class,
+      () -> connection.releaseSavepoint("test"));
+    assertThrows(IllegalStateException.class,
+      () -> connection.rollbackTransaction());
+    assertThrows(IllegalStateException.class,
+      () -> connection.rollbackTransactionToSavepoint("test"));
+    assertThrows(IllegalStateException.class,
+      () -> connection.setAutoCommit(true));
+    assertThrows(IllegalStateException.class,
+      () ->
+        connection.setTransactionIsolationLevel(IsolationLevel.READ_COMMITTED));
 
     // Expect multiple subscribers to see same the signal from the close()
     // publisher

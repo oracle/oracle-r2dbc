@@ -40,6 +40,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 
 /**
  * <p>
@@ -96,6 +97,7 @@ final class OracleBatchImpl implements Batch {
    */
   @Override
   public Batch add(String sql) {
+    requireOpenConnection(jdbcConnection);
     requireNonNull(sql, "sql is null");
     statements.add(new OracleStatementImpl(adapter, jdbcConnection, sql));
     return this;
@@ -139,6 +141,7 @@ final class OracleBatchImpl implements Batch {
    */
   @Override
   public Publisher<? extends Result> execute() {
+    requireOpenConnection(jdbcConnection);
     Queue<Statement> currentStatements = statements;
     statements = new LinkedList<>();
 
