@@ -30,7 +30,10 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Signal;
 
+import java.util.Iterator;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.BiFunction;
 
 import static java.util.Arrays.asList;
@@ -65,12 +68,14 @@ public class OracleResultImplTest {
         "CREATE TABLE testGetRowsUpdated (x NUMBER, y NUMBER)"));
       try {
         // Expect update count of 1 from each INSERT.
-        List<? extends Result> insertResults =
-          awaitMany(connection.createBatch()
+        Iterator<? extends Result> insertResults =
+          Flux.from(connection.createBatch()
             .add("INSERT INTO testGetRowsUpdated (x, y) VALUES (0, 0)")
             .add("INSERT INTO testGetRowsUpdated (x, y) VALUES (0, 1)")
-            .execute());
-        Result insertResult0 = insertResults.get(0);
+            .execute())
+            .toIterable()
+            .iterator();
+        Result insertResult0 = insertResults.next();
         Publisher<Integer> insertCountPublisher0 =
           insertResult0.getRowsUpdated();
         awaitOne(1, insertCountPublisher0);
@@ -84,7 +89,7 @@ public class OracleResultImplTest {
         // Expect update count publisher to support multiple subscribers
         awaitOne(1, insertCountPublisher0);
 
-        Result insertResult1 = insertResults.get(1);
+        Result insertResult1 = insertResults.next();
         Publisher<Integer> insertCountPublisher1 =
           insertResult1.getRowsUpdated();
         awaitOne(1, insertCountPublisher1);
@@ -98,13 +103,13 @@ public class OracleResultImplTest {
         // Expect update count publisher to support multiple subscribers
         awaitOne(1, insertCountPublisher1);
 
-        // Expect no update count from UPDATE of zero rows
+        // Expect an update count of zero from UPDATE of zero rows
         Result noUpdateResult = awaitOne(connection.createStatement(
           "UPDATE testGetRowsUpdated SET y = 99 WHERE x = 99")
           .execute());
         Publisher<Integer> noUpdateCountPublisher =
           noUpdateResult.getRowsUpdated();
-        awaitNone(noUpdateCountPublisher);
+        awaitOne(0, noUpdateCountPublisher);
 
         // Expect IllegalStateException from multiple Result consumptions.
         assertThrows(IllegalStateException.class,
@@ -112,7 +117,7 @@ public class OracleResultImplTest {
         assertThrows(IllegalStateException.class, noUpdateResult::getRowsUpdated);
 
         // Expect update count publisher to support multiple subscribers
-        awaitNone(noUpdateCountPublisher);
+        awaitOne(0, noUpdateCountPublisher);
 
         // Expect update count of 2 from UPDATE of 2 rows
         Result updateResult = awaitOne(connection.createStatement(
@@ -185,12 +190,14 @@ public class OracleResultImplTest {
         "CREATE TABLE testMap (x NUMBER, y NUMBER)"));
       try {
         // Expect no row data from each INSERT.
-        List<? extends Result> insertResults =
-          awaitMany(connection.createBatch()
+        Iterator<? extends Result> insertResults =
+          Flux.from(connection.createBatch()
             .add("INSERT INTO testMap (x, y) VALUES (0, 0)")
             .add("INSERT INTO testMap (x, y) VALUES (0, 1)")
-            .execute());
-        Result insertResult0 = insertResults.get(0);
+            .execute())
+            .toIterable()
+            .iterator();
+        Result insertResult0 = insertResults.next();
         Publisher<Object> insertRowPublisher0 =
           insertResult0.map((row, metadata) -> row.get(0));
         awaitNone(insertRowPublisher0);
@@ -204,7 +211,7 @@ public class OracleResultImplTest {
         // Expect row data publisher to reject multiple subscribers
         awaitError(IllegalStateException.class, insertRowPublisher0);
 
-        Result insertResult1 = insertResults.get(1);
+        Result insertResult1 = insertResults.next();
         Publisher<Object> insertRowPublisher1 =
           insertResult1.map((row, metadata) -> row.get(0));
         awaitNone(insertRowPublisher1);

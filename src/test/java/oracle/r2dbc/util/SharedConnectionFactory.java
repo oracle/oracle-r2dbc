@@ -27,14 +27,19 @@ import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryMetadata;
 import io.r2dbc.spi.ConnectionMetadata;
 import io.r2dbc.spi.IsolationLevel;
+import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.ValidationDepth;
 import org.reactivestreams.Publisher;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.LinkedList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static oracle.r2dbc.DatabaseConfig.user;
 
 /**
  * <p>
@@ -121,6 +126,73 @@ public class SharedConnectionFactory implements ConnectionFactory {
   }
 
   /**
+   * <p>
+   * Set to {@code true} to verify that all cursors have been closed when a
+   * borrowed connection is returned.
+   * </p><p>
+   * A system property provides a hook to disable verification if the database
+   * user can't have access to v$open_cursor, causing
+   * {@link #queryOpenCursors(Connection)} to result in ORA-00942.
+   * </p>
+   */
+  private static final Boolean IS_CURSOR_CLOSE_VERIFIED =
+    ! Boolean.getBoolean("oracle.r2bdc.disableCursorCloseVerification");
+
+  /**
+   * <p>
+   * Query that returns the SQL text of cursors that have not been closed.
+   * </p><p>
+   * The query doesn't return cursors for SQL beginning with "table_", because
+   * Oracle R2DBC can not close these cursors. These cursors seem to be
+   * implicitly created by database for stuff like LOB access, and can only
+   * be closed by the database.
+   * https://asktom.oracle.com/pls/apex/asktom.search?tag=vopen-cursorsql-text-showing-table-4-200-5e14-0-0-0#3332376126187r
+   * </p><p>
+   * This query also doesn't return the cursor for itself. This {@code String}
+   * field should be set as the bind value for the :this_query parameter in
+   * order to filter this query from querying itself.
+   * </p>
+   */
+  private static final String OPEN_CURSOR_QUERY =
+    "SELECT sql_text" +
+      " FROM v$open_cursor" +
+      " WHERE sid = userenv('sid')" +
+      " AND cursor_type = 'OPEN'" +
+      " AND sql_text NOT LIKE 'table_%'" +
+      " AND sql_text <> substr(:this_query, 1, 60)" +
+      " ORDER BY last_sql_active_time";
+
+  /**
+   * Returns a {@code Publisher} emitting the SQL Language text of all cursors
+   * currently opened by a {@code connection}.
+   * @param connection Database connection
+   * @return Publisher of SQL for open cursors, which may be an empty stream
+   * if there are no cursors open.
+   */
+  private static Publisher<String> queryOpenCursors(Connection connection) {
+
+    if (! IS_CURSOR_CLOSE_VERIFIED)
+      return Mono.empty();
+
+    return Mono.from(connection.createStatement(OPEN_CURSOR_QUERY)
+      .bind("this_query", OPEN_CURSOR_QUERY)
+      .execute())
+      .flatMapMany(result ->
+        result.map((row, metadata) ->
+          row.get("sql_text", String.class)))
+      .onErrorMap(R2dbcException.class, r2dbcException ->
+        // Handle ORA-00942
+        r2dbcException.getErrorCode() == 942
+          ? new RuntimeException(
+              "V$OPEN_CUROSR is not accessible to the test user. " +
+                "Grant access as SYSDBA with: " +
+                "\"GRANT SELECT ON v_$open_cursor TO "+user()+"\", " +
+                "or disable open cursor checks with: " +
+                " -Doracle.r2bdc.disableCursorCloseVerification=true")
+        : r2dbcException);
+  }
+
+  /**
    * Wraps a {@link Connection} in order to intercept calls to
    * {@link Connection#close()}. A call to {@code close()} will reset
    * the {@link #connection} to the original state it was in when
@@ -128,7 +200,7 @@ public class SharedConnectionFactory implements ConnectionFactory {
    * the {@link #returnedFuture} is completed to indicate that the connection is
    * ready for the next borrower to use.
    */
-  private final class BorrowedConnection implements Connection {
+  private static final class BorrowedConnection implements Connection {
 
     /** Borrowed connection that this connection delegates to */
     private final Connection connection;
@@ -138,7 +210,12 @@ public class SharedConnectionFactory implements ConnectionFactory {
 
     /** Set to true when this wrapper is closed */
     private volatile boolean isClosed = false;
-    private IsolationLevel initialIsolationLevel;
+
+    /**
+     * The isolation level of the connection when it was borrowed. When the
+     * borrowed connection is returned, it will be set back to this level.
+     */
+    private final IsolationLevel initialIsolationLevel;
 
     private BorrowedConnection(
       Connection connection,
@@ -149,29 +226,51 @@ public class SharedConnectionFactory implements ConnectionFactory {
     }
 
     /**
-     * Resets the connection's auto-commit state, setting it to {@code true}
-     * as it was when {@link ConnectionFactory#create()} created the
-     * connection.
-     * @return
+     * <p>
+     * Resets the connection to the original state it was in when borrowed
+     * and then completes the {@link #returnedFuture} to indicate that another
+     * borrower may use the connection.
+     * </p><p>
+     * This method will also verify that no cursors have been left open. The
+     * returned {@code Publisher} emits {@code onError} with an
+     * {@link AssertionError} if one or more cursors have not been closed.
+     * </p>
      */
     @Override
     public Publisher<Void> close() {
+
+      // No-op if already closed
       if (isClosed)
         return Mono.empty();
+      else
+        isClosed = true;
 
-      if (connection.isAutoCommit()) {
-        returnedFuture.complete(connection);
-      }
-      else {
-        Mono.from(connection.rollbackTransaction())
-          .concatWith(connection.setAutoCommit(true))
-          .concatWith(connection.setTransactionIsolationLevel(
-            initialIsolationLevel))
-          .doOnTerminate(() -> returnedFuture.complete(connection))
-          .subscribe();
-      }
+      return Flux.defer(()-> {
+          // Complete the returned future after cleaning up any transaction state
+          if (connection.isAutoCommit()) {
+            returnedFuture.complete(connection);
+            return Mono.empty();
+          }
+          else {
+            return Mono.from(connection.rollbackTransaction())
+              .concatWith(connection.setAutoCommit(true))
+              .concatWith(connection.setTransactionIsolationLevel(
+                initialIsolationLevel))
+              .doOnTerminate(() -> returnedFuture.complete(connection));
+          }
+        })
+        .thenMany(queryOpenCursors(connection))
+        .reduce(new LinkedList<String>(), (openCursorSqls, sql) -> {
+          openCursorSqls.add(sql);
+          return openCursorSqls;
+        })
+        .flatMap(openCursorSqls ->
+          openCursorSqls.isEmpty() || openCursorSqls.get(0).equals("0")
+            ? Mono.empty()
+            : Mono.error(new AssertionError(
+                "Cursors for the following SQL were not closed:\n" +
+                String.join("\n", openCursorSqls))));
 
-      return Mono.empty();
     }
 
     @Override
