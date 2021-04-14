@@ -252,7 +252,7 @@ final class OracleConnectionImpl implements Connection {
             " getTransactionIsoaltionLevel returns: " + jdbcIsolationLevel);
         }
 
-        setTransactionBuilder.append(" ISOLATION LEVEL = READ COMMITTED");
+        setTransactionBuilder.append(" ISOLATION LEVEL READ COMMITTED");
       }
       else {
         // TODO: Only supporting READ COMMITTED

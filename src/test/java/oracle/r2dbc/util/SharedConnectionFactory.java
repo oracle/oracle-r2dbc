@@ -29,6 +29,7 @@ import io.r2dbc.spi.ConnectionMetadata;
 import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Statement;
+import io.r2dbc.spi.TransactionDefinition;
 import io.r2dbc.spi.ValidationDepth;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -277,6 +278,12 @@ public class SharedConnectionFactory implements ConnectionFactory {
     public Publisher<Void> beginTransaction() {
       requireNotClosed();
       return connection.beginTransaction();
+    }
+
+    @Override
+    public Publisher<Void> beginTransaction(TransactionDefinition definition) {
+      requireNotClosed();
+      return connection.beginTransaction(definition);
     }
 
     @Override
