@@ -27,15 +27,25 @@ import io.r2dbc.spi.ConnectionMetadata;
 import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Statement;
+import io.r2dbc.spi.TransactionDefinition;
 import io.r2dbc.spi.ValidationDepth;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
+import java.sql.SQLException;
+
+import static io.r2dbc.spi.IsolationLevel.READ_COMMITTED;
+import static io.r2dbc.spi.IsolationLevel.SERIALIZABLE;
+import static io.r2dbc.spi.TransactionDefinition.ISOLATION_LEVEL;
+import static io.r2dbc.spi.TransactionDefinition.LOCK_WAIT_TIMEOUT;
+import static io.r2dbc.spi.TransactionDefinition.NAME;
+import static io.r2dbc.spi.TransactionDefinition.READ_ONLY;
 import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
 import static java.sql.Connection.TRANSACTION_SERIALIZABLE;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 
 /**
  * <p>
@@ -106,37 +116,175 @@ final class OracleConnectionImpl implements Connection {
    * subscription. Any signals emitted to the first subscription are
    * propagated to subsequent subscriptions.
    * </p>
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> beginTransaction() {
-    // The SET TRANSACTION command must specify an isolation level, and it
-    // the level must be the same as what the JDBC connection has been set to.
-    final String isolationLevel;
+    requireOpenConnection();
 
+    final IsolationLevel isolationLevel;
     int jdbcIsolationLevel =
       getOrHandleSQLException(jdbcConnection::getTransactionIsolation);
+
+    // Map JDBC's isolation level to an R2DBC IsolationLevel
     switch (jdbcIsolationLevel) {
       case TRANSACTION_READ_COMMITTED:
-        isolationLevel = "READ COMMITTED";
+        isolationLevel = READ_COMMITTED;
         break;
       case TRANSACTION_SERIALIZABLE:
-        isolationLevel = "SERIALIZABLE";
+        isolationLevel = SERIALIZABLE;
         break;
       default:
-        // In 21c, Oracle only supports READ COMMITTED or SERIALIZABLE, so the
-        // only code that can be verified is in the cases above.
-        throw OracleR2dbcExceptions.newNonTransientException(
+        // In 21c, Oracle only supports READ COMMITTED or SERIALIZABLE. Any
+        // other level is unexpected and has not been verified with test cases.
+        throw new IllegalArgumentException(
           "Unrecognized JDBC transaction isolation level: "
-            + jdbcIsolationLevel, null);
+            + jdbcIsolationLevel);
+    }
+
+    return beginTransaction(isolationLevel);
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by executing a {@code SET TRANSACTION}
+   * command to explicitly begin a transaction on the Oracle Database to which
+   * JDBC is connected.
+   * </p><p>
+   * The attributes of the {@code definition} specify parameters of the
+   * {@code SET TRANSACTION} command:
+   * </p><dl>
+   *   <dt>{@link TransactionDefinition#ISOLATION_LEVEL}</dt>
+   *   <dd>
+   *     Specifies the argument to an ISOLATION LEVEL clause. Only READ
+   *     COMMITTED is supported in this release of Oracle R2DBC. An
+   *     {@code IllegalArgumentException} is thrown if this option is
+   *     specified with {@link TransactionDefinition#READ_ONLY}; Oracle
+   *     Database does not support {@code SET TRANSACTION} commands that specify
+   *     both isolation level and read only.
+   *   </dd>
+   *   <dt>{@link TransactionDefinition#READ_ONLY}</dt>
+   *   <dd>
+   *     Specifies a clause of either {@code READ ONLY} or {@code READ WRITE},
+   *     if the value is {@code true} or {@code false}, respectively.
+   *     {@code IllegalArgumentException} is thrown if this option is
+   *     specified with {@link TransactionDefinition#ISOLATION_LEVEL}; Oracle
+   *     Database does not support {@code SET TRANSACTION} commands that specify
+   *     both isolation level and read only or read write.
+   *   </dd>
+   *   <dt>{@link TransactionDefinition#NAME}</dt>
+   *   <dd>
+   *     Specifies the argument to a NAME clause.
+   *   </dd>
+   *   <dt>{@link TransactionDefinition#LOCK_WAIT_TIMEOUT}</dt>
+   *   <dd>
+   *     Not supported in this release of Oracle R2DBC. Oracle Database does
+   *     not support {@code SET TRANSACTION} commands that specify a lock
+   *     wait timeout.
+   *   </dd>
+   * </dl>
+   *
+   * @implNote Supporting SERIALIZABLE isolation level requires a way to
+   * disable Oracle JDBC's result set caching feature.
+   *
+   * @implNote Supporting {@code LOCK_WAIT_TIMEOUT} could be emulated by
+   * executing {@code ALTER SESSION SET ddl_lock_wait=...}, and then resetting
+   * the value once the transaction ends.
+   *
+   * @throws IllegalArgumentException If the {@code definition} specifies an
+   * unsupported isolation level.
+   * @throws IllegalArgumentException If the {@code definition} specifies both
+   * an isolation level and read only.
+   * @throws IllegalArgumentException If the {@code definition} does
+   * not specify either an isolation level or read only.
+   * @throws IllegalArgumentException If the {@code definition} specifies a
+   * lock wait timeout.
+   * @throws IllegalStateException If this {@code Connection} is closed
+   */
+  @Override
+  public Publisher<Void> beginTransaction(TransactionDefinition definition) {
+    requireOpenConnection();
+
+    if (definition.getAttribute(LOCK_WAIT_TIMEOUT) != null) {
+      // TODO: ALTER SESSION SET ddl_lock_wait = ...
+      throw new IllegalArgumentException(
+        "LOCK_WAIT_TIMEOUT is not supported in this release");
     }
 
     return Mono.from(setAutoCommit(false))
-      .then(Mono.from(createStatement(
-        "SET TRANSACTION ISOLATION LEVEL " + isolationLevel)
+      .then(Mono.from(createStatement(composeSetTransaction(definition))
         .execute())
         .flatMap(result -> Mono.from(result.getRowsUpdated()))
         .then())
       .cache();
+  }
+
+  /**
+   * Composes a {@code SET TRANSACTION} statement with the attributes
+   * specified by a {@code definition}. The statement is composed as specified
+   * in the javadoc of
+   * {@link OracleConnectionImpl#beginTransaction(TransactionDefinition)}.
+   * @param definition A transaction definition. Not null.
+   * @return A SET TRANSACTION statement
+   */
+  private String composeSetTransaction(TransactionDefinition definition) {
+    StringBuilder setTransactionBuilder = new StringBuilder("SET TRANSACTION");
+    IsolationLevel isolationLevel = definition.getAttribute(ISOLATION_LEVEL);
+    Boolean isReadOnly = definition.getAttribute(READ_ONLY);
+
+    if (isolationLevel != null) {
+
+      if (isReadOnly != null) {
+        throw new IllegalArgumentException(
+          "Specifying both ISOLATION_LEVEL and READ_ONLY is not supported");
+      }
+
+      // Compose: SET TRANSACTION ISOLATION LEVEL ..."
+      if (isolationLevel.equals(READ_COMMITTED)) {
+
+        // Verify that the JDBC connection's isolation level is READ COMMITTED.
+        int jdbcIsolationLevel =
+          getOrHandleSQLException(jdbcConnection::getTransactionIsolation);
+        if (jdbcIsolationLevel != TRANSACTION_READ_COMMITTED) {
+          throw new IllegalStateException(
+            "JDBC connection's isolation level is not READ COMMITTED." +
+            " getTransactionIsoaltionLevel returns: " + jdbcIsolationLevel);
+        }
+
+        setTransactionBuilder.append(" ISOLATION LEVEL = READ COMMITTED");
+      }
+      else {
+        // TODO: Only supporting READ COMMITTED
+        throw new IllegalArgumentException(
+          "Unsupported ISOLATION_LEVEL: " + isolationLevel);
+      }
+    }
+    else if (isReadOnly != null) {
+      // Compose: SET TRANSACTION READ ..."
+      setTransactionBuilder.append(isReadOnly ? " READ ONLY" : " READ WRITE");
+    }
+    else {
+      throw new IllegalArgumentException(
+        "Either ISOLATION_LEVEL or READ_ONLY must be specified");
+    }
+
+    String name = definition.getAttribute(NAME);
+    if (name != null) {
+
+      // Use a JDBC Statement to enquote literals. The idea is to prevent any
+      // kind of SQL injection from appending a user defined name.
+      try (var jdbcStatement = jdbcConnection.createStatement()) {
+        // Compose: SET TRANSACTION ... NAME ..."
+        setTransactionBuilder.append(" NAME ")
+          .append(jdbcStatement.enquoteLiteral(name));
+      }
+      catch (SQLException sqlException) {
+        throw toR2dbcException(sqlException);
+      }
+    }
+
+    return setTransactionBuilder.toString();
   }
 
   /**
@@ -181,9 +329,11 @@ final class OracleConnectionImpl implements Connection {
    * Calling this method is a no-op if auto-commit is enabled. The returned
    * publisher emits {@code onComplete} if auto-commit is enabled.
    * </p>
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> commitTransaction() {
+    requireOpenConnection();
     return adapter.publishCommit(jdbcConnection);
   }
 
@@ -202,8 +352,7 @@ final class OracleConnectionImpl implements Connection {
    * from the same {@code Connection} will cause threads to become blocked as
    * each SQL command executes serially.
    * </p>
-   *
-   * @throws IllegalStateException if this connection is closed
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Batch createBatch() {
@@ -226,7 +375,7 @@ final class OracleConnectionImpl implements Connection {
    * blocked as each statement executes serially.
    * </p>
    *
-   * @throws IllegalStateException if this connection is closed
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Statement createStatement(String sql) {
@@ -241,7 +390,7 @@ final class OracleConnectionImpl implements Connection {
    * Implements the R2DBC SPI method by returning the current auto-commit mode
    * of the JDBC connection.
    * </p>
-   * @throws IllegalStateException if this connection is closed
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public boolean isAutoCommit() {
@@ -255,7 +404,7 @@ final class OracleConnectionImpl implements Connection {
    * Implements the R2DBC SPI method by returning metadata about the
    * Oracle Database to which JDBC is connected.
    * </p>
-   * @throws IllegalStateException if this connection is closed
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public ConnectionMetadata getMetadata() {
@@ -269,11 +418,14 @@ final class OracleConnectionImpl implements Connection {
    * <p>
    * This SPI method is not yet implemented.
    * </p>
-   * @throws UnsupportedOperationException Always
+   * @throws UnsupportedOperationException In this release of Oracle
+   * R2DBC
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> createSavepoint(String name) {
     requireNonNull(name, "name is null");
+    requireOpenConnection();
     // TODO: Execute SQL to create a savepoint. Examine and understand the
     // Oracle JDBC driver's implementation of
     // OracleConnection.oracleSetSavepoint(), and replicate it without
@@ -287,10 +439,12 @@ final class OracleConnectionImpl implements Connection {
    * Implements the R2DBC SPI method as a no-op. Oracle Database does not
    * support explicit releasing of savepoints.
    * </p>
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> releaseSavepoint(String name) {
     requireNonNull(name, "name is null");
+    requireOpenConnection();
     return Mono.empty();
   }
 
@@ -310,9 +464,11 @@ final class OracleConnectionImpl implements Connection {
    * Calling this method is a no-op if auto-commit is enabled. The returned
    * publisher emits {@code onComplete} if auto-commit is enabled.
    * </p>
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> rollbackTransaction() {
+    requireOpenConnection();
     return adapter.publishRollback(jdbcConnection);
   }
 
@@ -321,11 +477,14 @@ final class OracleConnectionImpl implements Connection {
    * <p>
    * This SPI method is not yet implemented.
    * </p>
-   * @throws UnsupportedOperationException In version 0.1.0
+   * @throws IllegalStateException If this {@code Connection} is closed
+   * @throws UnsupportedOperationException In version this release of Oracle
+   * R2DBC
    */
   @Override
   public Publisher<Void> rollbackTransactionToSavepoint(String name) {
     requireNonNull(name, "name is null");
+    requireOpenConnection();
     // TODO: Use the JDBC connection to rollback to a savepoint without blocking
     // a thread.
     throw new UnsupportedOperationException(
@@ -345,9 +504,11 @@ final class OracleConnectionImpl implements Connection {
    * auto-commit mode for each subscription. Signals emitted to the first
    * subscription are propagated to all subsequent subscriptions.
    * </p>
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> setAutoCommit(boolean autoCommit) {
+    requireOpenConnection();
     return Mono.defer(() -> getOrHandleSQLException(() -> {
       if (autoCommit == jdbcConnection.getAutoCommit()) {
         return Mono.empty(); // No change
@@ -377,12 +538,12 @@ final class OracleConnectionImpl implements Connection {
    * </p>
    * @implNote Currently, Oracle R2DBC only supports the READ COMMITTED
    * isolation level.
-   * @throws IllegalStateException if this connection is closed
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public IsolationLevel getTransactionIsolationLevel() {
     requireOpenConnection();
-    return IsolationLevel.READ_COMMITTED;
+    return READ_COMMITTED;
   }
 
   /**
@@ -412,17 +573,19 @@ final class OracleConnectionImpl implements Connection {
    * </p>
    * @implNote Currently, Oracle R2DBC only supports the READ COMMITTED
    * isolation level.
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> setTransactionIsolationLevel(
     IsolationLevel isolationLevel) {
     requireNonNull(isolationLevel, "isolationLevel is null");
+    requireOpenConnection();
 
     // TODO: Need to add a connection factory option that disables Oracle
     //  JDBC's Result Set caching function before SERIALIZABLE can be supported.
     // For now, the isolation level can never be changed from the default READ
     // COMMITTED.
-    if (isolationLevel.equals(IsolationLevel.READ_COMMITTED)) {
+    if (isolationLevel.equals(READ_COMMITTED)) {
       return Mono.empty();
     }
     else {
@@ -451,10 +614,12 @@ final class OracleConnectionImpl implements Connection {
    * @implNote Remote validation executes a SQL query against the {@code sys
    * .dual} table. It is assumed that all Oracle Databases have the {@code
    * sys.dual} table.
+   * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Boolean> validate(ValidationDepth depth) {
     requireNonNull(depth, "depth is null");
+    requireOpenConnection();
     return Mono.defer(() -> getOrHandleSQLException(() -> {
       if (jdbcConnection.isClosed()) {
         return Mono.just(false);

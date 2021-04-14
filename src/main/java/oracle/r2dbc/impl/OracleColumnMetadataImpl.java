@@ -39,6 +39,7 @@ import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Nullability;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Row;
+import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
 import oracle.jdbc.OracleTypes;
 import oracle.sql.json.OracleJsonObject;
@@ -610,6 +611,21 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
   @Override
   public Integer getScale() {
     return scale;
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by returning the R2DBC {@code Type} scale
+   * supplied from a
+   * JDBC
+   *
+   * </p>
+   * @return
+   */
+  @Override
+  public Type getType() {
+    return null; // TODO
   }
 
   /**
