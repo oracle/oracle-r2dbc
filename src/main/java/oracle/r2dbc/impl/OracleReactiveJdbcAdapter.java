@@ -50,6 +50,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Wrapper;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -58,6 +59,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Supplier;
+
+import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
+import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
+import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.SSL;
 
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
@@ -187,8 +196,18 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     );
 
   /**
+   * Extended {@code Option} that specifies an Oracle Net Connect Descriptor
+   * of the form "(DESCRIPTION=...)"
+   */
+  private static final Option<CharSequence> DESCRIPTOR =
+    Option.valueOf("oracleNetDescriptor");
+
+  /**
    * Java object types that are supported by
-   * {@link OraclePreparedStatement#setObject(int, Object)} in 21c.
+   * {@link OraclePreparedStatement#setObject(int, Object)} in 21c. This set
+   * was not derived from a comprehensive analysis of Oracle JDBC; It may be
+   * missing some supported types. Additional types should be added to this
+   * set if needed.
    */
   private static final Set<Class<?>> SUPPORTED_BIND_TYPES = Set.of(
     // The following types are listed in Table B-4 of the JDBC 4.3
@@ -251,53 +270,39 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * {@link OracleDataSource} that implements the Reactive Extensions APIs for
    * creating connections.
    * </p>
-   *
-   * <h3>Required Standard Options</h3>
+   * <h3>Composing a JDBC URL</h3>
    * <p>
-   * This implementation requires values to be set for the following options:
-   * </p><ul>
-   *   <li>{@link ConnectionFactoryOptions#HOST}</li>
-   * </ul><p>
-   * The values set for these options are used to compose an Oracle JDBC URL as:
+   * The {@code options} provided to this method are used to compose a URL
+   * for the JDBC {@code DataSource}. Values for standard
+   * {@link ConnectionFactoryOptions} of {@code HOST}, {@code PORT}, and
+   * {@code DATABASE} are used to compose the JDBC URL with {@code DATABASE}
+   * interpreted as a service name (not a system identifier (SID)):
    * </p><pre>
-   * jdbc:oracle:thin:@HOST
+   *   jdbc:oracle:thin:@HOST:PORT/DATABASE
    * </pre><p>
-   * This minimal JDBC URL may specify a TNS alias as a the HOST value when
-   * Oracle JDBC is configured to read a tnsnames.ora file.
-   * </p>
-   *
-   * <h3>Optional Standard Options</h3>
-   * <p>
-   * This implementation supports optional values that are set for the
-   * following options:
-   * </p><ul>
-   *   <li>{@link ConnectionFactoryOptions#PORT}</li>
-   *   <li>{@link ConnectionFactoryOptions#DATABASE}</li>
-   *   <li>{@link ConnectionFactoryOptions#USER}</li>
-   *   <li>{@link ConnectionFactoryOptions#PASSWORD}</li>
-   *   <li>{@link ConnectionFactoryOptions#CONNECT_TIMEOUT}</li>
-   *   <li>{@link ConnectionFactoryOptions#SSL}</li>
-   * </ul><p>
-   * When PORT and DATABASE are present, an Oracle JDBC URL is composed as:
+   * Alternatively, the host, port, and service name may be specified using an
+   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-8D28E91B-CB72-4DC8-AEFC-F5D583626CF6"></a>
+   * Oracle Net Descriptor</a>. The descriptor may be set as the value of an
+   * {@link Option} having the name "descriptor". When the descriptor option is
+   * present, the JDBC URL is composed as:
    * </p><pre>
-   * jdbc:oracle:thin:@HOST:PORT/DATABASE
+   *   jdbc:oracle:thin:@(DESCRIPTION=...)
    * </pre><p>
-   * Note that {@code DATABASE} is interpreted as the service name of an Oracle
-   * Database; It is not interpreted as a system identifier (SID).
+   * When the "descriptor" option is provided, it is invalid to specify any
+   * other options that might conflict with values also specified in the
+   * descriptor. For instance, the descriptor element of
+   * {@code (ADDRESSS=(HOST=...)(PORT=...)(PROTOCOL=...))} specifies values
+   * that overlap with the standard {@code Option}s of {@code HOST}, {@code
+   * PORT}, and {@code SSL}. An {@code IllegalArgumentException} is thrown
+   * when the descriptor is provided with any overlapping {@code Option}s.
    * </p><p>
-   * Values set for {@code USER} and {@code PASSWORD} options are used to
-   * authenticate with an Oracle Database.
-   * </p><p>
-   * A value set for {@code CONNECT_TIMEOUT} will be rounded up to the nearest
-   * whole second. When a value is set, any connection request that exceeds the
-   * specified duration of seconds will automatically be cancelled. The
-   * cancellation will result in an {@code onError} signal delivering an
-   * {@link io.r2dbc.spi.R2dbcTimeoutException} to a connection {@code
-   * Subscriber}.
-   * </p><p>
-   * A value of {@code true} set for {@code SSL} will configure the Oracle
-   * JDBC Driver to connect using the TCPS protocol (ie: SSL/TLS).
-   * </p>
+   * Note that the alias of a descriptor within a tnsnames.ora file may be
+   * specified as the descriptor {@code Option} as well. Where "db1" is an
+   * alias value set by the descriptor {@code Option}, a JDBC URL is composed
+   * as:
+   * </p><pre>
+   *   jdbc:oracle:thin:@db1
+   * </pre>
    *
    * <h3>Extended Options</h3>
    * <p>
@@ -319,8 +324,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * section of an R2DBC URL, Oracle R2DBC programmers are advised to use a
    * more secure method whenever possible.
    * </p><p>
-   * Non-sensitive options may be configured either programmatically by
-   * with {@link Option#valueOf(String)}, or by including name=value pairs
+   * Non-sensitive options may be configured either programmatically using
+   * {@link Option#valueOf(String)}, or by including name=value pairs
    * in the query section of an R2DBC URL. For example, a wallet location
    * could be configured programmatically as:
    * </p><pre>
@@ -415,6 +420,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * properly encoded by Oracle JDBC. If the data source is not configured
    * this way, the Oracle JDBC Driver uses the default character set of the
    * database, which may not support Unicode characters.
+   *
+   * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
+   * {@code Option} is provided with any other options that might have
+   * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
   @Override
   public DataSource createDataSource(ConnectionFactoryOptions options) {
@@ -437,19 +446,59 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * {@link #createDataSource(ConnectionFactoryOptions)}
    * @param options R2DBC options. Not null.
    * @return An Oracle JDBC URL composed from R2DBC options
+   * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
+   * {@code Option} is provided with any other options that might have
+   * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
   private static String composeJdbcUrl(ConnectionFactoryOptions options) {
-    String host = options.getRequiredValue(ConnectionFactoryOptions.HOST);
-    Integer port = options.getValue(ConnectionFactoryOptions.PORT);
-    String serviceName = options.getValue(ConnectionFactoryOptions.DATABASE);
-    Boolean isTcps = parseOptionValue(
-      ConnectionFactoryOptions.SSL, options, Boolean.class, Boolean::valueOf);
+    Object descriptor = options.getValue(DESCRIPTOR);
 
-    return String.format("jdbc:oracle:thin:@%s%s%s%s",
-      Boolean.TRUE.equals(isTcps) ? "tcps:" : "",
-      host,
-      port != null ? (":" + port) : "",
-      serviceName != null ? ("/" + serviceName) : "");
+    if (descriptor != null) {
+      validateDescriptorOptions(options);
+      return "jdbc:oracle:thin:@" + descriptor.toString();
+    }
+    else {
+      String host = options.getRequiredValue(HOST);
+      Integer port = options.getValue(PORT);
+      String serviceName = options.getValue(DATABASE);
+      Boolean isTcps = parseOptionValue(
+        SSL, options, Boolean.class, Boolean::valueOf);
+
+      return String.format("jdbc:oracle:thin:@%s%s%s%s",
+        Boolean.TRUE.equals(isTcps) ? "tcps:" : "",
+        host,
+        port != null ? (":" + port) : "",
+        serviceName != null ? ("/" + serviceName) : "");
+    }
+  }
+
+  /**
+   * Validates {@code options} when the {@link #DESCRIPTOR} {@code Option} is
+   * present. It is invalid to specify any other options having information
+   * that potentially conflicts with information in the descriptor, such as
+   * {@link ConnectionFactoryOptions#HOST}.
+   * @param options Options to validate
+   * @throws IllegalArgumentException If {@code options} are invalid
+   */
+  private static void validateDescriptorOptions(
+    ConnectionFactoryOptions options) {
+    Option<?>[] conflictingOptions =
+      Set.of(HOST, PORT, DATABASE, SSL)
+        .stream()
+        .filter(options::hasOption)
+        .filter(option ->
+          // Ignore options having a value that can be represented as a
+          // zero-length String; It may be necessary to include a zero-length
+          // host name in an R2DBC URL:
+          // r2dbc:oracle://user:password@?oracleNetDescriptor=...
+          ! options.getValue(option).toString().isEmpty())
+        .toArray(Option[]::new);
+
+    if (conflictingOptions.length != 0) {
+      throw new IllegalArgumentException(DESCRIPTOR.name()
+        + " Option has been specified with potentially conflicting Options: "
+        + Arrays.toString(conflictingOptions));
+    }
   }
 
   /**
@@ -464,19 +513,18 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static void configureStandardOptions(
     OracleDataSource oracleDataSource, ConnectionFactoryOptions options) {
 
-    String user = options.getValue(ConnectionFactoryOptions.USER);
+    String user = options.getValue(USER);
     if (user != null)
       runOrHandleSQLException(() -> oracleDataSource.setUser(user));
 
-    CharSequence password = options.getValue(ConnectionFactoryOptions.PASSWORD);
+    CharSequence password = options.getValue(PASSWORD);
     if (password != null) {
       runOrHandleSQLException(() ->
         oracleDataSource.setPassword(password.toString()));
     }
 
     Duration timeout = parseOptionValue(
-      ConnectionFactoryOptions.CONNECT_TIMEOUT, options, Duration.class,
-      Duration::parse);
+      CONNECT_TIMEOUT, options, Duration.class, Duration::parse);
     if (timeout != null) {
       runOrHandleSQLException(() ->
         oracleDataSource.setLoginTimeout(

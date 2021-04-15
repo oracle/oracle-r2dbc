@@ -27,6 +27,7 @@ import io.r2dbc.spi.ConnectionFactoryProvider;
 
 import java.util.ServiceLoader;
 
+import static io.r2dbc.spi.ConnectionFactoryOptions.DRIVER;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 
 /**
@@ -83,8 +84,13 @@ public final class OracleConnectionFactoryProviderImpl
    * {@code ConnectionFactory} that applies values specified by the {@code
    * options} parameter, when opening connections to an Oracle Database.
    * </p>
+   *
    * @throws IllegalStateException If any option required by
    * {@link OracleConnectionFactoryImpl} is not specified by {@code options}.
+   *
+   * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
+   * {@code Option} is provided with any other options that might have
+   * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
   @Override
   public ConnectionFactory create(ConnectionFactoryOptions options) {
@@ -103,8 +109,7 @@ public final class OracleConnectionFactoryProviderImpl
   @Override
   public boolean supports(ConnectionFactoryOptions options) {
     requireNonNull(options, "options must not be null.");
-    return DRIVER_IDENTIFIER.equals(
-      options.getValue(ConnectionFactoryOptions.DRIVER));
+    return DRIVER_IDENTIFIER.equals(options.getValue(DRIVER));
   }
 
   /**
