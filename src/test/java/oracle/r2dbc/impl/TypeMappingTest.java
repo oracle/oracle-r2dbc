@@ -59,6 +59,7 @@ import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * <p>
@@ -373,9 +374,8 @@ public class TypeMappingTest {
   public void testJsonMapping() {
 
     // The JSON data type was introduced in Oracle Database version 21c, so this
-    // test is a no-op if the version is older than 21c.
-    if (databaseVersion() < 21)
-      return;
+    // test is skipped if the version is older than 21c.
+    assumeTrue(databaseVersion() < 21);
 
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());

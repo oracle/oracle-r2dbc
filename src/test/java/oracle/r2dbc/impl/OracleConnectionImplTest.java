@@ -27,6 +27,7 @@ import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.Option;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
+import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.TransactionDefinition;
 import io.r2dbc.spi.ValidationDepth;
@@ -39,12 +40,17 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static io.r2dbc.spi.TransactionDefinition.*;
+import static java.util.Collections.emptyMap;
 import static oracle.r2dbc.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.DatabaseConfig.newConnection;
+import static oracle.r2dbc.DatabaseConfig.sqlTimeout;
+import static oracle.r2dbc.DatabaseConfig.user;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
@@ -58,6 +64,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Verifies that
@@ -75,68 +82,7 @@ public class OracleConnectionImplTest {
     Connection sessionA =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      // Insert into this table after beginning a transaction
-      awaitExecution(sessionA.createStatement(
-        "CREATE TABLE testBeginTransaction (value VARCHAR(10))"));
-
-      try {
-        // Expect the publisher to set auto-commit false when the first
-        // subscriber subscribes
-        assertTrue(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() before" +
-            " beginTransaction()");
-        Publisher<Void> beginTransactionPublisher =
-          sessionA.beginTransaction();
-        awaitNone(beginTransactionPublisher);
-        assertFalse(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() after" +
-            " beginTransaction()");
-
-        // Expect the publisher to NOT repeatedly set auto-commit to false
-        // for each subscriber
-        awaitNone(sessionA.setAutoCommit(true));
-        awaitNone(beginTransactionPublisher);
-        assertTrue(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() after multiple " +
-            "subscriptions to a beginTransaction() publisher");
-
-        // Now begin a transaction and verify that a table INSERT is not visible
-        // until the transaction is committed.
-        awaitNone(sessionA.beginTransaction());
-        assertFalse(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() after" +
-            " beginTransaction()");
-        awaitUpdate(
-          1,
-          sessionA.createStatement(
-            "INSERT INTO testBeginTransaction VALUES ('A')"));
-
-        // sessionB doesn't see the INSERT made in sessionA's open transaction
-        Connection sessionB =
-          Mono.from(newConnection()).block(connectTimeout());
-        try {
-          Statement selectInSessionB = sessionB.createStatement(
-            "SELECT value FROM testBeginTransaction");
-          awaitQuery(
-            Collections.emptyList(), row -> 0, selectInSessionB);
-
-          // Now sessionA COMMITs and sessionB can now see the INSERT
-          awaitNone(sessionA.commitTransaction());
-          awaitQuery(
-            List.of("A"), row -> row.get("value"), selectInSessionB);
-        }
-        finally {
-          awaitNone(sessionB.close());
-        }
-      }
-      finally {
-        awaitExecution(sessionA.createStatement(
-          "DROP TABLE testBeginTransaction"));
-      }
+      verifyReadCommittedIsolation(sessionA, sessionA.beginTransaction());
     }
     finally {
       awaitNone(sessionA.close());
@@ -152,92 +98,284 @@ public class OracleConnectionImplTest {
     Connection sessionA =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
+      // Expect IllegalArgumentException to be thrown for unsupported
+      // descriptions
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(null));
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(transactionDefinition(emptyMap())));
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(IsolationLevel.SERIALIZABLE));
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(IsolationLevel.READ_UNCOMMITTED));
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(IsolationLevel.REPEATABLE_READ));
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(transactionDefinition(Map.of(
+          ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
+          READ_ONLY, true))));
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(transactionDefinition(Map.of(
+          ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
+          READ_ONLY, false))));
+      assertThrows(IllegalArgumentException.class,
+        () -> sessionA.beginTransaction(transactionDefinition(Map.of(
+          LOCK_WAIT_TIMEOUT, Duration.ofSeconds(10)))));
+
+      verifyReadCommittedIsolation(sessionA,
+        sessionA.beginTransaction(IsolationLevel.READ_COMMITTED));
+    }
+    finally {
+      awaitNone(sessionA.close());
+    }
+  }
+
+  /**
+   * Verifies
+   * {@link OracleConnectionImpl#beginTransaction(TransactionDefinition)} with
+   * {@link TransactionDefinition#NAME} begins a transaction with the
+   * specified name.
+   */
+  @Test
+  public void testBeginTransactionName() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+
+    // Check if the test user has access to v$transaction
+    assumeTrue(awaitOne(Flux.from(connection.createStatement(
+      "SELECT name FROM v$transaction FETCH FIRST ROW ONLY")
+        .execute())
+        .map(result -> {
+          result.getRowsUpdated();
+          return true;
+        })
+        .onErrorResume(R2dbcException.class, r2dbcException ->
+          // ORA-00942 is raised when the user doesn't have access
+          942 == r2dbcException.getErrorCode()
+            ? Mono.just(false)
+            : Mono.error(r2dbcException))),
+      "V$TRANSACTION is not accessible to the test user. " +
+        "Grant access as SYSDBA with: " +
+        "\"GRANT SELECT ON v_$transaction TO "+user()+"\"");
+
+    try {
       // Insert into this table after beginning a transaction
-      awaitExecution(sessionA.createStatement(
-        "CREATE TABLE testBeginTransactionDefined (value VARCHAR(10))"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testBeginTransactionName (value VARCHAR(10))"));
+
+      // Expect auto-commit to be true before the transaction begins
+      assertTrue(connection.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() before" +
+          " beginTransaction(TransactionDefinition)");
+
+      // Try to use a unique transaction name
+      String name = "testBeginTransactionName : " + System.nanoTime();
+      awaitNone(connection.beginTransaction(transactionDefinition(Map.of(
+        NAME, name))));
+
+      // Expect auto-commit to be false after the transaction begins
+      assertFalse(connection.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() after" +
+          " beginTransaction(TransactionDefinition)");
+
+      // Verify the transaction name appears in v$transaction. The name
+      // will only appear after executing DML within the transaction, so
+      // execute an INSERT first.
+      awaitUpdate(1, connection.createStatement(
+        "INSERT INTO testBeginTransactionName VALUES ('A')"));
+      awaitQuery(List.of(name),
+        row -> row.get("name", String.class),
+        connection.createStatement(
+          "SELECT name FROM v$transaction WHERE name = :name")
+          .bind("name", name));
+
+      awaitNone(connection.rollbackTransaction());
+    }
+    finally {
+      awaitExecution(connection.createStatement(
+        "DROP TABLE testBeginTransactionName"));
+      awaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies
+   * {@link OracleConnectionImpl#beginTransaction(TransactionDefinition)} with
+   * {@link TransactionDefinition#READ_ONLY} having a value of {@code true}
+   */
+  @Test
+  public void testBeginTransactionReadOnly() {
+    Connection sessionA =
+      Mono.from(sharedConnection()).block(connectTimeout());
+
+    try {
+      Connection sessionB =
+        Mono.from(newConnection()).block(connectTimeout());
 
       try {
-        // Expect IllegalArgumentException to be thrown for unsupported
-        // descriptions
-        assertThrows(IllegalArgumentException.class,
-          () -> sessionA.beginTransaction(IsolationLevel.SERIALIZABLE));
-        assertThrows(IllegalArgumentException.class,
-          () -> sessionA.beginTransaction(IsolationLevel.READ_UNCOMMITTED));
-        assertThrows(IllegalArgumentException.class,
-          () -> sessionA.beginTransaction(IsolationLevel.REPEATABLE_READ));
-        assertThrows(IllegalArgumentException.class,
-          () -> sessionA.beginTransaction(transactionDefinition(Map.of(
-            ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
-            READ_ONLY, true))));
-        assertThrows(IllegalArgumentException.class,
-          () -> sessionA.beginTransaction(transactionDefinition(Map.of(
-            ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
-            READ_ONLY, false))));
-        assertThrows(IllegalArgumentException.class,
-          () -> sessionA.beginTransaction(transactionDefinition(Map.of(
-            LOCK_WAIT_TIMEOUT, Duration.ofSeconds(10)))));
-
-        // Expect the publisher to set auto-commit false when the first
-        // subscriber subscribes
-        assertTrue(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() before" +
-            " beginTransaction()");
-        Publisher<Void> beginTransactionPublisher =
-          sessionA.beginTransaction(IsolationLevel.READ_COMMITTED);
-        awaitNone(beginTransactionPublisher);
-        assertFalse(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() after" +
-            " beginTransaction(IsolationLevel.READ_COMMITTED)");
-
-        // Expect the publisher to NOT repeatedly set auto-commit to false
-        // for each subscriber
-        awaitNone(sessionA.setAutoCommit(true));
-        awaitNone(beginTransactionPublisher);
-        assertTrue(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() after multiple " +
-            "subscriptions to a beginTransaction(IsolationLevel" +
-            ".READ_COMMITTED) publisher");
-
-        // Now begin a transaction and verify that a table INSERT is not visible
-        // until the transaction is committed.
-        awaitNone(sessionA.beginTransaction(IsolationLevel.READ_COMMITTED));
-        assertFalse(
-          sessionA.isAutoCommit(),
-          "Unexpected return value from isAutoCommit() after" +
-            " beginTransaction()");
-        awaitUpdate(
-          1,
-          sessionA.createStatement(
-            "INSERT INTO testBeginTransactionDefined VALUES ('A')"));
-
-        // sessionB doesn't see the INSERT made in sessionA's open transaction
-        Connection sessionB =
-          Mono.from(newConnection()).block(connectTimeout());
-        try {
-          Statement selectInSessionB = sessionB.createStatement(
-            "SELECT value FROM testBeginTransactionDefined");
-          awaitQuery(
-            Collections.emptyList(), row -> 0, selectInSessionB);
-
-          // Now sessionA COMMITs and sessionB can now see the INSERT
-          awaitNone(sessionA.commitTransaction());
-          awaitQuery(
-            List.of("A"), row -> row.get("value"), selectInSessionB);
-        }
-        finally {
-          awaitNone(sessionB.close());
-        }
-      }
-      finally {
         awaitExecution(sessionA.createStatement(
-          "DROP TABLE testBeginTransactionDefined"));
+          "CREATE TABLE testBeginTransactionReadOnly (value VARCHAR(10))"));
+
+        // Workaround a known database limitation in which an ORA-01466 error
+        // results from querying a table during a READ ONLY transaction when
+        // the transaction begins less than one second after the table was
+        // created; The database incorrectly detects that the table was altered
+        // after the transaction began.
+        try{Thread.sleep(1_000L);}catch(Throwable e){e.printStackTrace();}
+
+        // Commit one insert into a table with a different session before
+        // sessionA's transaction begins
+        awaitNone(sessionB.beginTransaction());
+        awaitUpdate(1, sessionB.createStatement(
+          "INSERT INTO testBeginTransactionReadOnly VALUES ('a')"));
+        awaitNone(sessionB.commitTransaction());
+
+        // Insert one more row without committing
+        awaitNone(sessionB.beginTransaction());
+        awaitUpdate(1, sessionB.createStatement(
+          "INSERT INTO testBeginTransactionReadOnly VALUES ('b')"));
+
+        // Begin a READ ONLY transaction with sessionA and expect a query result
+        // having only the committed row, and not the uncomitted row
+        awaitNone(sessionA.commitTransaction());
+        awaitNone(sessionA.beginTransaction(transactionDefinition(Map.of(
+          READ_ONLY, true))));
+        awaitQuery(List.of("a"), row -> row.get(0, String.class),
+          sessionA.createStatement(
+            "SELECT value FROM testBeginTransactionReadOnly"));
+
+        // Commit the uncommitted row on sessionB, and expect it to not be
+        // visible in sessionA's READ ONLY transaction
+        awaitNone(sessionB.commitTransaction());
+        awaitQuery(List.of("a"), row -> row.get(0, String.class),
+          sessionA.createStatement(
+            "SELECT value FROM testBeginTransactionReadOnly"));
+
+        // End sessionA's transaction and expect both inserts to become visible
+        awaitNone(sessionA.commitTransaction());
+        awaitQuery(List.of("a", "b"), row -> row.get(0, String.class),
+          sessionA.createStatement(
+            "SELECT value FROM testBeginTransactionReadOnly"));
+      }
+      catch (Throwable e) {e.printStackTrace();}
+      finally {
+        awaitExecution(sessionB.createStatement(
+          "DROP TABLE testBeginTransactionReadOnly"));
+        awaitNone(sessionB.close());
       }
     }
     finally {
       awaitNone(sessionA.close());
+    }
+  }
+
+  /**
+   * Verifies
+   * {@link OracleConnectionImpl#beginTransaction(TransactionDefinition)} with
+   * {@link TransactionDefinition#READ_ONLY} having a value of {@code false}
+   */
+  @Test
+  public void testBeginTransactionReadWrite() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      verifyReadCommittedIsolation(connection,
+        connection.beginTransaction(transactionDefinition(Map.of(
+          READ_ONLY, false))));
+    }
+    finally {
+      awaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies
+   * {@link OracleConnectionImpl#beginTransaction(TransactionDefinition)} with
+   * {@link TransactionDefinition#NAME} begins a transaction with the default
+   * isolation level, READ COMMITTED.
+   */
+  @Test
+  public void testBeginTransactionNameIsolationLevel() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Try to use a unique transaction name
+      String name =
+        "testBeginTransactionNameIsolationLevel : " + System.nanoTime();
+      verifyReadCommittedIsolation(connection,
+        connection.beginTransaction(transactionDefinition(Map.of(NAME, name))));
+    }
+    finally {
+      awaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that a {@code beginTransactionPublisher} begins a transaction
+   * with the READ COMMITTED isolation level for {@code sessionA}
+   * @param sessionA Database session
+   * @param beginTransactionPublisher Publishes {@code onComplete} when a
+   * READ COMMITTED transaction begins for {@code sessionA}
+   */
+  private static void verifyReadCommittedIsolation(
+    Connection sessionA, Publisher<Void> beginTransactionPublisher) {
+
+    // Expect the publisher to set auto-commit false when the first
+    // subscriber subscribes
+    assertTrue(sessionA.isAutoCommit(),
+      "Unexpected return value from isAutoCommit() before" +
+        " beginTransaction()");
+
+    try {
+      // Insert into this table after beginning a transaction
+      awaitExecution(sessionA.createStatement(
+        "CREATE TABLE verifyReadCommittedIsolation (value VARCHAR(10))"));
+
+      awaitNone(beginTransactionPublisher);
+      assertFalse(
+        sessionA.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() after" +
+          " beginTransaction()");
+
+      // Expect the publisher to NOT repeatedly set auto-commit to false
+      // for each subscriber
+      awaitNone(sessionA.setAutoCommit(true));
+      awaitNone(beginTransactionPublisher);
+      assertTrue(
+        sessionA.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() after multiple " +
+          "subscriptions to a beginTransaction() publisher");
+
+      // Now begin a transaction and verify that a table INSERT is not visible
+      // until the transaction is committed.
+      awaitNone(sessionA.beginTransaction());
+      assertFalse(
+        sessionA.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() after" +
+          " beginTransaction()");
+      awaitUpdate(1, sessionA.createStatement(
+        "INSERT INTO verifyReadCommittedIsolation VALUES ('A')"));
+
+      // sessionB doesn't see the INSERT made in sessionA's open transaction
+      Connection sessionB =
+        Mono.from(newConnection()).block(connectTimeout());
+      try {
+        Statement selectInSessionB = sessionB.createStatement(
+          "SELECT value FROM verifyReadCommittedIsolation");
+        awaitQuery(
+          Collections.emptyList(), row -> 0, selectInSessionB);
+
+        // Now sessionA COMMITs and sessionB can now see the INSERT
+        awaitNone(sessionA.commitTransaction());
+        awaitQuery(List.of("A"), row -> row.get("value"), selectInSessionB);
+      }
+      finally {
+        awaitNone(sessionB.close());
+      }
+    }
+    finally {
+      awaitExecution(sessionA.createStatement(
+        "DROP TABLE verifyReadCommittedIsolation"));
     }
   }
 

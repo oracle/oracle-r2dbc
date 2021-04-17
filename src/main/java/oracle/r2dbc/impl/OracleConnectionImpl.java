@@ -167,8 +167,8 @@ final class OracleConnectionImpl implements Connection {
    *   </dd>
    *   <dt>{@link TransactionDefinition#READ_ONLY}</dt>
    *   <dd>
-   *     Specifies a clause of either {@code READ ONLY} or {@code READ WRITE},
-   *     if the value is {@code true} or {@code false}, respectively.
+   *     Specifies a clause of {@code READ ONLY} if the value is {@code true},
+   *     or {@code READ WRITE} if the value is {@code false}.
    *     {@code IllegalArgumentException} is thrown if this option is
    *     specified with {@link TransactionDefinition#ISOLATION_LEVEL}; Oracle
    *     Database does not support {@code SET TRANSACTION} commands that specify
@@ -176,7 +176,11 @@ final class OracleConnectionImpl implements Connection {
    *   </dd>
    *   <dt>{@link TransactionDefinition#NAME}</dt>
    *   <dd>
-   *     Specifies the argument to a NAME clause.
+   *     Specifies the argument to a NAME clause. If this option is specified
+   *     without {@link TransactionDefinition#ISOLATION_LEVEL} or
+   *     {@link TransactionDefinition#READ_ONLY}, the database begins a
+   *     transaction having the default isolation leve, READ COMMITTED, and
+   *     the specified name.
    *   </dd>
    *   <dt>{@link TransactionDefinition#LOCK_WAIT_TIMEOUT}</dt>
    *   <dd>
@@ -184,7 +188,11 @@ final class OracleConnectionImpl implements Connection {
    *     not support {@code SET TRANSACTION} commands that specify a lock
    *     wait timeout.
    *   </dd>
-   * </dl>
+   * </dl><p>
+   * Any attribute that is not listed above is ignored and does not affect the
+   * behavior of this method.
+   * </p>
+   *
    *
    * @implNote Supporting SERIALIZABLE isolation level requires a way to
    * disable Oracle JDBC's result set caching feature.
@@ -197,8 +205,8 @@ final class OracleConnectionImpl implements Connection {
    * unsupported isolation level.
    * @throws IllegalArgumentException If the {@code definition} specifies both
    * an isolation level and read only.
-   * @throws IllegalArgumentException If the {@code definition} does
-   * not specify either an isolation level or read only.
+   * @throws IllegalArgumentException If the {@code definition} does not
+   * specify an isolation level, read only, or name.
    * @throws IllegalArgumentException If the {@code definition} specifies a
    * lock wait timeout.
    * @throws IllegalStateException If this {@code Connection} is closed
@@ -206,12 +214,8 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Void> beginTransaction(TransactionDefinition definition) {
     requireOpenConnection(jdbcConnection);
-
-    if (definition.getAttribute(LOCK_WAIT_TIMEOUT) != null) {
-      // TODO: ALTER SESSION SET ddl_lock_wait = ...
-      throw new IllegalArgumentException(
-        "LOCK_WAIT_TIMEOUT is not supported in this release");
-    }
+    requireNonNull(definition, "definition is null");
+    validateTransactionDefinition(definition);
 
     return Mono.from(setAutoCommit(false))
       .then(Mono.from(createStatement(composeSetTransaction(definition))
@@ -233,6 +237,65 @@ final class OracleConnectionImpl implements Connection {
     StringBuilder setTransactionBuilder = new StringBuilder("SET TRANSACTION");
     IsolationLevel isolationLevel = definition.getAttribute(ISOLATION_LEVEL);
     Boolean isReadOnly = definition.getAttribute(READ_ONLY);
+    String name = definition.getAttribute(NAME);
+
+    if (isolationLevel != null) {
+      // Compose: SET TRANSACTION ISOLATION LEVEL ..."
+      if (READ_COMMITTED.equals(isolationLevel)) {
+        setTransactionBuilder.append(" ISOLATION LEVEL READ COMMITTED");
+      }
+      else if (SERIALIZABLE.equals(isolationLevel)) {
+        setTransactionBuilder.append(" ISOLATION LEVEL SERIALIZABLE");
+      }
+      else {
+        throw new IllegalArgumentException(
+          "Unsupported isolation level:" + isolationLevel);
+      }
+    }
+    else if (isReadOnly != null) {
+      // Compose: SET TRANSACTION READ ..."
+      setTransactionBuilder.append(isReadOnly ? " READ ONLY" : " READ WRITE");
+    }
+
+    if (name != null) {
+      // Compose: SET TRANSACTION ... NAME ..."
+      setTransactionBuilder.append(" NAME ")
+        // Enquote the name to prevent any kind of SQL injection
+        .append(enquoteLiteral(name));
+    }
+
+    return setTransactionBuilder.toString();
+  }
+
+  /**
+   * Enquotes a literal value by invoking
+   * {@link java.sql.Statement#enquoteLiteral(String)} on a {@code Statement}
+   * created by the {@link #jdbcConnection}.
+   * @param literal A literal value to enquote. Not null.
+   * @return An enquoted form of the {@code literal} value.
+   */
+  private String enquoteLiteral(String literal) {
+    try (var jdbcStatement = jdbcConnection.createStatement()) {
+      return jdbcStatement.enquoteLiteral(literal);
+    }
+    catch (SQLException sqlException) {
+      throw toR2dbcException(sqlException);
+    }
+  }
+
+  /**
+   * Validates the combination of attributes specified by a
+   * {@code TransactionDefinition}. The validation is performed as specified
+   * in the javadoc of
+   * {@link OracleConnectionImpl#beginTransaction(TransactionDefinition)}.
+   * @param definition {@code TransactionDefinition} to validate. Not null.
+   * @throws IllegalArgumentException If the {@code definition} is not valid.
+   */
+  private static void validateTransactionDefinition(
+    TransactionDefinition definition) {
+    IsolationLevel isolationLevel = definition.getAttribute(ISOLATION_LEVEL);
+    Boolean isReadOnly = definition.getAttribute(READ_ONLY);
+    String name = definition.getAttribute(NAME);
 
     if (isolationLevel != null) {
 
@@ -241,51 +304,23 @@ final class OracleConnectionImpl implements Connection {
           "Specifying both ISOLATION_LEVEL and READ_ONLY is not supported");
       }
 
-      // Compose: SET TRANSACTION ISOLATION LEVEL ..."
-      if (isolationLevel.equals(READ_COMMITTED)) {
-
-        // Verify that the JDBC connection's isolation level is READ COMMITTED.
-        int jdbcIsolationLevel =
-          getOrHandleSQLException(jdbcConnection::getTransactionIsolation);
-        if (jdbcIsolationLevel != TRANSACTION_READ_COMMITTED) {
-          throw new IllegalStateException(
-            "JDBC connection's isolation level is not READ COMMITTED." +
-            " getTransactionIsoaltionLevel returns: " + jdbcIsolationLevel);
-        }
-
-        setTransactionBuilder.append(" ISOLATION LEVEL READ COMMITTED");
-      }
-      else {
-        // TODO: Only supporting READ COMMITTED
+      // TODO: Only supporting READ COMMITTED
+      if (! isolationLevel.equals(READ_COMMITTED)) {
         throw new IllegalArgumentException(
           "Unsupported ISOLATION_LEVEL: " + isolationLevel);
       }
     }
-    else if (isReadOnly != null) {
-      // Compose: SET TRANSACTION READ ..."
-      setTransactionBuilder.append(isReadOnly ? " READ ONLY" : " READ WRITE");
-    }
-    else {
+    else if (isReadOnly == null && name == null) {
       throw new IllegalArgumentException(
-        "Either ISOLATION_LEVEL or READ_ONLY must be specified");
+        "Transaction definition does not specify an isolation level, read " +
+          "only, or name. At least one must be specified.");
     }
 
-    String name = definition.getAttribute(NAME);
-    if (name != null) {
-
-      // Use a JDBC Statement to enquote literals. The idea is to prevent any
-      // kind of SQL injection from appending a user defined name.
-      try (var jdbcStatement = jdbcConnection.createStatement()) {
-        // Compose: SET TRANSACTION ... NAME ..."
-        setTransactionBuilder.append(" NAME ")
-          .append(jdbcStatement.enquoteLiteral(name));
-      }
-      catch (SQLException sqlException) {
-        throw toR2dbcException(sqlException);
-      }
+    if (definition.getAttribute(LOCK_WAIT_TIMEOUT) != null) {
+      // TODO: ALTER SESSION SET ddl_lock_wait = ...
+      throw new IllegalArgumentException(
+        "LOCK_WAIT_TIMEOUT is not supported in this release");
     }
-
-    return setTransactionBuilder.toString();
   }
 
   /**
