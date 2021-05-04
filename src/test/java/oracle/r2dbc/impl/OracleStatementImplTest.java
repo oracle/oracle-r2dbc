@@ -22,7 +22,9 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,7 @@ import static java.util.Arrays.asList;
 import static oracle.r2dbc.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.DatabaseConfig.newConnection;
 import static oracle.r2dbc.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.DatabaseConfig.showErrors;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitNone;
@@ -966,7 +969,7 @@ public class OracleStatementImplTest {
 
       // Expect an error when attempting to batch execute with generated
       // values
-      awaitError(R2dbcException.class,
+      assertThrows(IllegalStateException.class, () ->
         statement.bind(0, "a").add()
           .bind(0, "b").add()
           .bind(0, "c").add()
@@ -1050,7 +1053,6 @@ public class OracleStatementImplTest {
     }
   }
 
-
   /**
    * Verifies the implementation of
    * {@link OracleStatementImpl#fetchSize(int)
@@ -1082,4 +1084,509 @@ public class OracleStatementImplTest {
       awaitNone(connection.close());
     }
   }
+
+  /**
+   * Verifies {@link OracleStatementImpl#execute()} when calling a procedure
+   * having no out parameters.
+   */
+  @Test
+  public void testNoOutCall() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testNoOutCall (value VARCHAR2(100))"));
+
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testNoOutCallAdd(" +
+          "value VARCHAR2 DEFAULT 'Default Value') IS" +
+          " BEGIN " +
+          " INSERT INTO testNoOutCall VALUES (value);" +
+          " END;"));
+
+      // Execute the procedure with no out parameters. Expect a single Result
+      // with no update count. Expect the IN parameter's default value to
+      // have been inserted by the call.
+      Result result0 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd; END;")
+        .execute());
+      awaitNone(result0.getRowsUpdated());
+      awaitQuery(asList("Default Value"),
+        row -> row.get(0),
+        connection.createStatement("SELECT * FROM testNoOutCall"));
+
+      // Execute the procedure again with no out parameters. Expect a single
+      // Result with no rows. Expect the IN parameter's default value to have
+      // been inserted by the call.
+      Result result1 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd; END;")
+        .execute());
+      awaitNone(result1.map((row, metadata) -> "Unexpected"));
+      awaitQuery(asList("Default Value", "Default Value"),
+        row -> row.get(0),
+        connection.createStatement("SELECT * FROM testNoOutCall"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testNoOutCall"));
+
+      // Execute the procedure with no out parameters. Expect a single Result
+      // with no update count. Expect the an indexed based String bind to
+      // have been inserted by the call.
+      Result result2 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd(?); END;")
+        .bind(0, "Indexed Bind")
+        .execute());
+      awaitNone(result2.getRowsUpdated());
+      awaitQuery(asList("Indexed Bind"),
+        row -> row.get(0),
+        connection.createStatement("SELECT * FROM testNoOutCall"));
+
+      // Execute the procedure with no out parameters. Expect a single Result
+      // with no update count. Expect the a named String bind to have been
+      // inserted by the call.
+      Result result3 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd(:parameter); END;")
+        .bind("parameter", "Named Bind")
+        .execute());
+      awaitNone(result3.map((row, metadata) -> "Unexpected"));
+      awaitQuery(asList("Indexed Bind", "Named Bind"),
+        row -> row.get(0),
+        connection.createStatement(
+          "SELECT * FROM testNoOutCall ORDER BY value"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testNoOutCall"));
+
+      // Execute the procedure with no out parameters. Expect a single Result
+      // with no update count. Expect the an indexed based Parameter bind to
+      // have been inserted by the call.
+      Result result4 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd(?); END;")
+        .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter"))
+        .execute());
+      awaitNone(result4.getRowsUpdated());
+      awaitQuery(asList("Indexed Parameter"),
+        row -> row.get(0),
+        connection.createStatement("SELECT * FROM testNoOutCall"));
+
+      // Execute the procedure with no out parameters. Expect a single Result
+      // with no update count. Expect the a named Parameter bind to have been
+      // inserted by the call.
+      Result result5 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd(:parameter); END;")
+        .bind("parameter",
+          Parameters.in(R2dbcType.VARCHAR, "Named Parameter"))
+        .execute());
+      awaitNone(result5.map((row, metadata) -> "Unexpected"));
+      awaitQuery(asList("Indexed Parameter", "Named Parameter"),
+        row -> row.get(0),
+        connection.createStatement(
+          "SELECT * FROM testNoOutCall ORDER BY value"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testNoOutCall"));
+
+      // Execute the procedure with no out parameters. Expect a single Result
+      // with no update count. Expect the an indexed based Parameter.In bind to
+      // have been inserted by the call.
+      Result result6 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd(?); END;")
+        .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter.In"))
+        .execute());
+      awaitNone(result6.getRowsUpdated());
+      awaitQuery(asList("Indexed Parameter.In"),
+        row -> row.get(0),
+        connection.createStatement("SELECT * FROM testNoOutCall"));
+
+      // Execute the procedure with no out parameters. Expect a single Result
+      // with no update count. Expect the a named Parameter.In bind to have been
+      // inserted by the call.
+      Result result7 = awaitOne(connection.createStatement(
+        "BEGIN testNoOutCallAdd(:parameter); END;")
+        .bind("parameter",
+          Parameters.in(R2dbcType.VARCHAR, "Named Parameter.In"))
+        .execute());
+      awaitNone(result7.map((row, metadata) -> "Unexpected"));
+      awaitQuery(asList("Indexed Parameter.In", "Named Parameter.In"),
+        row -> row.get(0),
+        connection.createStatement(
+          "SELECT * FROM testNoOutCall ORDER BY value"));
+    }
+    finally {
+      awaitExecution(connection.createStatement("DROP TABLE testNoOutCall"));
+      awaitExecution(connection.createStatement(
+        "DROP PROCEDURE testNoOutCallAdd"));
+      awaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies {@link OracleStatementImpl#execute()} when calling a procedure
+   * having a single out parameter.
+   */
+  @Test
+  public void testOneOutCall() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testOneOutCall (" +
+          "id NUMBER GENERATED ALWAYS AS IDENTITY, value VARCHAR2(100))"));
+
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testOneOutCallAdd(" +
+          " value IN VARCHAR2 DEFAULT 'Default Value'," +
+          " id OUT NUMBER) IS" +
+          " BEGIN " +
+          " INSERT INTO testOneOutCall(value) VALUES (value)" +
+          "   RETURNING testOneOutCall.id INTO id;" +
+          " END;"));
+
+      // Execute the procedure with one out parameter. Expect a single Result
+      // with no update count. Expect the IN parameter's default value to
+      // have been inserted by the call.
+      Result result0 = awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(id => ?); END;")
+        .bind(0, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result0.getRowsUpdated());
+      awaitQuery(asList(asList(1, "Default Value")),
+        row -> asList(row.get("id", Integer.class), row.get("value")),
+        connection.createStatement("SELECT * FROM testOneOutCall"));
+
+      // Execute the procedure again with one out parameter. Expect a single
+      // Result with one rows Expect the IN parameter's default value to have
+      // been inserted by the call.
+      Result result1 =  awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(id => ?); END;")
+        .bind(0, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(2, result1.map((row, metadata) -> row.get(0, Integer.class)));
+      awaitQuery(asList(asList(1, "Default Value"), asList(2, "Default Value")),
+        row -> asList(row.get("id", Integer.class), row.get("value")),
+        connection.createStatement("SELECT * FROM testOneOutCall"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testOneOutCall"));
+
+      // Execute the procedure with one out parameter. Expect a single Result
+      // with no update count. Expect the an indexed based String bind to
+      // have been inserted by the call.
+      Result result2 = awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(?, ?); END;")
+        .bind(0, "Indexed Bind")
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result2.getRowsUpdated());
+      awaitQuery(asList(asList(3, "Indexed Bind")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement("SELECT * FROM testOneOutCall"));
+
+      // Execute the procedure with one out parameter. Expect a single Result
+      // with no update count. Expect the a named String bind to have been
+      // inserted by the call.
+      Result result3 = awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(:parameter, :out); END;")
+        .bind("parameter", "Named Bind")
+        .bind("out", Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(4,
+        result3.map((row, metadata) -> row.get("out", Integer.class)));
+      awaitQuery(asList(asList(3, "Indexed Bind"), asList(4, "Named Bind")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement(
+          "SELECT * FROM testOneOutCall ORDER BY value"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testOneOutCall"));
+
+      // Execute the procedure with one out parameter. Expect a single Result
+      // with no update count. Expect the an indexed based Parameter bind to
+      // have been inserted by the call.
+      Result result4 = awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(?, ?); END;")
+        .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter"))
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result4.getRowsUpdated());
+      awaitQuery(asList(asList(5, "Indexed Parameter")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement("SELECT * FROM testOneOutCall"));
+
+      // Execute the procedure with one out parameter. Expect a single Result
+      // with no update count. Expect the a named Parameter bind to have been
+      // inserted by the call.
+      Result result5 = awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(:parameter, :out); END;")
+        .bind("parameter",
+          Parameters.in(R2dbcType.VARCHAR, "Named Parameter"))
+        .bind("out", Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(6,
+        result5.map((row, metadata) -> row.get("out", Integer.class)));
+      awaitQuery(asList(
+        asList(5, "Indexed Parameter"), asList(6, "Named Parameter")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement(
+          "SELECT * FROM testOneOutCall ORDER BY value"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testOneOutCall"));
+
+      // Execute the procedure with one out parameter. Expect a single Result
+      // with no update count. Expect the an indexed based Parameter.In bind to
+      // have been inserted by the call.
+      Result result6 = awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(?, ?); END;")
+        .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter.In"))
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result6.getRowsUpdated());
+      awaitQuery(asList(asList(7, "Indexed Parameter.In")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement("SELECT * FROM testOneOutCall"));
+
+      // Execute the procedure with one out parameter. Expect a single Result
+      // with no update count. Expect the a named Parameter.In bind to have been
+      // inserted by the call.
+      Result result7 = awaitOne(connection.createStatement(
+        "BEGIN testOneOutCallAdd(:parameter, :out); END;")
+        .bind("parameter",
+          Parameters.in(R2dbcType.VARCHAR, "Named Parameter.In"))
+        .bind("out", Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(result7.map((row, metadata) -> row.get("out")));
+      awaitQuery(asList(
+        asList(7, "Indexed Parameter.In"), asList(8, "Named Parameter.In")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement(
+          "SELECT * FROM testOneOutCall ORDER BY value"));
+    }
+    catch (Throwable e) {
+      showErrors(connection);
+      e.printStackTrace();
+      throw new RuntimeException(e);
+    }
+    finally {
+      awaitExecution(connection.createStatement("DROP TABLE testOneOutCall"));
+      awaitExecution(connection.createStatement(
+        "DROP PROCEDURE testOneOutCallAdd"));
+      awaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies {@link OracleStatementImpl#execute()} when calling a procedure
+   * having a single out parameters.
+   */
+  @Test
+  public void testMultiOutCall() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testMultiOutCall (" +
+          "id NUMBER GENERATED ALWAYS AS IDENTITY, value VARCHAR2(100))"));
+
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testMultiOutCallAdd(" +
+          " value IN VARCHAR2 DEFAULT 'Default Value'," +
+          " id OUT NUMBER," +
+          " new_count OUT NUMBER) IS" +
+          " BEGIN " +
+          " INSERT INTO testMultiOutCall(value) VALUES (value)" +
+          "   RETURNING testMultiOutCall.id INTO id;" +
+          " SELECT COUNT(*) INTO new_count FROM testMultiOutCall;" +
+          " END;"));
+
+      // Execute the procedure with two out parameters. Expect a single Result
+      // with no update count. Expect the IN parameter's default value to
+      // have been inserted by the call.
+      Result result0 = awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(id => ?, new_count => ?); END;")
+        .bind(0, Parameters.out(R2dbcType.NUMERIC))
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result0.getRowsUpdated());
+      awaitQuery(asList(asList(1, "Default Value")),
+        row -> asList(row.get("id", Integer.class), row.get("value")),
+        connection.createStatement("SELECT * FROM testMultiOutCall"));
+
+      // Execute the procedure again with two out parameters. Expect a single
+      // Result with one rows Expect the IN parameter's default value to have
+      // been inserted by the call.
+      Result result1 =  awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(id => ?, new_count => ?); END;")
+        .bind(0, Parameters.out(R2dbcType.NUMERIC))
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(asList(2, 2), result1.map((row, metadata) ->
+        asList(row.get(0, Integer.class), row.get(1, Integer.class))));
+      awaitQuery(asList(asList(1, "Default Value"), asList(2, "Default Value")),
+        row -> asList(row.get("id", Integer.class), row.get("value")),
+        connection.createStatement("SELECT * FROM testMultiOutCall"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testMultiOutCall"));
+
+      // Execute the procedure with two out parameters. Expect a single Result
+      // with no update count. Expect the an indexed based String bind to
+      // have been inserted by the call.
+      Result result2 = awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(?, ?, ?); END;")
+        .bind(0, "Indexed Bind")
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .bind(2, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result2.getRowsUpdated());
+      awaitQuery(asList(asList(3, "Indexed Bind")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement("SELECT * FROM testMultiOutCall"));
+
+      // Execute the procedure with two out parameters. Expect a single Result
+      // with no update count. Expect the a named String bind to have been
+      // inserted by the call.
+      Result result3 = awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(:parameter, :out, :newCount); END;")
+        .bind("parameter", "Named Bind")
+        .bind("out", Parameters.out(R2dbcType.NUMERIC))
+        .bind("newCount", Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(asList(4, 2), result3.map((row, metadata) ->
+        asList(row.get("out", Integer.class),
+          row.get("newCount", Integer.class))));
+      awaitQuery(asList(asList(3, "Indexed Bind"), asList(4, "Named Bind")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement(
+          "SELECT * FROM testMultiOutCall ORDER BY value"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testMultiOutCall"));
+
+      // Execute the procedure with two out parameters. Expect a single Result
+      // with no update count. Expect the an indexed based Parameter bind to
+      // have been inserted by the call.
+      Result result4 = awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(?, ?, ?); END;")
+        .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter"))
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .bind(2, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result4.getRowsUpdated());
+      awaitQuery(asList(asList(5, "Indexed Parameter")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement("SELECT * FROM testMultiOutCall"));
+
+      // Execute the procedure with two out parameters. Expect a single Result
+      // with no update count. Expect the a named Parameter bind to have been
+      // inserted by the call.
+      Result result5 = awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(:parameter, :out, :newCount); END;")
+        .bind("parameter",
+          Parameters.in(R2dbcType.VARCHAR, "Named Parameter"))
+        .bind("out", Parameters.out(R2dbcType.NUMERIC))
+        .bind("newCount", Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(asList(6, 2), result5.map((row, metadata) ->
+        asList(row.get("out", Integer.class),
+          row.get("newCount", Integer.class))));
+      awaitQuery(asList(
+        asList(5, "Indexed Parameter"), asList(6, "Named Parameter")),
+          row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement(
+          "SELECT * FROM testMultiOutCall ORDER BY value"));
+
+      // Delete the previously inserted rows
+      awaitExecution(connection.createStatement(
+        "TRUNCATE TABLE testMultiOutCall"));
+
+      // Execute the procedure with two out parameters. Expect a single Result
+      // with no update count. Expect the an indexed based Parameter.In bind to
+      // have been inserted by the call.
+      Result result6 = awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(?, ?, ?); END;")
+        .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter.In"))
+        .bind(1, Parameters.out(R2dbcType.NUMERIC))
+        .bind(2, Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result6.getRowsUpdated());
+      awaitQuery(asList(asList(7, "Indexed Parameter.In")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement("SELECT * FROM testMultiOutCall"));
+
+      // Execute the procedure with two out parameters. Expect a single Result
+      // with no update count. Expect the a named Parameter.In bind to have been
+      // inserted by the call.
+      Result result7 = awaitOne(connection.createStatement(
+        "BEGIN testMultiOutCallAdd(:parameter, :out, :newCount); END;")
+        .bind("parameter",
+          Parameters.in(R2dbcType.VARCHAR, "Named Parameter.In"))
+        .bind("out", Parameters.out(R2dbcType.NUMERIC))
+        .bind("newCount", Parameters.out(R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(result7.map((row, metadata) -> row.get("out")));
+      awaitQuery(asList(
+        asList(7, "Indexed Parameter.In"), asList(8, "Named Parameter.In")),
+        row -> asList(row.get(0, Integer.class), row.get(1)),
+        connection.createStatement(
+          "SELECT * FROM testMultiOutCall ORDER BY value"));
+    }
+    catch (Throwable e) {
+      showErrors(connection);
+      e.printStackTrace();
+      throw new RuntimeException(e);
+    }
+    finally {
+      awaitExecution(connection.createStatement("DROP TABLE testMultiOutCall"));
+      awaitExecution(connection.createStatement(
+        "DROP PROCEDURE testMultiOutCallAdd"));
+      awaitNone(connection.close());
+    }
+  }
+/*
+  private static class ParameterImpl implements Parameter {
+    final Type type;
+    final Object value;
+
+    ParameterImpl(Type type, Object value) {
+      this.type = type;
+      this.value = value;
+    }
+
+    @Override
+    public Type getType() {
+      return type;
+    }
+
+    @Override
+    public Object getValue() {
+      return value;
+    }
+  }
+
+  private static class InParameterImpl
+    extends ParameterImpl implements Parameter.In {
+
+    InParameterImpl(Type type, Object value) {
+      super(type, value);
+    }
+  }
+
+  private static class OutParameterImpl
+    extends ParameterImpl implements Parameter.Out {
+
+    OutParameterImpl(Type type) {
+      super(type, null);
+    }
+  }
+  */
+
 }

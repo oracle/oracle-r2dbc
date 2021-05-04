@@ -38,6 +38,7 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.DriverManager;
 import java.sql.JDBCType;
+import java.sql.RowId;
 import java.sql.SQLException;
 import java.sql.SQLType;
 import java.time.Duration;
@@ -60,6 +61,7 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -113,7 +115,7 @@ public class OracleColumnMetadataImplTest {
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -144,7 +146,7 @@ public class OracleColumnMetadataImplTest {
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -179,7 +181,7 @@ public class OracleColumnMetadataImplTest {
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -198,7 +200,7 @@ public class OracleColumnMetadataImplTest {
       // type with 0 digits of fractional second precision; Expect Oracle
       // R2DBC to describe Oracle's "DATE" as TIMESTAMP
       verifyColumnMetadata(
-        connection, "DATE", JDBCType.TIMESTAMP, 29, null, LocalDateTime.class,
+        connection, "DATE", JDBCType.TIMESTAMP, 29, 0, LocalDateTime.class,
         LocalDateTime.parse("1977-06-16T09:00:00"));
 
       // Expect TIMESTAMP and LocalDateTime to map. Expect precision to be
@@ -243,7 +245,7 @@ public class OracleColumnMetadataImplTest {
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -256,33 +258,29 @@ public class OracleColumnMetadataImplTest {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      // This rowId String is a base 64 encoded binary value, but it can't be
-      // just any binary value, it must encode the bytes of a valid row ID.
-      // If it were not a valid row ID, the Oracle Database would reject it
-      // when this test uses it as a bind value for an INSERT statement. The
-      // "dual" table is queried to retrieve a valid row ID.
-      String rowId = awaitOne(Mono.from(connection.createStatement(
+      // The "dual" table is queried to retrieve a valid row ID.
+      RowId rowId = awaitOne(Mono.from(connection.createStatement(
         "SELECT rowid FROM dual")
         .execute())
         .flatMap(result ->
           Mono.from(result.map((row, metadata) ->
-            row.get(0, String.class)))
+            row.get(0, RowId.class)))
         ));
 
       // Expect ROWID and String to map.
       verifyColumnMetadata(
-        connection, "ROWID", JDBCType.ROWID, null, null, String.class, rowId);
+        connection, "ROWID", JDBCType.ROWID, null, null, RowId.class, rowId);
 
       // Expect UROWID and String to map.
       verifyColumnMetadata(
-        connection, "UROWID", JDBCType.ROWID, null, null, String.class,
+        connection, "UROWID", JDBCType.ROWID, null, null, RowId.class,
         rowId);
 
       // Expect JSON and OracleJsonObject to map.
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -315,7 +313,7 @@ public class OracleColumnMetadataImplTest {
         OracleJsonObject.class, oracleJson);
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 

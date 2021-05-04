@@ -47,6 +47,44 @@ public final class Awaits {
   private Awaits() {/* This class only defines static methods*/}
 
   /**
+   * <p>
+   * Subscribes to an {@code emptyPublisher} and tries to block until the
+   * publisher emits {@code onComplete}. This method verifies that the
+   * publisher does not emit {@code onNext}. If {@code emptyPublisher} emits
+   * {@code onError}, this method invokes {@link Throwable#printStackTrace()}
+   * on the error and then returns normally
+   * <p>
+   * This method is useful in the scope of a {@code finally} block, where a
+   * throwing an exception will obtrude the processing of any {@code Throwable}
+   * thrown from the {@code try} block, like this:
+   * </p><pre>
+   *   try {
+   *     throw new RuntimeException("Try Block Throws");
+   *   }
+   *   finally {
+   *     throw new RuntimeException("Finally Block Throws");
+   *   }
+   * </pre><p>
+   * If the code above is executed, only the finally block's RuntimeException
+   * will be thrown. When a test cases fails within a {@code try} block, it
+   * throws an {@link AssertionError} with useful information; That
+   * information is lost if the {@code finally} block throws as well.
+   * </p>
+   * @param emptyPublisher A publisher that emits no values.
+   * @throws Throwable If the publisher emits {@code onError}.
+   */
+  public static void tryAwaitNone(Publisher<?> emptyPublisher) {
+    try {
+      assertNull(
+        Mono.from(emptyPublisher).block(sqlTimeout()),
+        "Unexpected onNext signal from Publisher of no values");
+    }
+    catch (Throwable throwable) {
+      throwable.printStackTrace();
+    }
+  }
+
+  /**
    * Subscribes to an {@code emptyPublisher} and blocks until the publisher
    * emits {@code onComplete}. This method verifies that the publisher does
    * not emit {@code onNext}.
@@ -137,7 +175,13 @@ public final class Awaits {
    * @throws Throwable If the statement execution results in an error.
    */
   public static void awaitExecution(Statement statement) {
-    awaitUpdate(0, statement);
+    awaitNone(Flux.from(statement.execute())
+      .flatMap(Result::getRowsUpdated)
+      // Don't emit an update count of 0, which is the expected return value of
+      // Oracle JDBC's implementation of Statement.getUpdateCount() after
+      // executing a DDL statement. Oracle R2DBC relies on getUpdateCount()
+      // to determine the value emitted by getRowsUpdated.
+      .filter(updateCount -> updateCount != 0));
   }
 
   /**

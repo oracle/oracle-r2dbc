@@ -146,6 +146,9 @@ public class OracleTestKit implements TestKit<Integer> {
         // Enquote alias names to retain their lower case values
         return "SELECT col1 AS \"b\", col1 AS \"c\", col1 AS \"a\"" +
           " FROM test_two_column";
+      case SELECT_VALUE:
+        // Use ORDER BY to return rows in a consistent order
+        return "SELECT value FROM test ORDER BY value";
       default:
         return statement.getSql();
     }
@@ -185,7 +188,7 @@ public class OracleTestKit implements TestKit<Integer> {
    * @return Column value
    */
   private Object extractColumn(String name, Row row) {
-    Object value = row.get("value");
+    Object value = row.get(name);
 
     if (value instanceof BigDecimal)
       return ((BigDecimal)value).intValue();

@@ -32,6 +32,7 @@ import java.io.InputStream;
 import java.io.Reader;
 import java.nio.ByteBuffer;
 import java.sql.Blob;
+import java.sql.CallableStatement;
 import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -576,6 +577,11 @@ interface ReactiveJdbcAdapter {
    */
   Publisher<PreparedStatement> publishPreparedStatement(
     String sql, String[] generatedColumns, Connection connection);
+
+  Publisher<CallableStatement> publishCallableStatement(
+    String sql, Connection connection);
+
+  JdbcRow createOutParameterRow(CallableStatement callableStatement);
 
   /** 
    * Accessor of column values within a single row from a table of data that

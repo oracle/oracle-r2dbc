@@ -43,6 +43,7 @@ import reactor.core.publisher.Mono;
 import javax.sql.DataSource;
 import java.nio.ByteBuffer;
 import java.sql.Blob;
+import java.sql.CallableStatement;
 import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -952,7 +953,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     try {
       final PreparedStatement preparedStatement;
       if (generatedColumns == null) {
-        preparedStatement = oracleConnection.prepareStatement(sql);
+        preparedStatement = oracleConnection.prepareCall(sql);
+        //TODO preparedStatement = oracleConnection.prepareStatement(sql);
       }
       else if (generatedColumns.length == 0) {
         preparedStatement =
@@ -968,6 +970,19 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     catch (SQLException sqlException) {
       return Mono.error(toR2dbcException(sqlException));
     }
+  }
+
+  @Override
+  public Publisher<CallableStatement> publishCallableStatement(
+    String sql, Connection connection) {
+    OracleConnection oracleConnection = unwrapOracleConnection(connection);
+    return Mono.just(getOrHandleSQLException(() ->
+      oracleConnection.prepareCall(sql)));
+  }
+
+  @Override
+  public JdbcRow createOutParameterRow(CallableStatement callableStatement) {
+    return new OutParameterRow(callableStatement);
   }
 
   /**
@@ -1159,6 +1174,58 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   }
 
   /**
+   * Returns {@code true} if an {@code errorCode} indicates a failure to
+   * convert a SQL type value into a Java type.
+   * @param errorCode Error code of a {@code SQLException}
+   * @return {@code true} if {@code errorCode} is a type conversion failure,
+   * otherwise returns {@code false}
+   */
+  private static boolean isTypeConversionError(int errorCode) {
+    // ORA-17004 is raised for an unsupported type conversion
+    return errorCode == 17004;
+  }
+
+  private static final class OutParameterRow implements JdbcRow {
+
+    /** CallableStatement that has been executed to return out parameters */
+    final CallableStatement callableStatement;
+
+    /**
+     * Set to {@code false} after a mapping function has output a value for
+     * this row as input, and it is no longer valid to access this row.
+     */
+    boolean isValid = true;
+
+    private OutParameterRow(CallableStatement callableStatement) {
+      this.callableStatement = callableStatement;
+    }
+
+    @Override
+    public <T> T getObject(int index, Class<T> type) {
+      if (! isValid) {
+        throw new IllegalStateException(
+          "A Row is not valid outside of a mapping function");
+      }
+      else {
+        try {
+          return callableStatement.getObject(1, type);
+        }
+        catch (SQLException sqlException) {
+          if (isTypeConversionError(sqlException.getErrorCode()))
+            throw new IllegalArgumentException(sqlException);
+          else
+            throw toR2dbcException(sqlException);
+        }
+      }
+    }
+
+    @Override
+    public JdbcRow copy() {
+      throw new UnsupportedOperationException();
+    }
+  }
+
+  /**
    * A {@code JdbcRow} that delegates to an {@link OracleRow}. An instance of
    * this class adapts the behavior of {@code OracleRow} to conform with
    * R2DBC standards.
@@ -1191,8 +1258,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         // ORA-18711 is raised when outside of a row mapping function
         if (sqlException.getErrorCode() == 18711)
           throw new IllegalStateException(sqlException);
-          // ORA-17004 is raised for an unsupported type conversion
-        else if (sqlException.getErrorCode() == 17004)
+        else if (isTypeConversionError(sqlException.getErrorCode()))
           throw new IllegalArgumentException(sqlException);
         else
           throw toR2dbcException(sqlException);

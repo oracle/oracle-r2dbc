@@ -29,6 +29,8 @@ import io.r2dbc.spi.Option;
 import oracle.jdbc.OracleConnection;
 import oracle.r2dbc.util.SharedConnectionFactory;
 import org.reactivestreams.Publisher;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.io.FileNotFoundException;
 import java.io.InputStream;
@@ -36,6 +38,8 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Properties;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Stores configuration used by integration tests that connect to a database.
@@ -173,6 +177,27 @@ public final class DatabaseConfig {
     catch (SQLException sqlException) {
       throw new AssertionError(sqlException);
     }
+  }
+
+  /**
+   * Queries the {@code user_errors} data dictionary view and prints all rows.
+   * When writing new tests that declare a PL/SQL procedure or function,
+   * "ORA-17110: executed completed with a warning" results if the PL/SQL has
+   * a syntax error. The error details will be printed by calling this method.
+   */
+  public static void showErrors(Connection connection) {
+      Flux.from(connection.createStatement(
+        "SELECT * FROM user_errors ORDER BY sequence")
+        .execute())
+        .flatMap(result ->
+          result.map((row, metadata) ->
+            metadata.getColumnNames()
+              .stream()
+              .map(name -> name + ": " + row.get(name))
+              .collect(Collectors.joining("\n"))))
+      .toStream()
+      .map(errorText -> "\n" + errorText)
+      .forEach(System.err::println);
   }
 
   private static final String HOST;

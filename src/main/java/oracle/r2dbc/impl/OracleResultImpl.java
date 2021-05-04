@@ -21,14 +21,17 @@
 
 package oracle.r2dbc.impl;
 
+import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
+import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingRunnable;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -112,6 +115,17 @@ abstract class OracleResultImpl implements Result {
 
     return new OracleResultImpl() {
 
+      /** JDBC {@code Statement} that returned the {@code resultSet} */
+      final java.sql.Statement jdbcStatement =
+        getOrHandleSQLException(resultSet::getStatement);
+
+      /** R2DBC {@code RowMetadata} adapted from JDBC
+       * {@link java.sql.ResultSetMetaData}
+       */
+      final OracleRowMetadataImpl metadata =
+        OracleRowMetadataImpl.createRowMetadata(
+          getOrHandleSQLException(resultSet::getMetaData));
+
       @Override
       Publisher<Integer> publishUpdateCount() {
         runOrHandleSQLException(() ->
@@ -122,15 +136,6 @@ abstract class OracleResultImpl implements Result {
       @Override
       <T> Publisher<T> publishRows(
         BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
-
-        // Obtain a reference to the statement before the ResultSet is
-        // logically closed by its row publisher. The statement is closed when
-        // the publisher terminates.
-        java.sql.Statement jdbcStatement =
-          getOrHandleSQLException(resultSet::getStatement);
-
-        OracleRowMetadataImpl metadata = new OracleRowMetadataImpl(
-          getOrHandleSQLException(resultSet::getMetaData));
 
         return Flux.<T>from(adapter.publishRows(resultSet, jdbcRow ->
           mappingFunction.apply(
@@ -150,36 +155,11 @@ abstract class OracleResultImpl implements Result {
    * The {@link java.sql.Statement} that created the {@code ResultSet} is closed
    * when the {@code Publisher} returned by this method emits a
    * {@code Result}.
-   * </p><p>
-   * For compliance with R2DBC standards, a {@code Row} of generated column
-   * values will remain valid after the {@code Connection} that created them
-   * is closed. This behavior is verified by version 0.8.2 of
-   * {@code io.r2dbc.spi.test.TestKit#returnGeneratedValues()}. The {@code Rows}
-   * of generated value
    * </p>
    *
-   * @implNote
-   * <p>
-   * Implementing {@link #map(BiFunction)} by adapting a {@code ResultSet}
-   * into a publisher would be non-compliant with R2DBC standards. A
-   * {@code ResultSet} Publisher is no longer valid after the {@code
-   * ResultSet} is closed, and a {@code ResultSet} is closed when the
-   * {@code Connection} that created it is closed.
-   * </p><p>
-   * A compliant implementation of {@code map} can be called after the
-   * {@code Connection} is closed, so this factory drains the
-   * {@code generatedKeys} {@code ResultSet} into a collection of
-   * {@linkplain ReactiveJdbcAdapter.JdbcRow#copy() cached} JdbcRows. These
-   * cached rows remain valid after the {@code Connection} that created them
-   * is closed.
-   * </p><p>
-   * This solution requires a potentially large amount of memory in order to
-   * cache every row of generated values. A more reactive and memory efficient
-   * solution might have {@link OracleConnectionImpl#close()} hold the JDBC
-   * connection open until the rows are consumed. This is a straight forward
-   * solution, but seems like a violation of the close() SPI. A reactive
-   * solution that is both compliant and efficient would be best.
-   * </p>
+   * @implNote TODO: It is not necessary to cache rows. It is not the intent of
+   * the TCK to verify that rows are valid after the connection is closed.
+   * Until the TCK is updated, OracleTestKit can override the default behavior.
    * @param adapter Adapts {@code ResultSet} API calls into reactive streams.
    *   Not null.
    * @param updateCount Update count to publish
@@ -198,7 +178,8 @@ abstract class OracleResultImpl implements Result {
 
     // Obtain metadata before the ResultSet is closed by publishRows(...)
     OracleRowMetadataImpl metadata =
-      new OracleRowMetadataImpl(getOrHandleSQLException(values::getMetaData));
+      OracleRowMetadataImpl.createRowMetadata(
+        getOrHandleSQLException(values::getMetaData));
 
     // Obtain a reference to the statement before the ResultSet is
     // logically closed by its row publisher. The statement is closed when
@@ -225,6 +206,38 @@ abstract class OracleResultImpl implements Result {
               new OracleRowImpl(jdbcRow, metadata, adapter), metadata));
         }
       });
+  }
+
+  /**
+   * Creates a {@code Result} having no update count and a single {@code Row}
+   * of out parameter values.
+   * @param adapter
+   * @param callableStatement
+   * @return
+   */
+  static Result createCallResult(
+    ReactiveJdbcAdapter adapter, CallableStatement callableStatement,
+    OracleRowImpl outParameterRow) {
+    return new OracleResultImpl() {
+
+      @Override
+      <T> Publisher<T> publishRows(
+        BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
+        return Mono.fromSupplier(() -> {
+          T output = mappingFunction.apply(
+            outParameterRow, outParameterRow.metadata());
+          runOrHandleSQLException(callableStatement::close);
+          return output;
+        })
+        .doOnCancel((ThrowingRunnable)callableStatement::close);
+      }
+
+      @Override
+      Publisher<Integer> publishUpdateCount() {
+        runOrHandleSQLException(callableStatement::close);
+        return Mono.empty();
+      }
+    };
   }
 
   /**

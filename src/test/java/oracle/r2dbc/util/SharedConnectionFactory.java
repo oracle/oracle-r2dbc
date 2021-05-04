@@ -38,6 +38,7 @@ import reactor.core.publisher.Mono;
 import java.util.LinkedList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static oracle.r2dbc.DatabaseConfig.user;
@@ -59,13 +60,21 @@ import static oracle.r2dbc.DatabaseConfig.user;
  */
 public class SharedConnectionFactory implements ConnectionFactory {
 
+  /**
+   * Publishes a newly opened connection which is shared by {@code Subscribers}
+   * of this factory's {@link #create()} {@code Publisher}.
+   */
+  private final Publisher<? extends Connection> connectionPublisher;
+
   /** Metadata of the factory which created the shared connection */
   private final ConnectionFactoryMetadata metadata;
 
   /**
-   * The tail of the borrowers queue. The current borrower completes the
+   * Reference to the tail of the borrowers queue, which completes when the
+   * shared connection is available. The current borrower completes the
    * current tail when {@link Connection#close()} is invoked on the borrowed
-   * connection.
+   * connection. The tail may complete with a {@code null} value to indicate
+   * that no shared connection is currently open.
    */
   private final AtomicReference<CompletionStage<Connection>> borrowQueueTail;
 
@@ -80,13 +89,9 @@ public class SharedConnectionFactory implements ConnectionFactory {
   public SharedConnectionFactory(
     Publisher<? extends Connection> connectionPublisher,
     ConnectionFactoryMetadata metadata) {
-    CompletableFuture<Connection> initialTail = new CompletableFuture<>();
-    Mono.from(connectionPublisher)
-      .doOnNext(initialTail::complete)
-      .doOnError(initialTail::completeExceptionally)
-      .subscribe();
-
-    borrowQueueTail = new AtomicReference<>(initialTail);
+    this.connectionPublisher = connectionPublisher;
+    borrowQueueTail =
+      new AtomicReference<>(CompletableFuture.completedStage(null));
     this.metadata = metadata;
   }
 
@@ -117,13 +122,32 @@ public class SharedConnectionFactory implements ConnectionFactory {
       borrowQueueTail.getAndSet(nextTail);
 
     return Mono.fromCompletionStage(
-      currentTail.thenApply(connection ->
-        new BorrowedConnection(connection, nextTail)));
+      currentTail.thenCompose(connection ->
+        connection == null
+          ? openConnection()
+          : CompletableFuture.completedStage(connection))
+        .thenApply(connection ->
+          new BorrowedConnection(connection, nextTail)));
   }
 
   @Override
   public ConnectionFactoryMetadata getMetadata() {
     return metadata;
+  }
+
+  /**
+   * Opens a new {@code Connection} to the database.
+   * @return A {@code CompletionStage} that completes normally with a newly
+   * opened {@code Connection}, or completes exceptionally with an error
+   * if opening a {@code Connection} fails.
+   */
+  private CompletionStage<Connection> openConnection() {
+    CompletableFuture<Connection> connectionFuture = new CompletableFuture<>();
+    Mono.from(connectionPublisher)
+      .doOnNext(connectionFuture::complete)
+      .doOnError(connectionFuture::completeExceptionally)
+      .subscribe();
+    return connectionFuture;
   }
 
   /**
@@ -149,9 +173,10 @@ public class SharedConnectionFactory implements ConnectionFactory {
    * be closed by the database.
    * https://asktom.oracle.com/pls/apex/asktom.search?tag=vopen-cursorsql-text-showing-table-4-200-5e14-0-0-0#3332376126187r
    * </p><p>
-   * This query also doesn't return the cursor for itself. This {@code String}
-   * field should be set as the bind value for the :this_query parameter in
-   * order to filter this query from querying itself.
+   * This query can be expected to return a single cursor for itself, where
+   * {@code sql_text} matches the first 60 characters of this field. If more
+   * than one cursor matching the text of this query is returned, this may
+   * a cursor leak from a previous execution of this query.
    * </p>
    */
   private static final String OPEN_CURSOR_QUERY =
@@ -160,8 +185,30 @@ public class SharedConnectionFactory implements ConnectionFactory {
       " WHERE sid = userenv('sid')" +
       " AND cursor_type = 'OPEN'" +
       " AND sql_text NOT LIKE 'table_%'" +
-      " AND sql_text <> substr(:this_query, 1, 60)" +
       " ORDER BY last_sql_active_time";
+
+  /**
+   * Verifies that a {@code connection} has no open cursors.
+   * @param connection Database connection
+   * @return A {@code Publisher} that emits {@code onComplete} if no cursors
+   * are open, or emits {@code onError} if one or more cursors are open.
+   */
+  private static Publisher<Void> verifyCursorClose(Connection connection) {
+    if (! IS_CURSOR_CLOSE_VERIFIED)
+      return Mono.empty();
+
+    return Flux.from(queryOpenCursors(connection))
+      .reduce(new LinkedList<String>(), (openCursorSqls, sql) -> {
+        openCursorSqls.add(sql);
+        return openCursorSqls;
+      })
+      .flatMap(openCursorSqls ->
+        openCursorSqls.isEmpty() //TODO: || openCursorSqls.get(0).equals("0")
+          ? Mono.empty()
+          : Mono.error(new AssertionError(
+              "Cursors for the following SQL were not closed:\n" +
+              String.join("\n", openCursorSqls))));
+  }
 
   /**
    * Returns a {@code Publisher} emitting the SQL Language text of all cursors
@@ -175,22 +222,34 @@ public class SharedConnectionFactory implements ConnectionFactory {
     if (! IS_CURSOR_CLOSE_VERIFIED)
       return Mono.empty();
 
+    AtomicBoolean isSelfFiltered = new AtomicBoolean(false);
     return Mono.from(connection.createStatement(OPEN_CURSOR_QUERY)
-      .bind("this_query", OPEN_CURSOR_QUERY)
       .execute())
       .flatMapMany(result ->
         result.map((row, metadata) ->
           row.get("sql_text", String.class)))
+      .filter(sqlText ->
+        isSelfFiltered.get() // Is already filtered?
+          || !OPEN_CURSOR_QUERY.startsWith(sqlText) // Is first filter?
+          || isSelfFiltered.getAndSet(true)) // Then omit the first filter
       .onErrorMap(R2dbcException.class, r2dbcException ->
-        // Handle ORA-00942
         r2dbcException.getErrorCode() == 942
-          ? new RuntimeException(
-              "V$OPEN_CUROSR is not accessible to the test user. " +
-                "Grant access as SYSDBA with: " +
-                "\"GRANT SELECT ON v_$open_cursor TO "+user()+"\", " +
-                "or disable open cursor checks with: " +
-                " -Doracle.r2bdc.disableCursorCloseVerification=true")
-        : r2dbcException);
+          ? openCursorNotAccessible()
+          : r2dbcException);
+  }
+
+  /**
+   * Creates an error indicating the {@code V$OPEN_CURSOR} view is not
+   * accessible, and describing how to resolve this issue.
+   * @return A error for an inaccessible V$OPEN_CURSOR
+   */
+  private static RuntimeException openCursorNotAccessible() {
+    return new RuntimeException(
+      "V$OPEN_CUROSR is not accessible to the test user. " +
+        "Grant access as SYSDBA with: " +
+        "\"GRANT SELECT ON v_$open_cursor TO "+user()+"\", " +
+        "or disable open cursor checks with: " +
+        " -Doracle.r2bdc.disableCursorCloseVerification=true");
   }
 
   /**
@@ -246,32 +305,14 @@ public class SharedConnectionFactory implements ConnectionFactory {
       else
         isClosed = true;
 
-      return Flux.defer(()-> {
-          // Complete the returned future after cleaning up any transaction state
-          if (connection.isAutoCommit()) {
-            returnedFuture.complete(connection);
-            return Mono.empty();
-          }
-          else {
-            return Mono.from(connection.rollbackTransaction())
-              .concatWith(connection.setAutoCommit(true))
-              .concatWith(connection.setTransactionIsolationLevel(
-                initialIsolationLevel))
-              .doOnTerminate(() -> returnedFuture.complete(connection));
-          }
-        })
-        .thenMany(queryOpenCursors(connection))
-        .reduce(new LinkedList<String>(), (openCursorSqls, sql) -> {
-          openCursorSqls.add(sql);
-          return openCursorSqls;
-        })
-        .flatMap(openCursorSqls ->
-          openCursorSqls.isEmpty() || openCursorSqls.get(0).equals("0")
-            ? Mono.empty()
-            : Mono.error(new AssertionError(
-                "Cursors for the following SQL were not closed:\n" +
-                String.join("\n", openCursorSqls))));
-
+      // If the connection can be reset to its original state, then complete
+      // the returned future with it so that another borrower can use it.
+      // Otherwise, complete the returned future with null so that the next
+      // borrower will open a new connection.
+      return Mono.from(verifyCursorClose(connection))
+        .then(Mono.from(resetConnection()))
+        .doOnSuccess(nil -> returnedFuture.complete(connection))
+        .doOnError(error -> returnedFuture.complete(null));
     }
 
     @Override
@@ -368,6 +409,31 @@ public class SharedConnectionFactory implements ConnectionFactory {
     private void requireNotClosed() {
       if (isClosed)
         throw new IllegalStateException("Connection is closed");
+    }
+
+    /**
+     * Resets the {@link #connection} to the original state it had when this
+     * {@code BorrowedConnection} was constructed.
+     * @return A {@code Publisher} that emits {@code onComplete} when the
+     * connection is reset, or emits {@code onError} if a failure occurs when
+     * resetting the connection.
+     */
+    private Publisher<Void> resetConnection() {
+      Publisher<Void> isolationLevelReset =
+        connection.setTransactionIsolationLevel(initialIsolationLevel);
+
+      return Mono.defer(()-> {
+        // Assuming the auto commit was originally enabled
+        if (connection.isAutoCommit()) {
+          return Mono.from(isolationLevelReset);
+        }
+        else {
+          // Clean up any transaction state
+          return Mono.from(connection.rollbackTransaction())
+            .then(Mono.from(connection.setAutoCommit(true)))
+            .then(Mono.from(isolationLevelReset));
+        }
+      });
     }
   }
 }

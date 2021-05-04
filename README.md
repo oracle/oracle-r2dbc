@@ -189,6 +189,8 @@ or Oracle JDBC Driver error message](https://docs.oracle.com/en/database/oracle/
 - READ COMMITTED is the default transaction isolation level, and is the
 only level supported in this release.
 - Transaction savepoints are not supported in this release.
+- TransactionDefinition.LOCK_WAIT_TIMEOUT is not supported in this release.
+  - Oracle Database does not support a lock wait timeout that applies to all statements within a transaction.
 
 ### Statements
 - Batch execution is only supported for DML type SQL commands (INSERT/UPDATE/DELETE).

@@ -179,7 +179,7 @@ final class OracleConnectionImpl implements Connection {
    *     Specifies the argument to a NAME clause. If this option is specified
    *     without {@link TransactionDefinition#ISOLATION_LEVEL} or
    *     {@link TransactionDefinition#READ_ONLY}, the database begins a
-   *     transaction having the default isolation leve, READ COMMITTED, and
+   *     transaction having the default isolation level, READ COMMITTED, with
    *     the specified name.
    *   </dd>
    *   <dt>{@link TransactionDefinition#LOCK_WAIT_TIMEOUT}</dt>
