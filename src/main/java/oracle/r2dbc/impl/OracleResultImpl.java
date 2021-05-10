@@ -21,26 +21,21 @@
 
 package oracle.r2dbc.impl;
 
-import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
-import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingRunnable;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 
 /**
  * <p>
@@ -64,15 +59,16 @@ abstract class OracleResultImpl implements Result {
    * R2DBC SPI, multiple attempts to consume the this result will yield an
    * {@code IllegalStateException}.
    */
-  private boolean isConsumed = false;
+  private boolean isPublished = false;
 
   /**
-   * Future that is completed when this {@code Result} has been consumed,
-   * by invoking either {@link #getRowsUpdated()} or {@link #map(BiFunction)}
-   * and terminating the returned {@code Publisher} by consuming or
-   * cancelling the stream.
+   * Future that is completed when this {@code Result} has been
+   * <a href="OracleStatementImpl.html#fully-consumed-result">
+   *   fully-consumed
+   * </a>.
    */
-  private CompletableFuture<Void> consumedFuture = new CompletableFuture<>();
+  private final CompletableFuture<Void> consumedFuture =
+    new CompletableFuture<>();
 
   /**
    * Constructs a new instance of this class. This private constructor is
@@ -86,7 +82,7 @@ abstract class OracleResultImpl implements Result {
    * to zero. An {@code updateCount} less than zero is published as an empty
    * stream.
    * @param updateCount Update count to publish
-   * @return An update count {@code Result}
+   * @return An update count {@code Result}. Not null.
    */
   public static OracleResultImpl createUpdateCountResult(int updateCount) {
     return new OracleResultImpl() {
@@ -111,21 +107,19 @@ abstract class OracleResultImpl implements Result {
    * <p>
    * Creates a {@code Result} that either publishes a {@code ResultSet} of
    * row data from a query, or publishes an update count as an empty stream.
-   * </p><p>
-   * The {@link java.sql.Statement} that created the {@code resultSet} is closed
-   * when the returned result is fully consumed.
    * </p>
    * @param adapter Adapts {@code ResultSet} API calls into reactive streams.
    *   Not null.
-   * @param resultSet Row data to publish
-   * @return An update count {@code Result}
+   * @param resultSet Row data to publish. Not null. Retained.
+   * @return A row data {@code Result}. Not null.
    */
   public static OracleResultImpl createQueryResult(
     ReactiveJdbcAdapter adapter, ResultSet resultSet) {
 
     return new OracleResultImpl() {
 
-      /** R2DBC {@code RowMetadata} adapted from JDBC
+      /**
+       * R2DBC {@code RowMetadata} adapted from JDBC
        * {@link java.sql.ResultSetMetaData}
        */
       final OracleRowMetadataImpl metadata =
@@ -141,7 +135,7 @@ abstract class OracleResultImpl implements Result {
       <T> Publisher<T> publishRows(
         BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
 
-        return Flux.<T>from(adapter.publishRows(resultSet, jdbcRow ->
+        return Flux.from(adapter.publishRows(resultSet, jdbcRow ->
           mappingFunction.apply(
             new OracleRowImpl(jdbcRow, metadata, adapter), metadata)));
       }
@@ -153,10 +147,6 @@ abstract class OracleResultImpl implements Result {
    * Publishes a {@code Result} that either publishes generated values of a
    * {@link PreparedStatement#getGeneratedKeys()} {@code ResultSet}, or
    * publishes an {@code updateCount}.
-   * </p><p>
-   * The {@link java.sql.Statement} that created the {@code ResultSet} is closed
-   * when the {@code Publisher} returned by this method emits a
-   * {@code Result}.
    * </p>
    *
    * @implNote TODO: It is not necessary to cache rows. It is not the intent of
@@ -167,6 +157,7 @@ abstract class OracleResultImpl implements Result {
    * @param updateCount Update count to publish
    * @param values A {@code ResultSet} of generated keys. Not null. Retained.
    * @return A result that publishes generated values, or an update count.
+   * Not null.
    */
   public static Publisher<OracleResultImpl> createGeneratedValuesResult(
     ReactiveJdbcAdapter adapter, int updateCount, ResultSet values) {
@@ -204,19 +195,18 @@ abstract class OracleResultImpl implements Result {
   /**
    * Creates a {@code Result} having no update count and a single {@code Row}
    * of out parameter values.
-   * @param adapter
-   * @param callableStatement
-   * @return
+   *
+   * @param outParameterRow {@code Row} of out parameter values. Not null.
+   * Retained.
+   * @return {@code Result} of {@code outParameterRow}. Not null.
    */
-  static OracleResultImpl createCallResult(
-    ReactiveJdbcAdapter adapter, CallableStatement callableStatement,
-    OracleRowImpl outParameterRow) {
+  static OracleResultImpl createCallResult(OracleRowImpl outParameterRow) {
     return new OracleResultImpl() {
 
       @Override
       <T> Publisher<T> publishRows(
         BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
-        return Mono.<T>fromSupplier(() ->
+        return Mono.fromSupplier(() ->
           mappingFunction.apply(
             outParameterRow, outParameterRow.metadata()));
       }
@@ -240,7 +230,7 @@ abstract class OracleResultImpl implements Result {
    */
   @Override
   public final Publisher<Integer> getRowsUpdated() {
-    setConsumed();
+    setPublished();
 
     return Flux.from(publishUpdateCount())
       .doFinally(signalType -> consumedFuture.complete(null));
@@ -276,7 +266,7 @@ abstract class OracleResultImpl implements Result {
     BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
 
     requireNonNull(mappingFunction, " Mapping function is null");
-    setConsumed();
+    setPublished();
 
     Publisher<T> rowPublisher =
       Flux.<T>from(publishRows(mappingFunction))
@@ -292,30 +282,30 @@ abstract class OracleResultImpl implements Result {
   }
 
   /**
-   * Runs {@code onConsumed} when this {@code Result} has been fully consumed.
-   * @param onConsumed {@code Runnable} to run on consumption. Not null.
+   * Returns a {@code Publisher} that emits {@code onComplete} when this
+   * {@code Result} has been
+   * <a href="OracleStatementImpl.html#fully-consumed-result">
+   *   fully-consumed
+   * </a>.
+   * @return {@code Publisher} of this {@code Result}'s consumption
    */
-  void runOnConsumed(Runnable onConsumed) {
-    consumedFuture.thenRun(onConsumed);
-  }
-
-  Publisher<Void> onConsumed() {
+  final Publisher<Void> onConsumed() {
     return Mono.fromCompletionStage(consumedFuture);
   }
 
   /**
-   * Marks this result as having produced row data or an update count for
-   * consumption by a caller. This method enforces the Result SPI contract which
+   * Marks this result as having created a {@code Publisher} of row data or
+   * an update count. This method enforces the {@link Result} SPI contract which
    * does not allow the same result to be consumed more than once.
    * @throws IllegalStateException If this result has already been consumed.
    */
-  private void setConsumed() {
-    if (isConsumed) {
+  private void setPublished() {
+    if (isPublished) {
       throw new IllegalStateException(
         "A result can not be consumed more than once");
     }
     else {
-      isConsumed = true;
+      isPublished = true;
     }
   }
 

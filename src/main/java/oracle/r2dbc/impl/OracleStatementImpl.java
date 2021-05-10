@@ -1048,8 +1048,7 @@ final class OracleStatementImpl implements Statement {
   private Publisher<OracleResultImpl> publishCallResult(
     CallableStatement callableStatement, Parameter[] parameters) {
     return Flux.from(publishSqlResult(callableStatement))
-      .concatWith(Mono.just(createCallResult(
-        adapter, callableStatement, createOutParameterRow(
+      .concatWith(Mono.just(createCallResult(createOutParameterRow(
           callableStatement, parameters))));
   }
 
