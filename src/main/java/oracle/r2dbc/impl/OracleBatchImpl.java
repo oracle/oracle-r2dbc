@@ -22,30 +22,18 @@
 package oracle.r2dbc.impl;
 
 import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.LinkedList;
 import java.util.Queue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiFunction;
-import java.util.function.Consumer;
 
 import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.R2dbcException;
-import io.r2dbc.spi.Result;
-import io.r2dbc.spi.Row;
-import io.r2dbc.spi.RowMetadata;
-import io.r2dbc.spi.Statement;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 
 /**
  * <p>
@@ -165,7 +153,7 @@ final class OracleBatchImpl implements Batch {
    * Result}s of remaining {@code statements}.
    * </p>
    * @param statements A batch to executed.
-   * @return
+   * @return {@code Publisher} of {@code statements} {@code Result}s
    */
   private static Publisher<OracleResultImpl> publishBatch(
     Queue<OracleStatementImpl> statements) {
@@ -178,266 +166,14 @@ final class OracleBatchImpl implements Batch {
 
       return Flux.from(next.execute())
         .doOnNext(lastResult::set)
-        .concatWith(Mono.defer(() ->
+        .concatWith(Flux.defer(() ->
           Mono.from(lastResult.get().onConsumed())
-            .cast(OracleResultImpl.class)))
-        .concatWith(Flux.defer(() -> publishBatch(statements)));
+            .thenMany(publishBatch(statements))));
     }
     else {
       return Mono.empty();
     }
   }
 
-  /*
-    return Flux.create(new Consumer<>() {
-
-      final AtomicBoolean isSubscribed = new AtomicBoolean(false);
-
-      @Override
-      public void accept(FluxSink<OracleResultImpl> fluxSink) {
-        if (isSubscribed.compareAndSet(false, true))
-          publishNext(fluxSink);
-        else {
-          fluxSink.error(new IllegalStateException(
-            "Multiple subscribers are not supported by the Oracle R2DBC" +
-              " Batch.execute() publisher"));
-        }
-      }
-
-      void publishNext(FluxSink<OracleResultImpl> fluxSink) {
-        OracleStatementImpl nextStatement = statements.poll();
-        if (nextStatement != null) {
-
-          AtomicReference<OracleResultImpl> lastResult =
-            new AtomicReference<>();
-
-          Flux.from(nextStatement.execute())
-            .subscribe(nextResult -> { // onNext
-              fluxSink.next(nextResult);
-              lastResult.set(nextResult);
-            },
-            fluxSink::error, // onError
-            () -> // onComplete
-              lastResult.get().runOnConsumed(() ->
-                publishNext(fluxSink)),
-            subscription -> // request
-              fluxSink.onRequest(subscription::request));
-        }
-        else {
-          fluxSink.complete();
-        }
-      }
-    });
-  }
-
-  /**
-   * Executes each {@code Statement} in a {@code Queue} of {@code statements}.
-   * A {@code Statement} is not executed until the {@code Result} of any
-   * previous {@code Statement} is fully-consumed.
-   * @param statements {@code Statement}s to execute. Not null.
-   * @return A {@code Publisher} of each {@code Statement}'s {@code Result}.
-   * Not null.
-  private static Publisher<? extends Result> executeBatch(
-    Queue<Statement> statements) {
-    return publishSequential(statements, Statement::execute);
-  }
-   */
-
-  /**
-   * Returns a {@code Publisher} that emits 0 or 1 results to a subscriber. When
-   * the subscriber subscribes, {@link java.sql.Statement#getMoreResults()} is
-   * invoked on a JDBC {@code statement}, causing any previously opened
-   * {@code ResultSet} to be closed. The {@code Subscriber} then receives a
-   * {@code Result} if one more is available, then receives {@code onComplete}.
-   * @param adapter
-   * @param statement
-   * @return
-   */
-
-  /**
-   * Sequentially generates {@code Result} {@code Publishers}, guaranteeing
-   * that the generation of each {@code Publisher} happens after the previously
-   * generated {@code Publisher}'s  {@code Result} is fully consumed.
-   */
-  static Publisher<OracleResultImpl> publishNextResult(
-    ReactiveJdbcAdapter adapter, java.sql.Statement statement) {
-
-    OracleResultImpl next =
-      getOrHandleSQLException(() -> getNextResult(adapter, statement));
-
-    if (next == null) {
-      return Mono.empty();
-    }
-    else {
-      return Mono.just(next)
-        .then(Mono.from(next.onConsumed())
-          .cast(OracleResultImpl.class))
-        .concatWith(Mono.defer(() ->
-          Mono.from(publishNextResult(adapter, statement))));
-    }
-  }
-
-    /*
-  static Publisher<OracleResultImpl> publishNextResult(
-    ReactiveJdbcAdapter adapter, java.sql.Statement statement) {
-    return Flux.generate(synchronousSink -> runOrHandleSQLException(() -> {
-      if (statement.getMoreResults()) {
-        synchronousSink.next(
-          OracleResultImpl.createQueryResult(
-            adapter, statement.getResultSet()));
-      }
-      else {
-        int updateCount = statement.getUpdateCount();
-        if (updateCount != -1) {
-          synchronousSink.next(
-            OracleResultImpl.createUpdateCountResult(updateCount));
-        }
-      }
-      synchronousSink.complete();
-    }));
-  }
-    // concat : subscribe after previous onComplete
-    // defer : invoke gmr after previous onConsumed
-    return Flux.concat(() -> new Iterator<>() {
-
-      Publisher<Void> previous = Mono.empty();
-
-      @Override
-      public boolean hasNext() {
-        // called only after previous onComplete?
-        return false;
-      }
-
-      @Override
-      public Publisher<? extends OracleResultImpl> next() {
-        return null;
-      }
-    });
-    return Flux.create(new Consumer<>() {
-
-      @Override
-      public void accept(FluxSink<OracleResultImpl> fluxSink) {
-        OracleResultImpl next = getOrHandleSQLException(this::next);
-
-        if (next != null) {
-          fluxSink.next(next);
-          next.runOnConsumed(() -> accept(fluxSink));
-        }
-        else {
-          fluxSink.complete();
-        }
-      }
-
-      OracleResultImpl next() throws SQLException {
-        if (statement.getMoreResults()) {
-          return OracleResultImpl.createQueryResult(
-            adapter, statement.getResultSet());
-        }
-        else {
-          int updateCount = statement.getUpdateCount();
-          if (updateCount != -1) {
-            return OracleResultImpl.createUpdateCountResult(updateCount);
-          }
-          else {
-            return null;
-          }
-        }
-      }
-    });
-    */
-
-  private static OracleResultImpl getNextResult(
-    ReactiveJdbcAdapter adapter, java.sql.Statement statement)
-    throws SQLException {
-      if (statement.getMoreResults()) {
-        return OracleResultImpl.createQueryResult(
-          adapter, statement.getResultSet());
-      }
-      else {
-        int updateCount = statement.getUpdateCount();
-        if (updateCount != -1) {
-          return OracleResultImpl.createUpdateCountResult(updateCount);
-        }
-        else {
-          return null;
-        }
-      }
-    }
-
-  /**
-   * <p>
-   * A {@code Result} that completes a {@link CompletableFuture} when it has
-   * been fully consumed. Instances of {@code BatchResult} are used by Oracle
-   * R2DBC to ensure that statement execution and row data processing do
-   * not occur concurrently; The completion of the future signals that the row
-   * data of a result has been fully consumed, and that no more database
-   * calls will be initiated to fetch additional rows.
-   * </p><p>
-   * Instances of {@code BatchResult} delegate invocations of
-   * {@link #getRowsUpdated()} and {@link #map(BiFunction)} to a
-   * {@code Result} provided on construction; The behavior of {@code Publisher}s
-   * returned by these methods is identical to those returned by the delegate
-   * {@code Result}.
-   * </p>
-   */
-  private static final class BatchResult implements Result {
-
-    /** Completed when this {@code BatchResult} is fully consumed */
-     final CompletableFuture<Void> consumeFuture;
-
-    /** Delegate {@code Result} that provides row data or an update count */
-    final Result delegateResult;
-
-    /**
-     * Constructs a new result that completes a {@code consumeFuture} when the
-     * row data or update count of a {@code delegateResult} has been fully
-     * consumed.
-     * @param consumeFuture Future completed upon consumption
-     * @param delegateResult Result of row data or an update count
-     */
-    BatchResult(CompletableFuture<Void> consumeFuture, Result delegateResult) {
-      this.consumeFuture = consumeFuture;
-      this.delegateResult = delegateResult;
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Immediately completes the {@link #consumeFuture} and then returns the
-     * update count {@code Publisher} of the {@link #delegateResult}. After
-     * returning an update count {@code Publisher}, the {@link #delegateResult}
-     * can not initiate any more database calls (based on the assumption
-     * noted below).
-     * </p>
-     * @implNote It is assumed that the {@link #delegateResult} will throw
-     * {@link IllegalStateException} upon multiple attempts to consume it, and
-     * this method does not check for multiple consumptions.
-     */
-    @Override
-    public Publisher<Integer> getRowsUpdated() {
-      consumeFuture.complete(null);
-      return Flux.from(delegateResult.getRowsUpdated());
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Completes the {@link #consumeFuture} after the row data {@code
-     * Publisher} of the {@link #delegateResult} emits a terminal signal or
-     * has it's {@code Subscription} cancelled. After emitting a terminal
-     * signal or having it's {@code Subscription} cancelled, the
-     * {@link #delegateResult} can not initiate any more database calls.
-     * </p>
-     * @implNote It is assumed that the {@link #delegateResult} will throw
-     * {@link IllegalStateException} upon multiple attempts to consume it, and
-     * this method does not check for multiple consumptions.
-     */
-    @Override
-    public <T> Publisher<T> map(
-      BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
-      return Flux.<T>from(delegateResult.map(mappingFunction))
-        .doFinally(signalType -> consumeFuture.complete(null));
-    }
-  }
 }
 
