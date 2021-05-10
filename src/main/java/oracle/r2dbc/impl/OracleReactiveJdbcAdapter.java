@@ -43,7 +43,6 @@ import reactor.core.publisher.Mono;
 import javax.sql.DataSource;
 import java.nio.ByteBuffer;
 import java.sql.Blob;
-import java.sql.CallableStatement;
 import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -60,7 +59,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import static java.sql.Statement.RETURN_GENERATED_KEYS;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
@@ -186,51 +184,6 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
 
     );
-
-  /**
-   * Java object types that are supported by
-   * {@link OraclePreparedStatement#setObject(int, Object)} in 21c.
-   */
-  private static final Set<Class<?>> SUPPORTED_BIND_TYPES = Set.of(
-    // The following types are listed in Table B-4 of the JDBC 4.3
-    // Specification as types supported by setObject
-    String.class,
-    Boolean.class,
-    Byte.class,
-    Short.class,
-    Integer.class,
-    Long.class,
-    Float.class,
-    Double.class,
-    java.math.BigDecimal.class,
-    byte[].class,
-    java.math.BigInteger.class,
-    java.sql.Date.class,
-    java.sql.Time.class,
-    java.sql.Timestamp.class,
-    java.sql.Clob.class,
-    java.sql.Blob.class,
-    java.sql.Array.class,
-    java.sql.Struct.class,
-    java.sql.Ref.class,
-    java.net.URL.class,
-    java.sql.RowId.class,
-    java.sql.NClob.class,
-    java.sql.SQLXML.class,
-    java.util.Calendar.class,
-    java.util.Date.class,
-    java.time.LocalDate.class,
-    java.time.LocalTime.class,
-    java.time.LocalDateTime.class,
-    java.time.OffsetTime.class,
-    java.time.OffsetDateTime.class,
-
-    // The following types are not listed in Table B-4, but are supported by
-    // Oracle JDBC
-    java.time.Period.class,
-    java.time.Duration.class,
-    oracle.sql.json.OracleJsonObject.class
-  );
 
   /**
    * Used to construct the {@link #INSTANCE} of this singleton class.
@@ -911,81 +864,6 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   }
 
   /**
-   * {@inheritDoc}
-   * <p>
-   * Implements the ReactiveJdbcAdapter API by returning {@code true} if a
-   * hardcoded set of classes that contains {@code javaType}, or a super type
-   * of {@code javaType}.
-   * </p>
-   * @param javaType Type passed to setObject
-   * @return {@code true} if supported, otherwise {@code false}
-   */
-  public boolean isSupportedBindType(Class<?> javaType) {
-    return SUPPORTED_BIND_TYPES.contains(javaType)
-      || SUPPORTED_BIND_TYPES.stream().anyMatch(
-           supportedType -> supportedType.isAssignableFrom(javaType));
-  }
-
-  /**
-   * {@inheritDoc}
-   * <p>
-   * <em>
-   * This method executes a blocking database call when generated column
-   * names are specified by a non-empty {@code generatedColumns} argument.
-   * </em>
-   * This is a known limitation stemming from the implementation of
-   * {@link Connection#prepareStatement(String, String[])} in the 21.1 Oracle
-   * JDBC Driver. This limitation will be resolved in a later release;
-   * The Oracle JDBC Team is aware of the issue and is working on a fix.
-   * </p>
-   *
-   * <p>
-   * Implements the ReactiveJdbcAdapter API by publishing a statement
-   * returned by either {@link OracleConnection#prepareStatement(String)} or
-   * {@link OracleConnection#prepareStatement(String, int)}, or
-   * {@link OracleConnection#prepareStatement(String, String[])}.
-   * </p>
-   */
-  @Override
-  public Publisher<PreparedStatement> publishPreparedStatement(
-    String sql, String[] generatedColumns, Connection connection) {
-    OracleConnection oracleConnection = unwrapOracleConnection(connection);
-    try {
-      final PreparedStatement preparedStatement;
-      if (generatedColumns == null) {
-        preparedStatement = oracleConnection.prepareCall(sql);
-        //TODO preparedStatement = oracleConnection.prepareStatement(sql);
-      }
-      else if (generatedColumns.length == 0) {
-        preparedStatement =
-          oracleConnection.prepareStatement(sql, RETURN_GENERATED_KEYS);
-      }
-      else {
-        // TODO: This executes a BLOCKING DATABASE CALL
-        preparedStatement =
-          oracleConnection.prepareStatement(sql, generatedColumns);
-      }
-      return Mono.just(preparedStatement);
-    }
-    catch (SQLException sqlException) {
-      return Mono.error(toR2dbcException(sqlException));
-    }
-  }
-
-  @Override
-  public Publisher<CallableStatement> publishCallableStatement(
-    String sql, Connection connection) {
-    OracleConnection oracleConnection = unwrapOracleConnection(connection);
-    return Mono.just(getOrHandleSQLException(() ->
-      oracleConnection.prepareCall(sql)));
-  }
-
-  @Override
-  public JdbcRow createOutParameterRow(CallableStatement callableStatement) {
-    return new OutParameterRow(callableStatement);
-  }
-
-  /**
    * <p>
    * Returns a publisher that adapts the behavior of a Reactive Extensions
    * publisher to conform with the R2DBC standards. Subscribers of the returned
@@ -1183,46 +1061,6 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static boolean isTypeConversionError(int errorCode) {
     // ORA-17004 is raised for an unsupported type conversion
     return errorCode == 17004;
-  }
-
-  private static final class OutParameterRow implements JdbcRow {
-
-    /** CallableStatement that has been executed to return out parameters */
-    final CallableStatement callableStatement;
-
-    /**
-     * Set to {@code false} after a mapping function has output a value for
-     * this row as input, and it is no longer valid to access this row.
-     */
-    boolean isValid = true;
-
-    private OutParameterRow(CallableStatement callableStatement) {
-      this.callableStatement = callableStatement;
-    }
-
-    @Override
-    public <T> T getObject(int index, Class<T> type) {
-      if (! isValid) {
-        throw new IllegalStateException(
-          "A Row is not valid outside of a mapping function");
-      }
-      else {
-        try {
-          return callableStatement.getObject(1, type);
-        }
-        catch (SQLException sqlException) {
-          if (isTypeConversionError(sqlException.getErrorCode()))
-            throw new IllegalArgumentException(sqlException);
-          else
-            throw toR2dbcException(sqlException);
-        }
-      }
-    }
-
-    @Override
-    public JdbcRow copy() {
-      throw new UnsupportedOperationException();
-    }
   }
 
   /**

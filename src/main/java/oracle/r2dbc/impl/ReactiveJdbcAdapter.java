@@ -32,7 +32,6 @@ import java.io.InputStream;
 import java.io.Reader;
 import java.nio.ByteBuffer;
 import java.sql.Blob;
-import java.sql.CallableStatement;
 import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -524,64 +523,11 @@ interface ReactiveJdbcAdapter {
    * {@link R2dbcException} if the resource release fails.
    * </p>
    * @param clob A JDBC clob. Retained. Not null.
-   * @return A publisher that emits the result of releasing the clob's
-   * resources. Not null.
+   * @return A publisher that emits the result of releasing resources of a
+   * {@code clob}. Not null.
    * @throws R2dbcException If a database access error occurs.
    */
   Publisher<Void> publishClobFree(Clob clob) throws R2dbcException;
-
-  /**
-   * Checks if a the adapted JDBC driver implements
-   * {@link PreparedStatement} to support bind values of a specified
-   * {@code javaType}. The Oracle R2DBC Driver uses this method to verify
-   * values passed to {@link io.r2dbc.spi.Statement} bind APIs.
-   * @param javaType Type passed to setObject
-   * @return {@code true} if supported, otherwise {@code false}
-   */
-  boolean isSupportedBindType(Class<?> javaType);
-
-  /**
-   * <p>
-   * Prepares a statement that executes {@code sql} using a {@code connection}.
-   * </p><p>
-   * An optional {@code generatedColumns} argument is null if the
-   * {@code PreparedStatement} does not need to retrieve generate keys or
-   * values. The argument is an empty array if the JDBC driver should
-   * determine what generated keys or values the {@code PreparedStatement}
-   * retrieves. The argument is an array of one more column names if the {@code
-   * PreparedStatement} should retrieve values generated for those columns,
-   * or should retrieve keys that can be used to query the values generated
-   * for those columns. The Oracle R2DBC Driver accesses generated values by
-   * invoking {@link PreparedStatement#getGeneratedKeys()}} on the published
-   * {@code PreparedStatement}.
-   * </p><p>
-   * The specified {@code connection} and {@code generatedColumns} are retained
-   * by the returned publisher, meaning that any mutable state of these objects
-   * that affects statement creation also affects the returned publisher.
-   * </p><p>
-   * The returned publisher initiates statement creation <i>the first
-   * time</i> a subscriber subscribes, before the subscriber emits a {@code
-   * request} signal. All subsequent subscribers receive the same signals in
-   * the same order as the first subscriber.
-   * </p><p>
-   * The returned publisher signals {@code onError} with an
-   * {@link R2dbcException} if statement creation fails.
-   * </p>
-   *
-   * @param sql SQL Language statement. Not null.
-   * @param generatedColumns Names of columns that values are generated for.
-   * Retained. May be null.
-   * @param connection JDBC connection to a database. Not null. Retained.
-   * @return A statement that executes {@code sql} and returns the values of
-   * {@code generatedColumns}.
-   */
-  Publisher<PreparedStatement> publishPreparedStatement(
-    String sql, String[] generatedColumns, Connection connection);
-
-  Publisher<CallableStatement> publishCallableStatement(
-    String sql, Connection connection);
-
-  JdbcRow createOutParameterRow(CallableStatement callableStatement);
 
   /** 
    * Accessor of column values within a single row from a table of data that
