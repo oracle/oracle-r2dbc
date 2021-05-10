@@ -222,7 +222,7 @@ public class OracleConnectionImplTest {
         // the transaction begins less than one second after the table was
         // created; The database incorrectly detects that the table was altered
         // after the transaction began.
-        try{Thread.sleep(1_000L);}catch(Throwable e){e.printStackTrace();}
+        try{Thread.sleep(2_000L);}catch(Throwable e){e.printStackTrace();}
 
         // Commit one insert into a table with a different session before
         // sessionA's transaction begins

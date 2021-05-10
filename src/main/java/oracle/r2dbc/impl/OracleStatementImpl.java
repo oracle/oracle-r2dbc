@@ -524,14 +524,14 @@ final class OracleStatementImpl implements Statement {
       boolean isCall = copyAndValidateParameters(currentParameters);
 
       if (isCall) {
-        return executeCall(currentParameters);
+        return executeCall(currentParameters, fetchSize);
       }
       else if (generatedColumns != null) {
         return executeGeneratingValues(
-          generatedColumns.clone(), currentParameters);
+          generatedColumns.clone(), currentParameters, fetchSize);
       }
       else {
-        return executeSql(currentParameters);
+        return executeSql(currentParameters, fetchSize);
       }
     }
   }
@@ -591,11 +591,12 @@ final class OracleStatementImpl implements Statement {
    * @return A publisher that emits the {@code Result} of executing this
    * {@code Statement}
    */
-  private Publisher<OracleResultImpl> executeSql(Parameter[] parameters) {
+  private Publisher<OracleResultImpl> executeSql(
+    Parameter[] parameters, int fetchSize) {
     return execute(() -> jdbcConnection.prepareStatement(sql),
       (preparedStatement, discardQueue) ->
         bindInParameters(preparedStatement, parameters, discardQueue),
-      this::publishSqlResult);
+      preparedStatement -> publishSqlResult(preparedStatement, fetchSize));
   }
 
   /**
@@ -622,14 +623,15 @@ final class OracleStatementImpl implements Statement {
    * {@code Statement}
    */
   private Publisher<OracleResultImpl> executeGeneratingValues(
-    String[] generatedColumns, Parameter[] parameters) {
+    String[] generatedColumns, Parameter[] parameters, int fetchSize) {
     return execute(
       () -> generatedColumns.length == 0
         ? jdbcConnection.prepareStatement(sql, RETURN_GENERATED_KEYS)
         : jdbcConnection.prepareStatement(sql, generatedColumns),
       (preparedStatement, discardQueue) ->
         bindInParameters(preparedStatement, parameters, discardQueue),
-      this::publishGeneratingValues);
+      preparedStatement ->
+        publishGeneratingValues(preparedStatement, fetchSize));
   }
 
   /**
@@ -677,14 +679,16 @@ final class OracleStatementImpl implements Statement {
    *   has configured this {@code Statement} to returned generated values.
    *   Oracle JDBC does not support this.
    */
-  Publisher<OracleResultImpl> executeCall(Parameter[] parameters) {
+  Publisher<OracleResultImpl> executeCall(
+    Parameter[] parameters, int fetchSize) {
     return execute(
       () -> jdbcConnection.prepareCall(sql),
       (callableStatement, discardQueue) ->
         Mono.from(bindInParameters(callableStatement, parameters, discardQueue))
           .doOnSuccess(nil ->
             bindOutParameters(callableStatement, parameters)),
-      callableStatement -> publishCallResult(callableStatement, parameters));
+      callableStatement ->
+        publishCallResult(callableStatement, parameters, fetchSize));
   }
 
   Publisher<OracleResultImpl> executeBatch(Queue<Parameter[]> currentBatch) {
@@ -822,7 +826,9 @@ final class OracleStatementImpl implements Statement {
    * {@code preparedStatement}.
    */
   private Publisher<OracleResultImpl> publishSqlResult(
-    PreparedStatement preparedStatement) {
+    PreparedStatement preparedStatement, int fetchSize) {
+
+    runOrHandleSQLException(() -> preparedStatement.setFetchSize(fetchSize));
 
     return Mono.from(adapter.publishSQLExecution(preparedStatement))
       .flatMapMany(isResultSet -> {
@@ -912,7 +918,9 @@ final class OracleStatementImpl implements Statement {
   }
 
   private Publisher<OracleResultImpl> publishGeneratingValues(
-    PreparedStatement preparedStatement) {
+    PreparedStatement preparedStatement, int fetchSize) {
+
+    runOrHandleSQLException(() -> preparedStatement.setFetchSize(fetchSize));
 
     return Mono.from(adapter.publishSQLExecution(preparedStatement))
       .flatMap(isResultSet -> isResultSet
@@ -1046,8 +1054,9 @@ final class OracleStatementImpl implements Statement {
    * @return Publisher emitting implicit results and out binds.
    */
   private Publisher<OracleResultImpl> publishCallResult(
-    CallableStatement callableStatement, Parameter[] parameters) {
-    return Flux.from(publishSqlResult(callableStatement))
+    CallableStatement callableStatement, Parameter[] parameters,
+    int fetchSize) {
+    return Flux.from(publishSqlResult(callableStatement, fetchSize))
       .concatWith(Mono.just(createCallResult(createOutParameterRow(
           callableStatement, parameters))));
   }
