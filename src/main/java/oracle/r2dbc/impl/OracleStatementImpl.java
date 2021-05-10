@@ -231,8 +231,7 @@ final class OracleStatementImpl implements Statement {
   public Statement bind(int index, Object value) {
     requireOpenConnection(jdbcConnection);
     requireNonNull(value, "value is null");
-    requireValidIndex(index);
-    parameters[index] = bindObject(value);
+    bindObject(index, value);
     return this;
   }
 
@@ -290,8 +289,7 @@ final class OracleStatementImpl implements Statement {
   public Statement bindNull(int index, Class<?> type) {
     requireOpenConnection(jdbcConnection);
     requireNonNull(type, "type is null");
-    requireValidIndex(index);
-    parameters[index] = bindObject(null);
+    bindObject(index, null);
     return this;
   }
 
@@ -359,9 +357,7 @@ final class OracleStatementImpl implements Statement {
   @Override
   public Statement add() {
     requireOpenConnection(jdbcConnection);
-    validateBatchBinds(parameters);
-    batch.add(parameters.clone());
-    Arrays.fill(parameters, null);
+    addBatchParameters();
     return this;
   }
 
@@ -942,32 +938,22 @@ final class OracleStatementImpl implements Statement {
             runOrHandleSQLException(preparedStatement::addBatch)));
   }
 
-
   /**
-   * Sets bind {@code values} at parameter positions of a {@code jdbcStatement}.
-   * The index of a value in the {@code values} values array determines the
-   * parameter position it is set at. Bind values that store character
-   * information, such as {@code String} or {@code Reader}, are set as NCHAR
-   * SQL types so that the JDBC driver will represent the values with the
-   * National (Unicode) character set of the database.
-   *  @param values Values to bind. Not null.
-   * @param jdbcStatement JDBC statement. Not null.
-   */
-
-  /**
-   * Binds {@code parameters} to a {@code preparedStatement}. Ignores any
-   * instances of {@code Parameter.Out}. May allocate resources to materialize
-   * parameter values. The returned {@code Publisher} completes after all
-   * values are materialized and bound to the {@code preparedStatement}. The
-   * returned {@code Publisher} completes with a {@code Collection} of {@code
-   * Publishers} that deallocate any resources allocated by this method. If
-   * the returned {@code Publisher} terminates with {@code onError}, any
-   * resources allocated by this method prior to the error are deallocated.
+   * <p>
+   * Binds in {@code parameters} to a {@code preparedStatement}, ignoring any
+   * instances of {@code Parameter.Out}. The returned {@code Publisher}
+   * completes after all values are materialized and bound to the {@code
+   * preparedStatement}.
+   * </p><p>
+   * Resources allocated for bind values are deallocated by {@code Publisher}s
+   * this method adds to the {@code discardQueue}.
+   * </p>
+   *
    * @param preparedStatement
    * @param parameters
+   * @param discardQueue Resource deallocation queue
    * @return
    */
-
   private Publisher<Void> bindInParameters(
     PreparedStatement preparedStatement, Parameter[] parameters,
     Queue<Publisher<Void>> discardQueue) {
@@ -976,10 +962,10 @@ final class OracleStatementImpl implements Statement {
 
     for (int i = 0; i < parameters.length; i++) {
 
-      int jdbcIndex = i + 1;
       Object value = parameters[i].getValue();
-
       Type r2dbcType = parameters[i].getType();
+
+      int jdbcIndex = i + 1;
       SQLType jdbcType = r2dbcType != null
         ? r2dbcToSQLType(r2dbcType)
         : value == null
@@ -989,51 +975,130 @@ final class OracleStatementImpl implements Statement {
       if (parameters[i] instanceof Parameter.Out)
         continue;
 
-      if (parameters[i] instanceof Parameter.In) {
-        if (value == null) {
-          runOrHandleSQLException(() ->
-            preparedStatement.setNull(jdbcIndex,
-              Objects.requireNonNullElse(
-                jdbcType.getVendorTypeNumber(), Types.NULL)));
-        }
-        else if (value instanceof ByteBuffer) {
-          ByteBuffer byteBuffer = (ByteBuffer)value;
-          byte[] byteArray = new byte[byteBuffer.remaining()];
-          byteBuffer.slice().get(byteArray);
-          runOrHandleSQLException(() ->
-            preparedStatement.setObject(jdbcIndex, byteArray, jdbcType));
-        }
-        else if (value instanceof Blob) {
-          allocations = allocations.then(Mono.from(
-            materializeBlob((Blob)value))
-            .doOnSuccess(jdbcBlob -> {
-              discardQueue.add(adapter.publishBlobFree(jdbcBlob));
-              runOrHandleSQLException(() ->
-                preparedStatement.setObject(jdbcIndex, jdbcBlob, jdbcType));
-            }))
-            .then();
-        }
-        else if (value instanceof Clob) {
-          allocations = allocations.then(Mono.from(
-            materializeClob((Clob)value))
-            .doOnSuccess(jdbcClob -> {
-              discardQueue.add(adapter.publishClobFree(jdbcClob));
-              runOrHandleSQLException(() ->
-                preparedStatement.setObject(jdbcIndex, jdbcClob, jdbcType));
-            }))
-            .then();
-        }
-        else {
-          runOrHandleSQLException(() ->
-            preparedStatement.setObject(jdbcIndex, value, jdbcType));
-        }
+      Object jdbcValue = convertToJdbcBindValue(value, discardQueue);
+      if (jdbcValue instanceof Publisher<?>) {
+        allocations = allocations.then(Mono.from((Publisher<?>)jdbcValue))
+          .doOnSuccess(allocatedValue -> runOrHandleSQLException(() ->
+            preparedStatement.setObject(jdbcIndex, allocatedValue, jdbcType)))
+          .then();
+      }
+      else {
+        runOrHandleSQLException(() ->
+          preparedStatement.setObject(jdbcIndex, jdbcValue, jdbcType));
       }
     }
 
     return allocations;
   }
 
+  /**
+   * <p>
+   * Converts a {@code bindValue} of a type that is supported by R2DBC into an
+   * equivalent type that is supported by JDBC. For instance, if this method
+   * is called with an {@code io.r2dbc.spi.Blob} type {@code bindValue}, it
+   * will convert it into an {@code java.sql.Blob} type object. The object
+   * returned by this method will express the same information as the
+   * original {@code bindValue}. If no conversion is necessary, this method
+   * simply returns the original {@code bindValue}. If the conversion
+   * requires a database call, this method returns a {@code Publisher} that
+   * emits the converted value. If the conversion requires resource
+   * allocation, a {@code Publisher} that deallocates resources is added to
+   * the {@code discardQueue}
+   * </p>
+   *
+   * @param bindValue Bind value to convert. May be null.
+   * @param discardQueue Resource deallocation queue
+   * @return Value to set as a bind on the JDBC statement. May be null.
+   * @throws IllegalArgumentException If the JDBC driver can not convert a
+   *   bind value into a SQL value.
+   */
+  private Object convertToJdbcBindValue(
+    Object bindValue, Queue<Publisher<Void>> discardQueue) {
+    if (bindValue == null) {
+      return null;
+    }
+    else if (bindValue instanceof io.r2dbc.spi.Blob) {
+      return convertBlobBind((io.r2dbc.spi.Blob) bindValue, discardQueue);
+    }
+    else if (bindValue instanceof io.r2dbc.spi.Clob) {
+      return convertClobBind((io.r2dbc.spi.Clob) bindValue, discardQueue);
+    }
+    else if (bindValue instanceof ByteBuffer) {
+      return convertByteBufferBind((ByteBuffer) bindValue);
+    }
+    else {
+      return bindValue;
+    }
+  }
 
+  /**
+   * Converts an R2DBC Blob to a JDBC Blob. The returned {@code Publisher}
+   * asynchronously writes the {@code r2dbcBlob's} content to a JDBC Blob and
+   * then emits the JDBC Blob after all content has been written. The JDBC 
+   * Blob allocates a temporary database BLOB that is freed by a {@code
+   * Publisher} added to the {@code discardQueue}.
+   * @param r2dbcBlob An R2DBC Blob. Not null. Retained.
+   * @return A JDBC Blob. Not null.
+   */
+  private Publisher<java.sql.Blob> convertBlobBind(
+    io.r2dbc.spi.Blob r2dbcBlob, Queue<Publisher<Void>> discardQueue) {
+
+    return Mono.using(() ->
+        getOrHandleSQLException(jdbcConnection::createBlob),
+      jdbcBlob -> {
+        discardQueue.add(adapter.publishBlobFree(jdbcBlob));
+        return Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
+          .thenReturn(jdbcBlob);
+      },
+      jdbcBlob -> r2dbcBlob.discard());
+  }
+  
+  /**
+   * Converts an R2DBC Clob to a JDBC Clob. The returned {@code Publisher}
+   * asynchronously writes the {@code r2dbcClob's} content to a JDBC Clob and
+   * then emits the JDBC Clob after all content has been written. The JDBC 
+   * Clob allocates a temporary database Clob that is freed by a {@code
+   * Publisher} added to the {@code discardQueue}.
+   * @param r2dbcClob An R2DBC Clob. Not null. Retained.
+   * @return A JDBC Clob. Not null.
+   */
+  private Publisher<java.sql.Clob> convertClobBind(
+    io.r2dbc.spi.Clob r2dbcClob, Queue<Publisher<Void>> discardQueue) {
+
+    return Mono.using(() ->
+        // Always use NClob to support unicode characters
+        getOrHandleSQLException(jdbcConnection::createNClob),
+      jdbcClob -> {
+        discardQueue.add(adapter.publishClobFree(jdbcClob));
+        return Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
+          .thenReturn(jdbcClob);
+      },
+      jdbcClob -> r2dbcClob.discard());
+  }
+
+  /**
+   * Converts a ByteBuffer to a byte array. The {@code byteBuffer} contents,
+   * delimited by it's position and limit, are copied into the returned byte
+   * array. No state of the {@code byteBuffer} is mutated, including it's
+   * position, limit, or mark.
+   * @param byteBuffer A ByteBuffer. Not null. Not retained.
+   * @return A byte array storing the {@code byteBuffer's} content. Not null.
+   */
+  private static byte[] convertByteBufferBind(ByteBuffer byteBuffer) {
+    ByteBuffer slice = byteBuffer.slice(); // Don't mutate position/limit/mark
+    byte[] byteArray = new byte[slice.remaining()];
+    slice.get(byteArray);
+    return byteArray;
+  }
+
+  /**
+   * Binds in {@code parameters} to a {@code preparedStatement}, ignoring any
+   * {@code Parameter} that is not an instance of {@code Parameter.Out}.  The
+   * {@link SQLType} associated to the R2DBC {@code Type} of each out
+   * parameter is registered with the {@code callableStatement}.
+   * @param callableStatement JDBC statement having out parameters
+   * @param parameters Parameters of this {@code Statement}
+   */
   private static void bindOutParameters(
     CallableStatement callableStatement, Parameter[] parameters) {
     for (int i = 0; i < parameters.length; i++) {
@@ -1048,10 +1113,10 @@ final class OracleStatementImpl implements Statement {
 
   /**
    * Publishes any implicit results generated by {@code DBMS_SQL.RETURN_RESULT}
-   * followed by a single {@code Result} of out binds.
-   * @param callableStatement JDBC callable statement with out binds
-   * @param parameters Parameters containing at least one out bind
-   * @return Publisher emitting implicit results and out binds.
+   * followed by a single {@code Result} of out parameters.
+   * @param callableStatement JDBC statement having out parameters
+   * @param parameters Parameters of this {@code Statement}
+   * @return Publisher emitting implicit results and out parameters.
    */
   private Publisher<OracleResultImpl> publishCallResult(
     CallableStatement callableStatement, Parameter[] parameters,
@@ -1063,48 +1128,54 @@ final class OracleStatementImpl implements Statement {
 
   /**
    * <p>
-   * Generates {@code ColumnMetadata} for all out parameters. The length of
-   * the returned array is equal to the number {@link Parameter.Out} objects
-   * passed to a {@code bind} method of this {@code Statement}. The array is
-   * ordered by the ordinal index of each out bind.
+   * Creates a {@code Row} accessing out parameter values of a
+   * {@code callableStatement}.
    * </p><p>
-   * The returned metadata is generated locally based solely on user defined
-   * inputs, and is not obtained from the database or JDBC.
+   * Values may be accessed by their ordinal index relative to other out
+   * parameters, such that the index of the first out parameter is 0, and the
+   * indexes of the next out parameters are 1 greater than the index of the
+   * previous out parameter. Where {@code i} is an in {@code Parameter} in
+   * {@code parameters}, and {@code o} is an out or in-out {@code Parameter} in
+   * {@code parameters}, and {...} -> {...} expresses a mapping from
+   * {@code parameters} to the {@code callableStatement} index that is accessed
+   * for each ordinal index of the {@code Row}:
+   * </p><pre>
+   * {i,i,i} -> {}
+   * {o,i,i} -> {1}
+   * {i,o,i} -> {2}
+   * {o,o,i} -> {1,2}
+   * {i,i,o} -> {3}
+   * {o,i,o} -> {1,3}
+   * {i,o,o} -> {2,3}
+   * {o,o,o} -> {1,2,3}
+   * </pre><p>
+   * Values may be accessed by their parameter name, where the name is declared
+   * using a colon-prefixed named parameter marker in this {@code Statement}'s
+   * SQL. Values of unnamed parameter markers can not be accessed by name,
+   * only by index.
    * </p><p>
-   * The metadata supplies the SQL type specified by {@link Parameter#getType()}
-   * for each {@link Parameter.Out} passed to a {@code bind} method of this
-   * {@code Statement}. The metadata supplies the name only if the parameter
-   * marker for
-   * for
-   * each out
-   * specified by
+   * {@code RowMetadata} provides the {@link Type} of each {@code Parameter},
+   * and the name of each {@code Parameter} having named parameter marker.
+   * For {@code Parameter}s having an unnamed parameter marker, the name
+   * provided by {@code RowMetadata} is the ordinal index of that {@code
+   * Parameter}.
    * </p>
-   * {@link Parameter#getType()}
-   * provides the SQL type of all out parameters
    *
-   * @return
-   */
-
-  /**
-   * Creates a {@code Row} of out parameter values. Parameter values may be
-   * accessed by their ordinal index relative to other out parameters.
-   * {i, i, i} = {}
-   * {o, i, i} = {(0,1)}
-   * {i, o, i} = {(0,2}}
-   * {i, i, o} = {(0,3)}
-   * {o, o, i} = {(0,1},(1,2)}
-   * {i, o, o} = {(0,2),(1,3)}
-   * {i, o, i} = {(0,1},(1,2)}
-   * {o, o, o} = {(0,1},(1,2),(2,3)}
-   * {o, o, o} = {0, 1, 2}
-   * {i, i, o} = {(0,3)}
-   * @return
+   *
+   * @param callableStatement JDBC statement having out parameters
+   * @param parameters Parameters of this {@code Statement}
+   * @return A {@code Row} accessing the out parameters of {@code
+   * callableStatement}.
+   *
+   * @implNote Oracle JDBC does not implement
+   * {@link java.sql.ParameterMetaData}, so it can not be used to implement
+   * {@code RowMetaData}.
    */
   private OracleRowImpl createOutParameterRow(
-    CallableStatement callableStatement, Parameter[] binds) {
+    CallableStatement callableStatement, Parameter[] parameters) {
 
-    int[] outBindIndexes = IntStream.range(0, binds.length)
-      .filter(i -> binds[i] instanceof Parameter.Out)
+    int[] outBindIndexes = IntStream.range(0, parameters.length)
+      .filter(i -> parameters[i] instanceof Parameter.Out)
       .toArray();
 
     return new OracleRowImpl(
@@ -1122,10 +1193,11 @@ final class OracleStatementImpl implements Statement {
           throw new UnsupportedOperationException();
         }
       },
-      new OracleRowMetadataImpl(Arrays.stream(outBindIndexes)
-        .mapToObj(i ->  OracleColumnMetadataImpl.create(
-          Objects.requireNonNullElse(parameterNames.get(i), ""),
-          binds[i].getType()))
+      new OracleRowMetadataImpl(IntStream.range(0, outBindIndexes.length)
+        .mapToObj(i -> OracleColumnMetadataImpl.create(
+          Objects.requireNonNullElse(
+            parameterNames.get(outBindIndexes[i]), String.valueOf(i)),
+          parameters[outBindIndexes[i]].getType()))
         .toArray(OracleColumnMetadataImpl[]::new)),
       adapter);
   }
@@ -1214,7 +1286,7 @@ final class OracleStatementImpl implements Statement {
     for (int i = 0; i < parameterNames.size(); i++) {
       if (name.equals(parameterNames.get(i))) {
         isMatched = true;
-        parameters[i] = bindObject(value);
+        bindObject(i, value);
       }
     }
 
@@ -1236,48 +1308,57 @@ final class OracleStatementImpl implements Statement {
     }
   }
 
-  private static void validateBatchBinds(Parameter[] binds) {
-    for (Parameter bind : binds) {
-      if (bind == null) {
+  /**
+   * Adds the current set of {@link #parameters} to the {@link #batch}, and
+   * then resets the {@code parameters} array to store {@code null} at all
+   * positions.
+   * @throws IllegalStateException If a parameter has not been set
+   * @throws IllegalStateException If an out parameter has been set
+   */
+  private void addBatchParameters() {
+    for (Parameter parameter : parameters) {
+      if (parameter == null) {
         throw parameterNotSet();
       }
-      else if (bind instanceof Parameter.Out) {
+      else if (parameter instanceof Parameter.Out) {
         throw new IllegalStateException(
           "Batch execution with out binds is not supported");
       }
     }
+    batch.add(parameters.clone());
+    Arrays.fill(parameters, null);
   }
 
+  /**
+   * Returns an exception indicating that a parameter has not been set.
+   * @return Unset parameter exception
+   */
   private static IllegalStateException parameterNotSet() {
     return new IllegalStateException("One or more parameters are not set");
   }
 
   /**
-   * <p>
-   * Converts a {@code bindValue} of a type that is supported by R2DBC into an
-   * equivalent type that is supported by JDBC. For instance, if this method
-   * is called with an {@code io.r2dbc.spi.Blob} type {@code bindValue}, then
-   * it will return an {@code java.sql.Blob} type object. The object returned
-   * by this method will express the same information as the original {@code
-   * bindValue}. If no conversion is necessary, this method simply returns the
-   * original {@code bindValue}.
-   * </p>
+   * Binds an {@code object}, retaining it as a {@link Parameter} in
+   * {@link #parameters} at the specified {@code index}. If the {@code object}
+   * is not an instance of {@code Parameter}, a {@code Parameter} having the
+   * {@code object} as it's value is retained in {@link #parameters}.
    *
-   * @param bindValue Bind value to convert. May be null.
-   * @return Value to set as a bind on the JDBC statement. May be null.
-   * @throws IllegalArgumentException If the JDBC driver can not convert a
-   *   bind value into a SQL value.
+   * @param object Bind value to retain. May be null.
+   * @throws IllegalArgumentException If {@code index} is not valid
+   * @throws IllegalArgumentException If the class of {@code object} is not
+   * supported as a bind value.
+   * @throws IllegalArgumentException If {@code object} is a {@code Parameter},
+   * and the class of the value is not supported as a bind value.
+   * @throws IllegalArgumentException If {@code object} is a {@code Parameter},
+   * and the SQL type is not supported as a bind value.
    */
-  /**
-   * Returns a {@code BindValue} that binds a
-   * @param object
-   * @return
-   */
-  private static Parameter bindObject(Object object) {
+  private void bindObject(int index, Object object) {
+
+    requireValidIndex(index);
 
     if (object == null) {
       // TODO: OracleR2dbcType
-      return Parameters.in(R2dbcType.VARCHAR);
+      parameters[index] = Parameters.in(R2dbcType.VARCHAR);
     }
     else if (object instanceof Parameter) {
       // TODO: OracleR2dbcType {SQLType sqlType; Type r2dbcType;}
@@ -1290,42 +1371,68 @@ final class OracleStatementImpl implements Statement {
           throw new IllegalArgumentException("TEMPORARY");
       }
 
-      return (Parameter)object;
+      parameters[index] =(Parameter)object;
     }
     else {
       if (null == OracleColumnMetadataImpl.javaToSQLType(object.getClass()))
         throw new IllegalArgumentException("TEMPORARY");
 
-      return Parameters.in(object);
+      parameters[index] = Parameters.in(object);
     }
   }
 
+  /**
+   * Materializes an R2DBC {@code Blob} by creating a JDBC {@code Blob} and
+   * writing the content of the R2DBC {@code Blob} to the JDBC {@code Blob}.
+   * The returned {@code Publisher} emits a single JDBC {@code Blob} after
+   * the R2DBC {@code Blob} has been written to it. The R2DBC and JDBC
+   * {@code Blob}s are discarded and freed if the returned {@code Publisher}
+   * terminates with {@code onError} or is cancelled.
+   * @param r2dbcBlob Blob to materialize
+   * @return {@code Publisher} emitting a materialized JDBC {@code Blob}
+   */
   private Publisher<java.sql.Blob> materializeBlob(
     io.r2dbc.spi.Blob r2dbcBlob) {
-    return Mono.fromSupplier(() ->
-      getOrHandleSQLException(jdbcConnection::createBlob))
-      .flatMap(jdbcBlob ->
+    return Mono.usingWhen(Mono.fromSupplier(() ->
+        getOrHandleSQLException(jdbcConnection::createBlob)),
+      jdbcBlob ->
         Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
-          .onErrorResume(error ->
-            Mono.from(r2dbcBlob.discard())
-              .then(Mono.from(adapter.publishBlobFree(jdbcBlob)))
-              .then(Mono.error(error)))
-          .thenReturn(jdbcBlob));
+          .thenReturn(jdbcBlob),
+      jdbcBlob -> r2dbcBlob.discard(),
+      (jdbcBlob, error) ->
+        Mono.from(r2dbcBlob.discard())
+          .then(Mono.from(adapter.publishBlobFree(jdbcBlob))),
+      jdbcBlob ->
+        Mono.from(r2dbcBlob.discard())
+          .then(Mono.from(adapter.publishBlobFree(jdbcBlob))));
   }
 
+  /**
+   * Materializes an R2DBC {@code Clob} by creating a JDBC {@code Clob} and
+   * writing the content of the R2DBC {@code Clob} to the JDBC {@code Clob}.
+   * The returned {@code Publisher} emits a single JDBC {@code Clob} after
+   * the R2DBC {@code Clob} has been written to it. The R2DBC and JDBC
+   * {@code Clob}s are discarded and freed if the returned {@code Publisher}
+   * terminates with {@code onError} or is cancelled.
+   * @param r2dbcClob Clob to materialize
+   * @return {@code Publisher} emitting a materialized JDBC {@code Clob}
+   */
   private Publisher<java.sql.Clob> materializeClob(
     io.r2dbc.spi.Clob r2dbcClob) {
-    return Mono.fromSupplier(() ->
+    return Mono.usingWhen(Mono.fromSupplier(() ->
       // TODO: Use NCLOB if an N* type has been specified, otherwise use default
       // Use NClob to support unicode characters
-      getOrHandleSQLException(jdbcConnection::createNClob))
-      .flatMap(jdbcClob ->
+      getOrHandleSQLException(jdbcConnection::createNClob)),
+      jdbcClob ->
         Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
-          .onErrorResume(error ->
-            Mono.from(r2dbcClob.discard())
-              .then(Mono.from(adapter.publishClobFree(jdbcClob)))
-              .then(Mono.error(error)))
-          .thenReturn(jdbcClob));
+          .thenReturn(jdbcClob),
+      jdbcClob -> r2dbcClob.discard(),
+      (jdbcClob, error) ->
+          Mono.from(r2dbcClob.discard())
+            .then(Mono.from(adapter.publishClobFree(jdbcClob))),
+      jdbcClob ->
+        Mono.from(r2dbcClob.discard())
+          .then(Mono.from(adapter.publishClobFree(jdbcClob))));
   }
 
 
