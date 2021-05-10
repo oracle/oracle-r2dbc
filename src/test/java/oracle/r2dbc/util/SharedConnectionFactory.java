@@ -183,7 +183,7 @@ public class SharedConnectionFactory implements ConnectionFactory {
     "SELECT sql_text" +
       " FROM v$open_cursor" +
       " WHERE sid = userenv('sid')" +
-      " AND cursor_type = 'OPEN'" +
+      " AND cursor_type IN ('OPEN', 'OPEN PL/SQL', 'OPEN RECURSIVE')" +
       " AND sql_text NOT LIKE 'table_%'" +
       " ORDER BY last_sql_active_time";
 

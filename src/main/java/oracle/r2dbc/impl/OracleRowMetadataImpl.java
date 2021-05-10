@@ -131,31 +131,6 @@ final class OracleRowMetadataImpl implements RowMetadata {
   }
 
   /**
-   * Creates {@code RowMetadata} that supplies out parameter metadata from a
-   * JDBC {@code ParameterMetaData} object.
-   * @param parameterMetaData JDBC meta data. Not null. Retained.
-   * @return R2DBC {@code RowMetadata}. Not null. Not retained.
-   */
-  static OracleRowMetadataImpl createOutParameterMetadata(
-    List<String> parameterNames, ParameterMetaData parameterMetaData) {
-
-    IntPredicate isOutParameter = jdbcIndex -> {
-      int mode = getOrHandleSQLException(() ->
-        parameterMetaData.getParameterMode(jdbcIndex));
-      return ParameterMetaData.parameterModeInOut == mode
-        || ParameterMetaData.parameterModeOut == mode;
-    };
-
-    return new OracleRowMetadataImpl(IntStream.rangeClosed(
-      1, getOrHandleSQLException(parameterMetaData::getParameterCount))
-      .filter(isOutParameter)
-      .mapToObj(jdbcIndex ->
-        OracleColumnMetadataImpl.fromParameterMetaData(
-          parameterMetaData, jdbcIndex, parameterNames.get(jdbcIndex - 1)))
-    .toArray(OracleColumnMetadataImpl[]::new));
-  }
-
-  /**
    * {@inheritDoc}
    * <p>
    * Implements the R2DBC SPI method by returning the column metadata at the

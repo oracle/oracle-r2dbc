@@ -58,6 +58,8 @@ import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitQuery;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
+import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -141,24 +143,23 @@ public class OracleConnectionImplTest {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
 
-    // Check if the test user has access to v$transaction
-    assumeTrue(awaitOne(Flux.from(connection.createStatement(
-      "SELECT name FROM v$transaction FETCH FIRST ROW ONLY")
-        .execute())
-        .map(result -> {
-          result.getRowsUpdated();
-          return true;
-        })
-        .onErrorResume(R2dbcException.class, r2dbcException ->
-          // ORA-00942 is raised when the user doesn't have access
-          942 == r2dbcException.getErrorCode()
-            ? Mono.just(false)
-            : Mono.error(r2dbcException))),
-      "V$TRANSACTION is not accessible to the test user. " +
-        "Grant access as SYSDBA with: " +
-        "\"GRANT SELECT ON v_$transaction TO "+user()+"\"");
-
     try {
+
+      // Check if the test user has access to v$transaction
+      assumeTrue(awaitOne(Flux.from(connection.createStatement(
+        "SELECT name FROM v$transaction FETCH FIRST ROW ONLY")
+          .execute())
+          .flatMap(result -> result.getRowsUpdated())
+          .then(Mono.just(true))
+          .onErrorResume(R2dbcException.class, r2dbcException ->
+            // ORA-00942 is raised when the user doesn't have access
+            942 == r2dbcException.getErrorCode()
+              ? Mono.just(false)
+              : Mono.error(r2dbcException))),
+        "V$TRANSACTION is not accessible to the test user. " +
+          "Grant access as SYSDBA with: " +
+          "\"GRANT SELECT ON v_$transaction TO "+user()+"\"");
+
       // Insert into this table after beginning a transaction
       awaitExecution(connection.createStatement(
         "CREATE TABLE testBeginTransactionName (value VARCHAR(10))"));
@@ -192,9 +193,9 @@ public class OracleConnectionImplTest {
       awaitNone(connection.rollbackTransaction());
     }
     finally {
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement(
         "DROP TABLE testBeginTransactionName"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -259,7 +260,7 @@ public class OracleConnectionImplTest {
       }
       catch (Throwable e) {e.printStackTrace();}
       finally {
-        awaitExecution(sessionB.createStatement(
+        tryAwaitExecution(sessionB.createStatement(
           "DROP TABLE testBeginTransactionReadOnly"));
         awaitNone(sessionB.close());
       }
@@ -284,7 +285,7 @@ public class OracleConnectionImplTest {
           READ_ONLY, false))));
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -306,7 +307,7 @@ public class OracleConnectionImplTest {
         connection.beginTransaction(transactionDefinition(Map.of(NAME, name))));
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -374,7 +375,7 @@ public class OracleConnectionImplTest {
       }
     }
     finally {
-      awaitExecution(sessionA.createStatement(
+      tryAwaitExecution(sessionA.createStatement(
         "DROP TABLE verifyReadCommittedIsolation"));
     }
   }
@@ -554,7 +555,7 @@ public class OracleConnectionImplTest {
         }
       }
       finally {
-        awaitExecution(sessionA.createStatement(
+        tryAwaitExecution(sessionA.createStatement(
           "DROP TABLE testCommitTransaction"));
       }
     }
@@ -583,7 +584,7 @@ public class OracleConnectionImplTest {
             result.map((row, metadata) -> row.get(0, Integer.class))));
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -608,7 +609,7 @@ public class OracleConnectionImplTest {
           "SELECT 'Hello, Oracle' AS greeting FROM dual"));
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -636,7 +637,7 @@ public class OracleConnectionImplTest {
           " setAutoCommit(true).");
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -653,7 +654,7 @@ public class OracleConnectionImplTest {
       assertNotNull(connection.getMetadata());
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -731,12 +732,12 @@ public class OracleConnectionImplTest {
         awaitQuery(List.of("Aloha, Oracle"), row -> row.get(0), select);
       }
       finally {
-        awaitExecution(connection.createStatement(
+        tryAwaitExecution(connection.createStatement(
           "DROP TABLE testRollbackTransaction"));
       }
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -870,7 +871,7 @@ public class OracleConnectionImplTest {
         }
       }
       finally {
-        awaitExecution(sessionA.createStatement(
+        tryAwaitExecution(sessionA.createStatement(
           "DROP TABLE testSetAutoCommit"));
       }
     }
@@ -896,7 +897,7 @@ public class OracleConnectionImplTest {
           " newly created connection");
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -966,7 +967,7 @@ public class OracleConnectionImplTest {
         }
       }
       finally {
-        awaitExecution(sessionA.createStatement(
+        tryAwaitExecution(sessionA.createStatement(
           "DROP TABLE tstilUnsupported"));
       }
     }
@@ -1063,7 +1064,7 @@ public class OracleConnectionImplTest {
         }
       }
       finally {
-        awaitExecution(sessionA.createStatement(
+        tryAwaitExecution(sessionA.createStatement(
           "DROP TABLE tstilReadCommited"));
       }
     }
@@ -1093,7 +1094,7 @@ public class OracleConnectionImplTest {
 
       // Expect unsubscribed validation publishers to emit false when the
       // connection is closed
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
       awaitOne(false, connection.validate(ValidationDepth.LOCAL));
       awaitOne(false, connection.validate(ValidationDepth.REMOTE));
 
@@ -1103,7 +1104,7 @@ public class OracleConnectionImplTest {
       awaitOne(true, validateRemotePublisher);
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 

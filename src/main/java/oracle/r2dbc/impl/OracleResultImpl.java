@@ -25,6 +25,8 @@ import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 
@@ -65,6 +67,14 @@ abstract class OracleResultImpl implements Result {
   private boolean isConsumed = false;
 
   /**
+   * Future that is completed when this {@code Result} has been consumed,
+   * by invoking either {@link #getRowsUpdated()} or {@link #map(BiFunction)}
+   * and terminating the returned {@code Publisher} by consuming or
+   * cancelling the stream.
+   */
+  private CompletableFuture<Void> consumedFuture = new CompletableFuture<>();
+
+  /**
    * Constructs a new instance of this class. This private constructor is
    * invoked by the factory methods of this class.
    */
@@ -78,7 +88,7 @@ abstract class OracleResultImpl implements Result {
    * @param updateCount Update count to publish
    * @return An update count {@code Result}
    */
-  public static Result createUpdateCountResult(int updateCount) {
+  public static OracleResultImpl createUpdateCountResult(int updateCount) {
     return new OracleResultImpl() {
 
       final Publisher<Integer> updateCountPublisher =
@@ -110,14 +120,10 @@ abstract class OracleResultImpl implements Result {
    * @param resultSet Row data to publish
    * @return An update count {@code Result}
    */
-  public static Result createQueryResult(
+  public static OracleResultImpl createQueryResult(
     ReactiveJdbcAdapter adapter, ResultSet resultSet) {
 
     return new OracleResultImpl() {
-
-      /** JDBC {@code Statement} that returned the {@code resultSet} */
-      final java.sql.Statement jdbcStatement =
-        getOrHandleSQLException(resultSet::getStatement);
 
       /** R2DBC {@code RowMetadata} adapted from JDBC
        * {@link java.sql.ResultSetMetaData}
@@ -128,8 +134,6 @@ abstract class OracleResultImpl implements Result {
 
       @Override
       Publisher<Integer> publishUpdateCount() {
-        runOrHandleSQLException(() ->
-          resultSet.getStatement().close());
         return Mono.empty();
       }
 
@@ -139,9 +143,7 @@ abstract class OracleResultImpl implements Result {
 
         return Flux.<T>from(adapter.publishRows(resultSet, jdbcRow ->
           mappingFunction.apply(
-            new OracleRowImpl(jdbcRow, metadata, adapter), metadata)))
-          .doFinally(signalType ->
-            runOrHandleSQLException(jdbcStatement::close));
+            new OracleRowImpl(jdbcRow, metadata, adapter), metadata)));
       }
     };
   }
@@ -166,31 +168,22 @@ abstract class OracleResultImpl implements Result {
    * @param values A {@code ResultSet} of generated keys. Not null. Retained.
    * @return A result that publishes generated values, or an update count.
    */
-  public static Publisher<Result> createGeneratedValuesResult(
+  public static Publisher<OracleResultImpl> createGeneratedValuesResult(
     ReactiveJdbcAdapter adapter, int updateCount, ResultSet values) {
 
     // Avoid invoking ResultSet.getMetaData() on an empty ResultSet, it may
     // throw a SQLException
-    if (! getOrHandleSQLException(values::isBeforeFirst)) {
-      runOrHandleSQLException(() -> values.getStatement().close());
+    if (! getOrHandleSQLException(values::isBeforeFirst))
       return Mono.just(createUpdateCountResult(updateCount));
-    }
 
     // Obtain metadata before the ResultSet is closed by publishRows(...)
     OracleRowMetadataImpl metadata =
       OracleRowMetadataImpl.createRowMetadata(
         getOrHandleSQLException(values::getMetaData));
 
-    // Obtain a reference to the statement before the ResultSet is
-    // logically closed by its row publisher. The statement is closed when
-    // the publisher terminates.
-    java.sql.Statement jdbcStatement =
-      getOrHandleSQLException(values::getStatement);
-
     return Flux.from(adapter.publishRows(
       values, ReactiveJdbcAdapter.JdbcRow::copy))
       .collectList()
-      .doFinally(signalType -> runOrHandleSQLException(jdbcStatement::close))
       .map(cachedRows -> new OracleResultImpl() {
 
         @Override
@@ -215,7 +208,7 @@ abstract class OracleResultImpl implements Result {
    * @param callableStatement
    * @return
    */
-  static Result createCallResult(
+  static OracleResultImpl createCallResult(
     ReactiveJdbcAdapter adapter, CallableStatement callableStatement,
     OracleRowImpl outParameterRow) {
     return new OracleResultImpl() {
@@ -223,18 +216,13 @@ abstract class OracleResultImpl implements Result {
       @Override
       <T> Publisher<T> publishRows(
         BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
-        return Mono.fromSupplier(() -> {
-          T output = mappingFunction.apply(
-            outParameterRow, outParameterRow.metadata());
-          runOrHandleSQLException(callableStatement::close);
-          return output;
-        })
-        .doOnCancel((ThrowingRunnable)callableStatement::close);
+        return Mono.<T>fromSupplier(() ->
+          mappingFunction.apply(
+            outParameterRow, outParameterRow.metadata()));
       }
 
       @Override
       Publisher<Integer> publishUpdateCount() {
-        runOrHandleSQLException(callableStatement::close);
         return Mono.empty();
       }
     };
@@ -253,7 +241,9 @@ abstract class OracleResultImpl implements Result {
   @Override
   public final Publisher<Integer> getRowsUpdated() {
     setConsumed();
-    return publishUpdateCount();
+
+    return Flux.from(publishUpdateCount())
+      .doFinally(signalType -> consumedFuture.complete(null));
   }
 
   /**
@@ -284,9 +274,14 @@ abstract class OracleResultImpl implements Result {
   @Override
   public final <T> Publisher<T> map(
     BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
+
     requireNonNull(mappingFunction, " Mapping function is null");
     setConsumed();
-    Publisher<T> rowPublisher = publishRows(mappingFunction);
+
+    Publisher<T> rowPublisher =
+      Flux.<T>from(publishRows(mappingFunction))
+        .doFinally(signalType -> consumedFuture.complete(null));
+
     AtomicBoolean isSubscribed = new AtomicBoolean(false);
     return Flux.defer(() ->
       isSubscribed.compareAndSet(false, true)
@@ -294,6 +289,18 @@ abstract class OracleResultImpl implements Result {
         : Mono.error(new IllegalStateException(
             "Multiple subscribers are not supported by the Oracle R2DBC " +
               " Result.map(BiFunction) publisher")));
+  }
+
+  /**
+   * Runs {@code onConsumed} when this {@code Result} has been fully consumed.
+   * @param onConsumed {@code Runnable} to run on consumption. Not null.
+   */
+  void runOnConsumed(Runnable onConsumed) {
+    consumedFuture.thenRun(onConsumed);
+  }
+
+  Publisher<Void> onConsumed() {
+    return Mono.fromCompletionStage(consumedFuture);
   }
 
   /**

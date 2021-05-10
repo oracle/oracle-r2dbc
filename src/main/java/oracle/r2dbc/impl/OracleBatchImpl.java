@@ -22,12 +22,14 @@
 package oracle.r2dbc.impl;
 
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 
 import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.R2dbcException;
@@ -37,10 +39,13 @@ import io.r2dbc.spi.RowMetadata;
 import io.r2dbc.spi.Statement;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 
 /**
  * <p>
@@ -73,7 +78,7 @@ final class OracleBatchImpl implements Batch {
    * Ordered sequence of SQL commands that have been added to this batch. May
    * be empty.
    */
-  private Queue<Statement> statements = new LinkedList<>();
+  private Queue<OracleStatementImpl> statements = new LinkedList<>();
 
   /**
    * Constructs a new batch that uses the specified {@code adapter} to execute
@@ -140,17 +145,89 @@ final class OracleBatchImpl implements Batch {
    * individually executing each statement in this batch.
    */
   @Override
-  public Publisher<? extends Result> execute() {
+  public Publisher<OracleResultImpl> execute() {
     requireOpenConnection(jdbcConnection);
-    Queue<Statement> currentStatements = statements;
+    Queue<OracleStatementImpl> currentStatements = statements;
     statements = new LinkedList<>();
+    return publishBatch(currentStatements);
+  }
 
-    AtomicBoolean isSubscribed = new AtomicBoolean(false);
-    return Flux.defer(() -> isSubscribed.compareAndSet(false, true)
-      ? executeBatch(currentStatements)
-      : Mono.error(new IllegalStateException(
-          "Multiple subscribers are not supported by the Oracle R2DBC" +
-            " Batch.execute() publisher")));
+  /**
+   * <p>
+   * Publish a batch of {@code Result}s from {@code statements}. Each
+   * {@code Result} is published serially with the consumption of the
+   * previous {@code Result}.
+   * </p><p>
+   * This method returns an empty {@code Publisher} if {@code statements} is
+   * empty. Otherwise, this method dequeues the next {@code Statement} and
+   * executes it for a {@code Result}. After the {@code Result} has been
+   * fully consumed, this method is invoked recursively to publish the {@code
+   * Result}s of remaining {@code statements}.
+   * </p>
+   * @param statements A batch to executed.
+   * @return
+   */
+  private static Publisher<OracleResultImpl> publishBatch(
+    Queue<OracleStatementImpl> statements) {
+
+    OracleStatementImpl next = statements.poll();
+
+    if (next != null) {
+      AtomicReference<OracleResultImpl> lastResult =
+        new AtomicReference<>(null);
+
+      return Flux.from(next.execute())
+        .doOnNext(lastResult::set)
+        .concatWith(Mono.defer(() ->
+          Mono.from(lastResult.get().onConsumed())
+            .cast(OracleResultImpl.class)))
+        .concatWith(Flux.defer(() -> publishBatch(statements)));
+    }
+    else {
+      return Mono.empty();
+    }
+  }
+
+  /*
+    return Flux.create(new Consumer<>() {
+
+      final AtomicBoolean isSubscribed = new AtomicBoolean(false);
+
+      @Override
+      public void accept(FluxSink<OracleResultImpl> fluxSink) {
+        if (isSubscribed.compareAndSet(false, true))
+          publishNext(fluxSink);
+        else {
+          fluxSink.error(new IllegalStateException(
+            "Multiple subscribers are not supported by the Oracle R2DBC" +
+              " Batch.execute() publisher"));
+        }
+      }
+
+      void publishNext(FluxSink<OracleResultImpl> fluxSink) {
+        OracleStatementImpl nextStatement = statements.poll();
+        if (nextStatement != null) {
+
+          AtomicReference<OracleResultImpl> lastResult =
+            new AtomicReference<>();
+
+          Flux.from(nextStatement.execute())
+            .subscribe(nextResult -> { // onNext
+              fluxSink.next(nextResult);
+              lastResult.set(nextResult);
+            },
+            fluxSink::error, // onError
+            () -> // onComplete
+              lastResult.get().runOnConsumed(() ->
+                publishNext(fluxSink)),
+            subscription -> // request
+              fluxSink.onRequest(subscription::request));
+        }
+        else {
+          fluxSink.complete();
+        }
+      }
+    });
   }
 
   /**
@@ -160,32 +237,132 @@ final class OracleBatchImpl implements Batch {
    * @param statements {@code Statement}s to execute. Not null.
    * @return A {@code Publisher} of each {@code Statement}'s {@code Result}.
    * Not null.
-   */
   private static Publisher<? extends Result> executeBatch(
     Queue<Statement> statements) {
-
-    // Reference a Publisher that terminates when the previous Statement's
-    // Result has been consumed.
-    AtomicReference<Publisher<Void>> previous =
-      new AtomicReference<>(Mono.empty());
-
-    return Flux.fromIterable(statements)
-      .concatMap(statement -> {
-
-        // Complete when this statement's result is consumed
-        CompletableFuture<Void> next = new CompletableFuture<>();
-
-        return Flux.from(statement.execute())
-          // Delay execution by delaying Publisher.subscribe(Subscriber) until the
-          // previous statement's result is consumed.
-          .delaySubscription(
-            // Update the reference; This statement is now the "previous"
-            // statement.
-            previous.getAndSet(Mono.fromCompletionStage(next)))
-          // Batch result completes the "next" future when fully consumed.
-          .map(result -> new BatchResult(next, result));
-      });
+    return publishSequential(statements, Statement::execute);
   }
+   */
+
+  /**
+   * Returns a {@code Publisher} that emits 0 or 1 results to a subscriber. When
+   * the subscriber subscribes, {@link java.sql.Statement#getMoreResults()} is
+   * invoked on a JDBC {@code statement}, causing any previously opened
+   * {@code ResultSet} to be closed. The {@code Subscriber} then receives a
+   * {@code Result} if one more is available, then receives {@code onComplete}.
+   * @param adapter
+   * @param statement
+   * @return
+   */
+
+  /**
+   * Sequentially generates {@code Result} {@code Publishers}, guaranteeing
+   * that the generation of each {@code Publisher} happens after the previously
+   * generated {@code Publisher}'s  {@code Result} is fully consumed.
+   */
+  static Publisher<OracleResultImpl> publishNextResult(
+    ReactiveJdbcAdapter adapter, java.sql.Statement statement) {
+
+    OracleResultImpl next =
+      getOrHandleSQLException(() -> getNextResult(adapter, statement));
+
+    if (next == null) {
+      return Mono.empty();
+    }
+    else {
+      return Mono.just(next)
+        .then(Mono.from(next.onConsumed())
+          .cast(OracleResultImpl.class))
+        .concatWith(Mono.defer(() ->
+          Mono.from(publishNextResult(adapter, statement))));
+    }
+  }
+
+    /*
+  static Publisher<OracleResultImpl> publishNextResult(
+    ReactiveJdbcAdapter adapter, java.sql.Statement statement) {
+    return Flux.generate(synchronousSink -> runOrHandleSQLException(() -> {
+      if (statement.getMoreResults()) {
+        synchronousSink.next(
+          OracleResultImpl.createQueryResult(
+            adapter, statement.getResultSet()));
+      }
+      else {
+        int updateCount = statement.getUpdateCount();
+        if (updateCount != -1) {
+          synchronousSink.next(
+            OracleResultImpl.createUpdateCountResult(updateCount));
+        }
+      }
+      synchronousSink.complete();
+    }));
+  }
+    // concat : subscribe after previous onComplete
+    // defer : invoke gmr after previous onConsumed
+    return Flux.concat(() -> new Iterator<>() {
+
+      Publisher<Void> previous = Mono.empty();
+
+      @Override
+      public boolean hasNext() {
+        // called only after previous onComplete?
+        return false;
+      }
+
+      @Override
+      public Publisher<? extends OracleResultImpl> next() {
+        return null;
+      }
+    });
+    return Flux.create(new Consumer<>() {
+
+      @Override
+      public void accept(FluxSink<OracleResultImpl> fluxSink) {
+        OracleResultImpl next = getOrHandleSQLException(this::next);
+
+        if (next != null) {
+          fluxSink.next(next);
+          next.runOnConsumed(() -> accept(fluxSink));
+        }
+        else {
+          fluxSink.complete();
+        }
+      }
+
+      OracleResultImpl next() throws SQLException {
+        if (statement.getMoreResults()) {
+          return OracleResultImpl.createQueryResult(
+            adapter, statement.getResultSet());
+        }
+        else {
+          int updateCount = statement.getUpdateCount();
+          if (updateCount != -1) {
+            return OracleResultImpl.createUpdateCountResult(updateCount);
+          }
+          else {
+            return null;
+          }
+        }
+      }
+    });
+    */
+
+  private static OracleResultImpl getNextResult(
+    ReactiveJdbcAdapter adapter, java.sql.Statement statement)
+    throws SQLException {
+      if (statement.getMoreResults()) {
+        return OracleResultImpl.createQueryResult(
+          adapter, statement.getResultSet());
+      }
+      else {
+        int updateCount = statement.getUpdateCount();
+        if (updateCount != -1) {
+          return OracleResultImpl.createUpdateCountResult(updateCount);
+        }
+        else {
+          return null;
+        }
+      }
+    }
 
   /**
    * <p>

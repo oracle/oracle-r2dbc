@@ -30,6 +30,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import static oracle.r2dbc.DatabaseConfig.sqlTimeout;
@@ -44,6 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * blocked is configured by {@link DatabaseConfig#sqlTimeout()}.
  */
 public final class Awaits {
+
   private Awaits() {/* This class only defines static methods*/}
 
   /**
@@ -71,13 +74,10 @@ public final class Awaits {
    * information is lost if the {@code finally} block throws as well.
    * </p>
    * @param emptyPublisher A publisher that emits no values.
-   * @throws Throwable If the publisher emits {@code onError}.
    */
   public static void tryAwaitNone(Publisher<?> emptyPublisher) {
     try {
-      assertNull(
-        Mono.from(emptyPublisher).block(sqlTimeout()),
-        "Unexpected onNext signal from Publisher of no values");
+      awaitNone(emptyPublisher);
     }
     catch (Throwable throwable) {
       throwable.printStackTrace();
@@ -138,7 +138,31 @@ public final class Awaits {
    * emit one {@code onNext} signal.
    */
   public static <T> T awaitOne(Publisher<T> singlePublisher) {
-    return Flux.from(singlePublisher).single().cache().block(sqlTimeout());
+    AtomicReference<T> result = new AtomicReference<>(null);
+    consumeOne(singlePublisher, result::set);
+    return result.get();
+  }
+
+  /**
+   * Subscribes to an {@code singlePublisher} and blocks until the publisher
+   * emits {@code onNext} and then {@code onComplete}. Values emitted to
+   * {@code onNext} are input to a {@code consumer}. This is for cases where
+   * a {@code Publisher} does not emit {@code onNext} or {@code onComplete}
+   * until a previous value has been consumed, which is the case for
+   * {@code OracleStatementImpl.execute()}.
+   * @param singlePublisher A publisher that emits one value.
+   * @return An item emitted with {@code onNext}, or null if the publisher
+   * emits no item.
+   * @throws Throwable If the publisher emits {@code onError} or does not
+   * emit one {@code onNext} signal.
+   */
+  public static <T> void consumeOne(
+    Publisher<T> singlePublisher, Consumer<T> consumer) {
+    assertEquals(1, Flux.from(singlePublisher)
+      .doOnNext(consumer)
+      .collectList()
+      .block(sqlTimeout())
+      .size());
   }
 
   /**
@@ -168,10 +192,45 @@ public final class Awaits {
   }
 
   /**
+   * <p>
+   * Executes a {@code statement} and tries to blocks until the execution
+   * completes. This method verifies that the execution produces a
+   * {@link Result} with a count of zero updated rows. If
+   * {@link Statement#execute()} emits {@code onError}, this method invokes
+   * {@link Throwable#printStackTrace()} on the error and then returns normally
+   * <p>
+   * This method is useful in the scope of a {@code finally} block, where a
+   * throwing an exception will obtrude the processing of any {@code Throwable}
+   * thrown from the {@code try} block, like this:
+   * </p><pre>
+   *   try {
+   *     throw new RuntimeException("Try Block Throws");
+   *   }
+   *   finally {
+   *     throw new RuntimeException("Finally Block Throws");
+   *   }
+   * </pre><p>
+   * If the code above is executed, only the finally block's RuntimeException
+   * will be thrown. When a test cases fails within a {@code try} block, it
+   * throws an {@link AssertionError} with useful information; That
+   * information is lost if the {@code finally} block throws as well.
+   * </p>
+   * @param statement A statement that updates zero rows.
+   */
+  public static void tryAwaitExecution(Statement statement) {
+    try {
+      awaitExecution(statement);
+    }
+    catch (Throwable throwable) {
+      throwable.printStackTrace();
+    }
+  }
+
+  /**
    * Executes a {@code statement} and blocks until the execution
    * completes. This method verifies that the execution produces a
    * {@link Result} with a count of zero updated rows.
-   * @param statement A statement that does updates zero rows.
+   * @param statement A statement that updates zero rows.
    * @throws Throwable If the statement execution results in an error.
    */
   public static void awaitExecution(Statement statement) {

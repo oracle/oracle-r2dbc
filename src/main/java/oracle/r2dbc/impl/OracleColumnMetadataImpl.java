@@ -450,18 +450,24 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
    */
   static OracleColumnMetadataImpl fromResultSetMetaData(
     ResultSetMetaData resultSetMetaData, int index) {
+
     int jdbcIndex = index + 1;
-    return getOrHandleSQLException(() -> fromJdbc(
-      getSqlType(resultSetMetaData.getColumnType(jdbcIndex)),
+    SQLType jdbcType = getSqlType(getOrHandleSQLException(() ->
+      resultSetMetaData.getColumnType(jdbcIndex)));
+
+    return getOrHandleSQLException(() -> fromJdbc(jdbcType,
       resultSetMetaData.getColumnName(jdbcIndex),
       getNullability(resultSetMetaData.isNullable(jdbcIndex)),
-      resultSetMetaData.getPrecision(jdbcIndex),
+      jdbcType.equals(JDBCType.VARBINARY) // Oracle JDBC implementation
+        ? resultSetMetaData.getColumnDisplaySize(jdbcIndex)
+        : resultSetMetaData.getPrecision(jdbcIndex),
       resultSetMetaData.getScale(jdbcIndex)));
   }
 
-  static OracleColumnMetadataImpl create(String name, SQLType type) {
+  static OracleColumnMetadataImpl create(String name, Type type) {
     return new OracleColumnMetadataImpl(
-      type, name, Nullability.NULLABLE, null, null);
+      //TODO: don't map it twice
+      R2DBC_TO_JDBC_TYPE_MAP.get(type), name, Nullability.NULLABLE, null, null);
   }
 
   /**
@@ -475,7 +481,9 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
    * recognized by Oracle R2DBC.
    */
   static SQLType r2dbcToSQLType(Type r2dbcType) {
-    return R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
+    return r2dbcType instanceof Type.InferredType
+      ? javaToSQLType(r2dbcType.getJavaType())
+      : R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
   }
 
   static SQLType javaToSQLType(Class<?> javaType) {

@@ -35,6 +35,10 @@ import reactor.core.publisher.Mono;
 import java.math.BigDecimal;
 import java.sql.RowId;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.DatabaseConfig.connectTimeout;
@@ -43,10 +47,14 @@ import static oracle.r2dbc.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.DatabaseConfig.showErrors;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
+import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitQuery;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.consumeOne;
+import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
+import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -105,8 +113,7 @@ public class OracleStatementImplTest {
         () -> statement.bind(1, null));
 
       // Expect IllegalArgumentException for an unsupported conversion
-      class UnsupportedType {
-      }
+      class UnsupportedType { }
       assertThrows(
         IllegalArgumentException.class,
         () -> statement.bind(0, new UnsupportedType()));
@@ -174,9 +181,9 @@ public class OracleStatementImplTest {
 
     }
     finally {
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement(
         "DROP TABLE testBindByIndex"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -354,8 +361,8 @@ public class OracleStatementImplTest {
 
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testBindByName"));
-      awaitNone(connection.close());
+      tryAwaitExecution(connection.createStatement("DROP TABLE testBindByName"));
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -491,9 +498,9 @@ public class OracleStatementImplTest {
           "SELECT x, y FROM testBindNullByIndex WHERE x = 3 ORDER BY y"));
     }
     finally {
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement(
         "DROP TABLE testBindNullByIndex"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -663,9 +670,8 @@ public class OracleStatementImplTest {
       // bound to that name to be set as the value for all of those parameters.
       // Expect a value bound to the index of one of those parameters to be
       // set only for the parameter at that index.
-      awaitOne(connection.createStatement(
-        "DELETE FROM testNullBindByName WHERE x IS NULL AND y IS NULL")
-        .execute());
+      awaitUpdate(2, connection.createStatement(
+        "DELETE FROM testNullBindByName WHERE x IS NULL AND y IS NULL"));
       awaitUpdate(asList(1, 1, 1),
         connection
           .createStatement(
@@ -688,9 +694,9 @@ public class OracleStatementImplTest {
             " ORDER BY x, y"));
     }
     finally {
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement(
         "DROP TABLE testNullBindByName"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -799,9 +805,9 @@ public class OracleStatementImplTest {
 
     }
     finally {
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement(
         "DROP TABLE testAdd"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -902,8 +908,8 @@ public class OracleStatementImplTest {
       //   statements and leaving cursors open until a cache eviction happens.
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testExecute"));
-      awaitNone(connection.close());
+      tryAwaitExecution(connection.createStatement("DROP TABLE testExecute"));
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -1047,9 +1053,9 @@ public class OracleStatementImplTest {
        */
     }
     finally {
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement(
         "DROP TABLE testReturnGeneratedValues"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -1081,7 +1087,7 @@ public class OracleStatementImplTest {
       //  time.
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -1107,24 +1113,28 @@ public class OracleStatementImplTest {
       // Execute the procedure with no out parameters. Expect a single Result
       // with no update count. Expect the IN parameter's default value to
       // have been inserted by the call.
-      Result result0 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd; END;")
-        .execute());
-      awaitNone(result0.getRowsUpdated());
-      awaitQuery(asList("Default Value"),
-        row -> row.get(0),
-        connection.createStatement("SELECT * FROM testNoOutCall"));
+        .execute(),
+        result0 -> {
+          awaitNone(result0.getRowsUpdated());
+          awaitQuery(asList("Default Value"),
+            row -> row.get(0),
+            connection.createStatement("SELECT * FROM testNoOutCall"));
+        });
 
       // Execute the procedure again with no out parameters. Expect a single
       // Result with no rows. Expect the IN parameter's default value to have
       // been inserted by the call.
-      Result result1 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd; END;")
-        .execute());
-      awaitNone(result1.map((row, metadata) -> "Unexpected"));
-      awaitQuery(asList("Default Value", "Default Value"),
-        row -> row.get(0),
-        connection.createStatement("SELECT * FROM testNoOutCall"));
+        .execute(),
+        result1 -> {
+          awaitNone(result1.map((row, metadata) -> "Unexpected"));
+          awaitQuery(asList("Default Value", "Default Value"),
+            row -> row.get(0),
+            connection.createStatement("SELECT * FROM testNoOutCall"));
+        });
 
       // Delete the previously inserted rows
       awaitExecution(connection.createStatement(
@@ -1133,27 +1143,31 @@ public class OracleStatementImplTest {
       // Execute the procedure with no out parameters. Expect a single Result
       // with no update count. Expect the an indexed based String bind to
       // have been inserted by the call.
-      Result result2 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd(?); END;")
         .bind(0, "Indexed Bind")
-        .execute());
-      awaitNone(result2.getRowsUpdated());
-      awaitQuery(asList("Indexed Bind"),
-        row -> row.get(0),
-        connection.createStatement("SELECT * FROM testNoOutCall"));
+        .execute(),
+        result2 -> {
+          awaitNone(result2.getRowsUpdated());
+          awaitQuery(asList("Indexed Bind"),
+            row -> row.get(0),
+            connection.createStatement("SELECT * FROM testNoOutCall"));
+        });
 
       // Execute the procedure with no out parameters. Expect a single Result
       // with no update count. Expect the a named String bind to have been
       // inserted by the call.
-      Result result3 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd(:parameter); END;")
         .bind("parameter", "Named Bind")
-        .execute());
-      awaitNone(result3.map((row, metadata) -> "Unexpected"));
-      awaitQuery(asList("Indexed Bind", "Named Bind"),
-        row -> row.get(0),
-        connection.createStatement(
-          "SELECT * FROM testNoOutCall ORDER BY value"));
+        .execute(),
+        result3 -> {
+          awaitNone(result3.map((row, metadata) -> "Unexpected"));
+          awaitQuery(asList("Indexed Bind", "Named Bind"),
+            row -> row.get(0),
+            connection.createStatement(
+              "SELECT * FROM testNoOutCall ORDER BY value"));
+        });
 
       // Delete the previously inserted rows
       awaitExecution(connection.createStatement(
@@ -1162,28 +1176,32 @@ public class OracleStatementImplTest {
       // Execute the procedure with no out parameters. Expect a single Result
       // with no update count. Expect the an indexed based Parameter bind to
       // have been inserted by the call.
-      Result result4 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd(?); END;")
         .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter"))
-        .execute());
-      awaitNone(result4.getRowsUpdated());
-      awaitQuery(asList("Indexed Parameter"),
-        row -> row.get(0),
-        connection.createStatement("SELECT * FROM testNoOutCall"));
+        .execute(),
+        result4 -> {
+          awaitNone(result4.getRowsUpdated());
+          awaitQuery(asList("Indexed Parameter"),
+            row -> row.get(0),
+            connection.createStatement("SELECT * FROM testNoOutCall"));
+        });
 
       // Execute the procedure with no out parameters. Expect a single Result
       // with no update count. Expect the a named Parameter bind to have been
       // inserted by the call.
-      Result result5 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd(:parameter); END;")
         .bind("parameter",
           Parameters.in(R2dbcType.VARCHAR, "Named Parameter"))
-        .execute());
-      awaitNone(result5.map((row, metadata) -> "Unexpected"));
-      awaitQuery(asList("Indexed Parameter", "Named Parameter"),
-        row -> row.get(0),
-        connection.createStatement(
-          "SELECT * FROM testNoOutCall ORDER BY value"));
+        .execute(),
+        result5 -> {
+          awaitNone(result5.map((row, metadata) -> "Unexpected"));
+          awaitQuery(asList("Indexed Parameter", "Named Parameter"),
+            row -> row.get(0),
+            connection.createStatement(
+              "SELECT * FROM testNoOutCall ORDER BY value"));
+        });
 
       // Delete the previously inserted rows
       awaitExecution(connection.createStatement(
@@ -1192,34 +1210,38 @@ public class OracleStatementImplTest {
       // Execute the procedure with no out parameters. Expect a single Result
       // with no update count. Expect the an indexed based Parameter.In bind to
       // have been inserted by the call.
-      Result result6 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd(?); END;")
         .bind(0, Parameters.in(R2dbcType.VARCHAR, "Indexed Parameter.In"))
-        .execute());
-      awaitNone(result6.getRowsUpdated());
-      awaitQuery(asList("Indexed Parameter.In"),
-        row -> row.get(0),
-        connection.createStatement("SELECT * FROM testNoOutCall"));
+        .execute(),
+        result6 -> {
+          awaitNone(result6.getRowsUpdated());
+          awaitQuery(asList("Indexed Parameter.In"),
+            row -> row.get(0),
+            connection.createStatement("SELECT * FROM testNoOutCall"));
+        });
 
       // Execute the procedure with no out parameters. Expect a single Result
       // with no update count. Expect the a named Parameter.In bind to have been
       // inserted by the call.
-      Result result7 = awaitOne(connection.createStatement(
+      consumeOne(connection.createStatement(
         "BEGIN testNoOutCallAdd(:parameter); END;")
         .bind("parameter",
           Parameters.in(R2dbcType.VARCHAR, "Named Parameter.In"))
-        .execute());
-      awaitNone(result7.map((row, metadata) -> "Unexpected"));
-      awaitQuery(asList("Indexed Parameter.In", "Named Parameter.In"),
-        row -> row.get(0),
-        connection.createStatement(
-          "SELECT * FROM testNoOutCall ORDER BY value"));
+        .execute(),
+        result7 -> {
+          awaitNone(result7.map((row, metadata) -> "Unexpected"));
+          awaitQuery(asList("Indexed Parameter.In", "Named Parameter.In"),
+            row -> row.get(0),
+            connection.createStatement(
+              "SELECT * FROM testNoOutCall ORDER BY value"));
+        });
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testNoOutCall"));
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement("DROP TABLE testNoOutCall"));
+      tryAwaitExecution(connection.createStatement(
         "DROP PROCEDURE testNoOutCallAdd"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -1374,10 +1396,10 @@ public class OracleStatementImplTest {
       throw new RuntimeException(e);
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testOneOutCall"));
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement("DROP TABLE testOneOutCall"));
+      tryAwaitExecution(connection.createStatement(
         "DROP PROCEDURE testOneOutCallAdd"));
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -1545,48 +1567,238 @@ public class OracleStatementImplTest {
       throw new RuntimeException(e);
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testMultiOutCall"));
-      awaitExecution(connection.createStatement(
+      tryAwaitExecution(connection.createStatement("DROP TABLE testMultiOutCall"));
+      tryAwaitExecution(connection.createStatement(
         "DROP PROCEDURE testMultiOutCallAdd"));
-      awaitNone(connection.close());
-    }
-  }
-/*
-  private static class ParameterImpl implements Parameter {
-    final Type type;
-    final Object value;
-
-    ParameterImpl(Type type, Object value) {
-      this.type = type;
-      this.value = value;
-    }
-
-    @Override
-    public Type getType() {
-      return type;
-    }
-
-    @Override
-    public Object getValue() {
-      return value;
+      tryAwaitNone(connection.close());
     }
   }
 
-  private static class InParameterImpl
-    extends ParameterImpl implements Parameter.In {
+  /**
+   * Verify {@link OracleStatementImpl#execute()} when calling a procedure
+   * having no out binds and returning implicit results.
+   */
+  @Test
+  public void testNoOutImplicitResult() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testNoOutImplicitResult (count NUMBER)"));
 
-    InParameterImpl(Type type, Object value) {
-      super(type, value);
+      // Load [0,100] into the table
+      Statement insert = connection.createStatement(
+        "INSERT INTO testNoOutImplicitResult VALUES (?)");
+      IntStream.rangeClosed(0, 100)
+        .forEach(i -> insert.bind(0, i).add());
+      awaitOne(101, Flux.from(insert.execute())
+        .reduce(0, (updateCount, result) ->
+          updateCount + awaitOne(result.getRowsUpdated())));
+
+      // Create a procedure that returns a cursor
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE countDown (" +
+          " countFrom IN NUMBER DEFAULT 100)" +
+          " IS" +
+          " countDownCursor SYS_REFCURSOR;" +
+          " BEGIN" +
+          " OPEN countDownCursor FOR " +
+          "   SELECT count FROM testNoOutImplicitResult" +
+          "   WHERE count <= countFrom" +
+          "   ORDER BY count DESC;" +
+          " DBMS_SQL.RETURN_RESULT(countDownCursor);" +
+          " END;"));
+
+      // Execute without setting the countFrom parameter, and expect one
+      // Result with rows counting down from the default countFrom value, 100
+      awaitQuery(Stream.iterate(
+        100, previous -> previous >= 0, previous -> previous - 1)
+          .collect(Collectors.toList()),
+        row -> row.get(0, Integer.class),
+        connection.createStatement("BEGIN countDown; END;"));
+
+      // Execute with with an in bind parameter, and expect one
+      // Result with rows counting down from the parameter value
+      awaitQuery(Stream.iterate(
+        10, previous -> previous >= 0, previous -> previous - 1)
+          .collect(Collectors.toList()),
+        row -> row.get(0, Integer.class),
+        connection.createStatement("BEGIN countDown(?); END;")
+          .bind(0, 10));
+
+      // Create a procedure that returns multiple cursors
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE countDown (" +
+          " countFrom IN NUMBER DEFAULT 50)" +
+          " IS" +
+          " countDownCursor SYS_REFCURSOR;" +
+          " countUpCursor SYS_REFCURSOR;" +
+          " BEGIN" +
+
+          " OPEN countDownCursor FOR " +
+          "   SELECT count FROM testNoOutImplicitResult" +
+          "   WHERE count <= countFrom" +
+          "   ORDER BY count DESC;" +
+          " DBMS_SQL.RETURN_RESULT(countDownCursor);" +
+
+          " OPEN countUpCursor FOR " +
+          "   SELECT count FROM testNoOutImplicitResult" +
+          "   WHERE count >= countFrom" +
+          "   ORDER BY count;" +
+          " DBMS_SQL.RETURN_RESULT(countUpCursor);" +
+
+          " END;"));
+
+
+      awaitMany(asList(
+        // countDownCursor
+        Stream.iterate(
+          50, previous -> previous >= 0, previous -> previous - 1)
+          .collect(Collectors.toList()),
+        // countUpCursor
+        Stream.iterate(
+          50, previous -> previous <= 100, previous -> previous + 1)
+          .collect(Collectors.toList())),
+        // Map rows of two Result.map(..) publishers into two Lists
+        Flux.from(connection.createStatement("BEGIN countDown; END;")
+          .execute())
+          .flatMap(result ->
+            Flux.from(result.map((row, metadata) ->
+              row.get(0, Integer.class)))
+              .collectList()));
+
+      // Expect Implicit Results to have no update counts
+      AtomicInteger count = new AtomicInteger(-9);
+      awaitMany(asList(-9, -10),
+        Flux.from(connection.createStatement("BEGIN countDown; END;")
+          .execute())
+          .flatMap(result ->
+            Flux.from(result.getRowsUpdated())
+              .defaultIfEmpty(count.getAndDecrement())));
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement("DROP PROCEDURE countDown"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testNoOutImplicitResult"));
+      tryAwaitNone(connection.close());
     }
   }
 
-  private static class OutParameterImpl
-    extends ParameterImpl implements Parameter.Out {
+  /**
+   * Verify {@link OracleStatementImpl#execute()} when calling a procedure
+   * having out binds and returning implicit results.
+   */
+  @Test
+  public void testOutAndImplicitResult() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testOutAndImplicitResult (count NUMBER)"));
 
-    OutParameterImpl(Type type) {
-      super(type, null);
+      // Load [0,100] into the table
+      Statement insert = connection.createStatement(
+        "INSERT INTO testOutAndImplicitResult VALUES (?)");
+      IntStream.rangeClosed(0, 100)
+        .forEach(i -> insert.bind(0, i).add());
+      awaitOne(101, Flux.from(insert.execute())
+        .reduce(0, (updateCount, result) ->
+          updateCount + awaitOne(result.getRowsUpdated())));
+
+      // Create a procedure that returns a cursor
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE countDown (" +
+          " outValue OUT VARCHAR2)" +
+          " IS" +
+          " countDownCursor SYS_REFCURSOR;" +
+          " BEGIN" +
+          " outValue := 'test';" +
+          " OPEN countDownCursor FOR " +
+          "   SELECT count FROM testOutAndImplicitResult" +
+          "   WHERE count <= 100" +
+          "   ORDER BY count DESC;" +
+          " DBMS_SQL.RETURN_RESULT(countDownCursor);" +
+          " END;"));
+
+      // Expect one Result with rows counting down from 100, then one Result
+      // with the out bind value
+      awaitMany(asList(
+        Stream.iterate(
+          100, previous -> previous >= 0, previous -> previous - 1)
+          .map(String::valueOf)
+          .collect(Collectors.toList()),
+        asList("test")),
+        Flux.from(connection.createStatement("BEGIN countDown(:outValue); END;")
+          .bind("outValue", Parameters.out(R2dbcType.VARCHAR))
+          .execute())
+          .flatMap(result ->
+            Flux.from(result.map((row, metadata) ->
+              row.get(0, String.class)))
+              .collectList()));
+
+      // Create a procedure that returns multiple cursors
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE countDown (" +
+          " outValue OUT VARCHAR2)" +
+          " IS" +
+          " countDownCursor SYS_REFCURSOR;" +
+          " countUpCursor SYS_REFCURSOR;" +
+          " BEGIN" +
+
+          " outValue := 'test';" +
+
+          " OPEN countDownCursor FOR " +
+          "   SELECT count FROM testOutAndImplicitResult" +
+          "   WHERE count <= 50" +
+          "   ORDER BY count DESC;" +
+          " DBMS_SQL.RETURN_RESULT(countDownCursor);" +
+
+          " OPEN countUpCursor FOR " +
+          "   SELECT count FROM testOutAndImplicitResult" +
+          "   WHERE count >= 50" +
+          "   ORDER BY count;" +
+          " DBMS_SQL.RETURN_RESULT(countUpCursor);" +
+
+          " END;"));
+
+
+      awaitMany(asList(
+        // countDownCursor
+        Stream.iterate(
+          50, previous -> previous >= 0, previous -> previous - 1)
+          .map(String::valueOf)
+          .collect(Collectors.toList()),
+        // countUpCursor
+        Stream.iterate(
+          50, previous -> previous <= 100, previous -> previous + 1)
+          .map(String::valueOf)
+          .collect(Collectors.toList()),
+        asList("test")),
+        // Map rows of two Result.map(..) publishers into two Lists
+        Flux.from(connection.createStatement("BEGIN countDown(:outValue); END;")
+          .bind("outValue", Parameters.out(R2dbcType.VARCHAR))
+          .execute())
+          .flatMap(result ->
+            Flux.from(result.map((row, metadata) ->
+              row.get(0, String.class)))
+              .collectList()));
+
+      // Expect Implicit Results to have no update counts
+      AtomicInteger count = new AtomicInteger(-8);
+      awaitMany(asList(-8, -9, -10),
+        Flux.from(connection.createStatement("BEGIN countDown(?); END;")
+          .bind(0, Parameters.out(R2dbcType.VARCHAR))
+          .execute())
+          .flatMap(result ->
+            Flux.from(result.getRowsUpdated())
+              .defaultIfEmpty(count.getAndDecrement())));
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement("DROP PROCEDURE countDown"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testOutAndImplicitResult"));
+      tryAwaitNone(connection.close());
     }
   }
-  */
 
 }

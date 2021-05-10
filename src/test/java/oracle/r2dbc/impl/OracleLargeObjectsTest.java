@@ -46,6 +46,8 @@ import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
+import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -222,8 +224,8 @@ public class OracleLargeObjectsTest {
       awaitBytes(yBytes, blobs.get(1));
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testBlobInsert"));
-      awaitNone(connection.close());
+      tryAwaitExecution(connection.createStatement("DROP TABLE testBlobInsert"));
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -273,8 +275,8 @@ public class OracleLargeObjectsTest {
       awaitBytes(yBytes1, blobs.get(1).get(1));
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testBlobInsert"));
-      awaitNone(connection.close());
+      tryAwaitExecution(connection.createStatement("DROP TABLE testBlobInsert"));
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -308,7 +310,7 @@ public class OracleLargeObjectsTest {
         "SELECT x,y FROM testClobInsert WHERE id = 0")
         .execute())
         .flatMap(result -> result.map((row, metadata) ->
-          asList((Clob)row.get("x"), (Clob)row.get("y"))))
+          asList((Clob) row.get("x"), (Clob) row.get("y"))))
         .single());
 
       // Expect bytes written to INSERTed Clobs to match the bytes read from
@@ -317,8 +319,8 @@ public class OracleLargeObjectsTest {
       awaitBytes(yBytes, Clobs.get(1));
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testClobInsert"));
-      awaitNone(connection.close());
+      tryAwaitExecution(connection.createStatement("DROP TABLE testClobInsert"));
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -369,8 +371,8 @@ public class OracleLargeObjectsTest {
 
     }
     finally {
-      awaitExecution(connection.createStatement("DROP TABLE testClobInsert"));
-      awaitNone(connection.close());
+      tryAwaitExecution(connection.createStatement("DROP TABLE testClobInsert"));
+      tryAwaitNone(connection.close());
     }
   }
 
