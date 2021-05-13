@@ -88,6 +88,9 @@ final class OracleR2dbcTypes {
   static final Type INTERVAL_YEAR_TO_MONTH =
     new TypeImpl(Period.class, "INTERVAL YEAR TO MONTH");
 
+  static final Type JSON =
+    new TypeImpl(OracleJsonObject.class, "JSON");
+
   /**
    * Character data of variable length up to 2 gigabytes.
    */
@@ -109,7 +112,7 @@ final class OracleR2dbcTypes {
   /**
    * Base 64 string representing the unique address of a row in its table.
    */
-  static final Type ROW_ID = new TypeImpl(RowId.class, "ROWID");
+  static final Type ROWID = new TypeImpl(RowId.class, "ROWID");
 
   /**
    * Timestamp that is converted to the database's timezone when stored, and
@@ -150,7 +153,7 @@ final class OracleR2dbcTypes {
       entry(JDBCType.NUMERIC, R2dbcType.NUMERIC),
       entry(JDBCType.NVARCHAR, R2dbcType.NVARCHAR),
       entry(JDBCType.REAL, R2dbcType.REAL),
-      entry(JDBCType.ROWID, OracleR2dbcTypes.ROW_ID),
+      entry(JDBCType.ROWID, OracleR2dbcTypes.ROWID),
       entry(JDBCType.SMALLINT, R2dbcType.SMALLINT),
       entry(JDBCType.TIME, R2dbcType.TIME),
       entry(JDBCType.TIME_WITH_TIMEZONE, R2dbcType.TIME_WITH_TIME_ZONE),
@@ -160,21 +163,11 @@ final class OracleR2dbcTypes {
         OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE),
       entry(
         JDBCType.TIMESTAMP_WITH_TIMEZONE,
-        new Type() { // This is a placeholder
-          @Override
-          public Class<?> getJavaType() {
-            return OffsetDateTime.class;
-          }
-
-          @Override
-          public String getName() {
-            return "TIMESTAMP WITH TIME ZONE";
-          }
-        }),
-      // TODO: Replace above with:
-      // R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
-      // Needs Fix:
-      // https://github.com/r2dbc/r2dbc-spi/commit/a86562421a312df2d8a3ae187553bf6c2b291aad
+        // TODO: This is a placeholder. Replace with:
+        // R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
+        // When fix is released:
+        // https://github.com/r2dbc/r2dbc-spi/commit/a86562421a312df2d8a3ae187553bf6c2b291aad
+        new TypeImpl(OffsetDateTime.class, "TIMESTAMP WITH TIME ZONE")),
 
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),
       entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
@@ -344,6 +337,15 @@ final class OracleR2dbcTypes {
     @Override
     public String getName() {
       return sqlName;
+    }
+
+    /**
+     * Returns the name of this type.
+     * @return Type name
+     */
+    @Override
+    public String toString() {
+      return getName();
     }
   }
 
