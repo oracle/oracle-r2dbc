@@ -23,7 +23,6 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
-import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
@@ -35,7 +34,6 @@ import reactor.core.publisher.Mono;
 import java.nio.ByteBuffer;
 import java.sql.CallableStatement;
 import java.sql.Connection;
-import java.sql.JDBCType;
 import java.sql.PreparedStatement;
 import java.sql.SQLType;
 import java.util.Arrays;
@@ -225,6 +223,7 @@ final class OracleStatementImpl implements Statement {
   public Statement bind(int index, Object value) {
     requireOpenConnection(jdbcConnection);
     requireNonNull(value, "value is null");
+    requireValidIndex(index);
     bindObject(index, value);
     return this;
   }
@@ -283,7 +282,8 @@ final class OracleStatementImpl implements Statement {
   public Statement bindNull(int index, Class<?> type) {
     requireOpenConnection(jdbcConnection);
     requireNonNull(type, "type is null");
-    bindObject(index, null);
+    requireValidIndex(index);
+    bindObject(index, Parameters.in(type));
     return this;
   }
 
@@ -330,7 +330,7 @@ final class OracleStatementImpl implements Statement {
     requireOpenConnection(jdbcConnection);
     requireNonNull(identifier, "identifier is null");
     requireNonNull(type, "type is null");
-    bindNamedParameter(identifier, null);
+    bindNamedParameter(identifier, Parameters.in(type));
     return this;
   }
 
@@ -531,47 +531,43 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * Binds an {@code object}, retaining it as a {@link Parameter} in
-   * {@link #parameters} at the specified {@code index}. If the {@code object}
-   * is not an instance of {@code Parameter}, a {@code Parameter} having the
-   * {@code object} as it's value is retained in {@link #parameters}.
+   * Binds an {@code object} to a parameter {@code index}. If the {@code object}
+   * is an instance of {@link Parameter}, then its Java type and SQL type are
+   * validated as types that Oracle R2DBC supports. If the {@code object}
+   * is not an instance of {@code Parameter}, then only its Java type is
+   * validated.
    *
-   * @param object Bind value to retain. May be null.
-   * @throws IllegalArgumentException If {@code index} is not valid
-   * @throws IllegalArgumentException If the class of {@code object} is not
-   * supported as a bind value.
+   * @param object Bind value to retain. Not null.
    * @throws IllegalArgumentException If {@code object} is a {@code Parameter},
    * and the class of the value is not supported as a bind value.
    * @throws IllegalArgumentException If {@code object} is a {@code Parameter},
    * and the SQL type is not supported as a bind value.
+   * @throws IllegalArgumentException If {@code object} is not a
+   * {@code Parameter}, and the class of {@code object} is not supported as a
+   * bind value.
    */
   private void bindObject(int index, Object object) {
 
-    requireValidIndex(index);
+    Parameter parameter = object instanceof Parameter
+      ? (Parameter) object
+      : Parameters.in(object);
 
-    if (object == null) {
-      // TODO: OracleR2dbcType
-      parameters[index] = Parameters.in(R2dbcType.VARCHAR);
-    }
-    else if (object instanceof Parameter) {
-      // TODO: OracleR2dbcType {SQLType sqlType; Type r2dbcType;}
-      Type type = ((Parameter)object).getType();
-      if (type != null && null == toJdbcType(type))
-        throw new IllegalArgumentException("TEMPORARY");
-      else {
-        Object value = ((Parameter) object).getValue();
-        if (value != null && null == toJdbcType(value.getClass()))
-          throw new IllegalArgumentException("TEMPORARY");
-      }
+    Type sqlType =
+      requireNonNull(parameter.getType(), "Parameter type is null");
+    requireNonNull(toJdbcType(sqlType), "Unsupported SQL type: " + sqlType);
 
-      parameters[index] =(Parameter)object;
+    Object value = parameter.getValue();
+    if (value != null) {
+      Class<?> javaType = value.getClass();
+      // TODO: Should check if Java type can be converted to the specified
+      //  SQL type. If the conversion is unsupported, JDBC setObject(...) will
+      //  throw when this statement is executed. Correct behavior is to throw
+      //  IllegalArgumentException here.
+      requireNonNull(toJdbcType(javaType),
+        "Unsupported Java type:" + javaType);
     }
-    else {
-      if (null == toJdbcType(object.getClass()))
-        throw new IllegalArgumentException("TEMPORARY");
 
-      parameters[index] = Parameters.in(object);
-    }
+    parameters[index] = parameter;
   }
 
   /**
@@ -674,7 +670,7 @@ final class OracleStatementImpl implements Statement {
     return execute(() ->
         jdbcConnection.prepareStatement(sql),
       (preparedStatement, discardQueue) ->
-        bindInParameters(preparedStatement, currentParameters, discardQueue),
+        setInParameters(preparedStatement, currentParameters, discardQueue),
       preparedStatement ->
         publishSqlResult(preparedStatement, currentFetchSize));
   }
@@ -719,10 +715,10 @@ final class OracleStatementImpl implements Statement {
 
     return execute(() -> jdbcConnection.prepareCall(sql),
       (callableStatement, discardQueue) ->
-        Mono.from(bindInParameters(
+        Mono.from(setInParameters(
           callableStatement, currentParameters, discardQueue))
           .doOnSuccess(nil ->
-            bindOutParameters(callableStatement, currentParameters)),
+            registerOutParameters(callableStatement, currentParameters)),
       callableStatement ->
         publishCallResult(
           callableStatement, currentParameters, currentFetchSize));
@@ -975,7 +971,7 @@ final class OracleStatementImpl implements Statement {
         ? jdbcConnection.prepareStatement(sql, RETURN_GENERATED_KEYS)
         : jdbcConnection.prepareStatement(sql, currentGeneratedColumns),
       (preparedStatement, discardQueue) ->
-        bindInParameters(preparedStatement, currentParameters, discardQueue),
+        setInParameters(preparedStatement, currentParameters, discardQueue),
       preparedStatement -> {
         runOrHandleSQLException(() ->
           preparedStatement.setFetchSize(currentFetchSize));
@@ -1036,7 +1032,7 @@ final class OracleStatementImpl implements Statement {
     return execute(
       () -> jdbcConnection.prepareStatement(sql),
       (preparedStatement, discardQueue) ->
-        bindBatch(preparedStatement, currentBatch, discardQueue),
+        setParameterBatch(preparedStatement, currentBatch, discardQueue),
       preparedStatement ->
         Flux.from(adapter.publishBatchUpdate(preparedStatement))
           .map(updateCount -> (int) Math.min(Integer.MAX_VALUE, updateCount))
@@ -1072,10 +1068,13 @@ final class OracleStatementImpl implements Statement {
 
   /**
    * <p>
-   * Binds each set of in {@code parameters} in a {@code batch} to a {@code
-   * preparedStatement}, ignoring any instances of {@code Parameter.Out}. The
-   * returned {@code Publisher} completes after all values are materialized
-   * and bound to the {@code preparedStatement}.
+   * Sets a {@code batch} of parameters as bind values for a
+   * {@code preparedStatement}. The returned {@code Publisher} completes after
+   * all values are materialized and added to the batch of the
+   * {@code preparedStatement}.
+   * </p><p>
+   * This method ignores any {@code Parameter} that is an instance of
+   * {@link Parameter.Out} and is not also an instance of {@link Parameter.In}.
    * </p><p>
    * Resources allocated for bind values are deallocated by {@code Publisher}s
    * this method adds to the {@code discardQueue}.
@@ -1084,15 +1083,15 @@ final class OracleStatementImpl implements Statement {
    * @param batch Parameters to set on the {@code preparedStatement}
    * @param discardQueue Resource deallocation queue
    * @return A {@code Publisher} that emits {@code onComplete} when all
-   * {@code parameters} have been set.
+   * {@code parameters} have been added to the batch.
    */
-  private Publisher<Void> bindBatch(
+  private Publisher<Void> setParameterBatch(
     PreparedStatement preparedStatement, Queue<Parameter[]> batch,
     Queue<Publisher<Void>> discardQueue) {
     return Flux.fromStream(Stream.generate(batch::poll)
       .takeWhile(Objects::nonNull))
       .concatMap(parameters ->
-        Mono.from(bindInParameters(preparedStatement, parameters, discardQueue))
+        Mono.from(setInParameters(preparedStatement, parameters, discardQueue))
           .doOnSuccess(nil ->
             runOrHandleSQLException(preparedStatement::addBatch)));
   }
@@ -1100,10 +1099,13 @@ final class OracleStatementImpl implements Statement {
 
   /**
    * <p>
-   * Binds in {@code parameters} to a {@code preparedStatement}, ignoring any
-   * instances of {@code Parameter.Out}. The returned {@code Publisher}
-   * completes after all values are materialized and bound to the {@code
-   * preparedStatement}.
+   * Sets input {@code parameters} as bind values of a
+   * {@code preparedStatement}. The returned {@code Publisher} completes
+   * after all parameter values have materialized and been set on the
+   * {@code preparedStatement}.
+   * </p><p>
+   * This method ignores any {@code Parameter} that is an instance of
+   * {@link Parameter.Out} and is not also an instance of {@link Parameter.In}.
    * </p><p>
    * Resources allocated for bind values are deallocated by {@code Publisher}s
    * this method adds to the {@code discardQueue}.
@@ -1114,30 +1116,25 @@ final class OracleStatementImpl implements Statement {
    * @return A {@code Publisher} that emits {@code onComplete} when all
    * {@code parameters} have been set.
    */
-  private Publisher<Void> bindInParameters(
+  private Publisher<Void> setInParameters(
     PreparedStatement preparedStatement, Parameter[] parameters,
     Queue<Publisher<Void>> discardQueue) {
 
-    Mono<Void> allocations = Mono.empty();
+    Mono<Void> bindPublisher = Mono.empty();
 
     for (int i = 0; i < parameters.length; i++) {
 
-      Object value = parameters[i].getValue();
-      Type r2dbcType = parameters[i].getType();
-
-      int jdbcIndex = i + 1;
-      SQLType jdbcType = r2dbcType != null
-        ? toJdbcType(r2dbcType)
-        : value == null
-        ? JDBCType.NULL
-        : toJdbcType(value.getClass());
-
-      if (parameters[i] instanceof Parameter.Out)
+      if (parameters[i] instanceof Parameter.Out
+        && !(parameters[i] instanceof Parameter.In))
         continue;
 
-      Object jdbcValue = convertToJdbcBindValue(value, discardQueue);
+      int jdbcIndex = i + 1;
+      SQLType jdbcType = toJdbcType(parameters[i].getType());
+      Object jdbcValue =
+        convertToJdbcBindValue(parameters[i].getValue(), discardQueue);
+
       if (jdbcValue instanceof Publisher<?>) {
-        allocations = allocations.then(Mono.from((Publisher<?>)jdbcValue))
+        bindPublisher = bindPublisher.then(Mono.from((Publisher<?>)jdbcValue))
           .doOnSuccess(allocatedValue -> runOrHandleSQLException(() ->
             preparedStatement.setObject(jdbcIndex, allocatedValue, jdbcType)))
           .then();
@@ -1148,24 +1145,23 @@ final class OracleStatementImpl implements Statement {
       }
     }
 
-    return allocations;
+    return bindPublisher;
   }
 
   /**
    * <p>
    * Converts a {@code bindValue} of a type that is supported by R2DBC into an
    * equivalent type that is supported by JDBC. The object returned by this
-   * method will express the same information as the original
-   * {@code bindValue}. For instance, if this method is called with an
-   * {@code io.r2dbc.spi.Blob} type {@code bindValue}, it will convert it into
-   * an {@code java.sql.Blob} type object that stores the same content as the
-   * R2DBC {@code Blob}.
+   * method will express the same information as the original {@code bindValue}
+   * For instance, if this method is called with an {@code io.r2dbc.spi.Blob}
+   * type {@code bindValue}, it will convert it into an {@code java.sql.Blob}
+   * type value that stores the same content as the R2DBC {@code Blob}.
    * </p><p>
-   * If no conversion is necessary, this method simply returns the original
+   * If no conversion is necessary, this method returns the original
    * {@code bindValue}. If the conversion requires a database call, this
    * method returns a {@code Publisher} that emits the converted value. If
    * the conversion requires resource allocation, a {@code Publisher} that
-   * deallocates resources is added to the {@code discardQueue}
+   * deallocates resources is added to the {@code discardQueue}.
    * </p>
    *
    * @param bindValue Bind value to convert. May be null.
@@ -1212,7 +1208,7 @@ final class OracleStatementImpl implements Statement {
   
   /**
    * Converts an R2DBC Clob to a JDBC Clob. The returned {@code Publisher}
-   * asynchronously writes the {@code r2dbcClob's} content to a JDBC Clob and
+   * asynchronously writes the {@code r2dbcClob} content to a JDBC Clob and
    * then emits the JDBC Clob after all content has been written. The JDBC 
    * Clob allocates a temporary database Clob that is freed by a {@code
    * Publisher} added to the {@code discardQueue}.
@@ -1249,14 +1245,16 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * Binds in {@code parameters} to a {@code preparedStatement}, ignoring any
-   * {@code Parameter} that is not an instance of {@code Parameter.Out}.  The
-   * {@link SQLType} associated to the R2DBC {@code Type} of each out
-   * parameter is registered with the {@code callableStatement}.
-   * @param callableStatement JDBC statement having out parameters
-   * @param parameters Parameters of this {@code Statement}
+   * <p>
+   * Registers output {@code parameters} of a {@code callableStatement}.
+   * </p><p>
+   * This method ignores any {@code Parameter} that is not an instance of
+   * {@link Parameter.Out}.
+   * </p><p>
+   * @param callableStatement JDBC statement
+   * @param parameters Parameters to register with the {@code callableStatement}
    */
-  private static void bindOutParameters(
+  private static void registerOutParameters(
     CallableStatement callableStatement, Parameter[] parameters) {
     for (int i = 0; i < parameters.length; i++) {
       if (parameters[i] instanceof Parameter.Out) {
