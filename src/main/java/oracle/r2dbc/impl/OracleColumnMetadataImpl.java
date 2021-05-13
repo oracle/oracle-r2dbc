@@ -21,24 +21,15 @@
 
 package oracle.r2dbc.impl;
 
-import java.math.BigDecimal;
-import java.nio.ByteBuffer;
 import java.sql.JDBCType;
-import java.sql.ParameterMetaData;
 import java.sql.ResultSetMetaData;
-import java.sql.RowId;
 import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.Types;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.time.OffsetTime;
-import java.time.Period;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Nullability;
@@ -46,11 +37,11 @@ import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Type;
-import oracle.jdbc.OracleType;
 import oracle.jdbc.OracleTypes;
 
-import static java.util.Map.entry;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcTypes.toJdbcType;
+import static oracle.r2dbc.impl.OracleR2dbcTypes.toR2dbcType;
 
 /**
  * <p>
@@ -112,170 +103,14 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
   private static final int LOCAL_DATE_PRECISION = 10;
 
   /**
-   * The number of characters needed to represent a {@link Period}. This is
-   * the value returned by {@link #getPrecision()} for column types that map to
-   * {@code Period}. The 10 character length format is specified by
-   * {@link Period#toString()} and {@link Period#parse(CharSequence)} as:
-   * <pre>
-   * PnYnMnD
-   * </pre>
-   * {@code INTERVAL YEAR TO MONTH} values store a year with a maximum precision
-   * of 9 digits, and doesn't store a day. Where 'd' represents a base 10
-   * digit, the longest character representation of {@code INTERVAL YEAR TO
-   * MONTH} is:
-   * <pre>
-   * PdddddddddYddM0D
-   * </pre>
-   */
-  private static final int PERIOD_PRECISION = 16;
-
-  /**
-   * The number of characters needed to represent a {@link Duration}. This is
-   * the value returned by {@link #getPrecision()} for column types that map to
-   * {@code Duration}. The 10 character length format is specified by
-   * {@link Duration#toString()} and {@link Duration#parse(CharSequence)} as:
-   * <pre>
-   * PTnHnMnS
-   * </pre>
-   * {@code INTERVAL DAY TO SECOND} values store a day with a maximum precision
-   * of 9 digits, an hour between 0 and 23, a minute between 0 and 59, and a
-   * second between 0 and 59.999999999. {@link Duration#toString()} will
-   * convert days into hours, and 999,999,999 days = 23,999,999,976 hours.
-   * Where 'd' represents a base 10 digit, the longest character
-   * representation of {@code INTERVAL DAY TO SECOND} is:
-   * <pre>
-   * PTdddddddddddHddMdd.dddddddddS
-   * </pre>
-   */
-  private static final int DURATION_PRECISION = 30;
-
-  /**
-   * The number of characters needed to represent a {@code ROW ID} as a
-   * {@link String} of base 64 characters. This is the value returned by
-   * {@link #getPrecision()} for {@code ROW ID} columns. The 18 character
-   * length format is specified by the
-   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/ROWIDTOCHAR.html#GUID-67998E5B-376A-45B5-B20B-1A87E5D370C1">
-   * ROWIDTOCHAR function
-   * </a>
-   */
-  private static final int ROW_ID_PRECISION = 18;
-
-  // TODO: Move maps to OracleR2dbcType?
-  /**
-   * Mapping of R2DBC {@link io.r2dbc.spi.Type}s to JDBC's {@link SQLType}.
-   */
-  private static final Map<SQLType, Type> JDBC_TO_R2DBC_TYPE_MAP =
-    Map.ofEntries(
-      entry(JDBCType.BIGINT, R2dbcType.BIGINT),
-      entry(JDBCType.BINARY, R2dbcType.BINARY),
-      entry(OracleType.BINARY_DOUBLE, OracleR2dbcType.BINARY_DOUBLE),
-      entry(OracleType.BINARY_FLOAT, OracleR2dbcType.BINARY_FLOAT),
-      entry(JDBCType.BLOB, OracleR2dbcType.BLOB),
-      entry(JDBCType.BOOLEAN, R2dbcType.BOOLEAN),
-      entry(JDBCType.CHAR, R2dbcType.CHAR),
-      entry(JDBCType.CLOB, OracleR2dbcType.CLOB),
-      entry(JDBCType.ARRAY, R2dbcType.COLLECTION),
-      entry(JDBCType.DATE, R2dbcType.DATE),
-      entry(JDBCType.DECIMAL, R2dbcType.DECIMAL),
-      entry(JDBCType.DOUBLE, R2dbcType.DOUBLE),
-      entry(JDBCType.FLOAT, R2dbcType.FLOAT),
-      entry(JDBCType.INTEGER, R2dbcType.INTEGER),
-      entry(
-        OracleType.INTERVAL_DAY_TO_SECOND,
-        OracleR2dbcType.INTERVAL_DAY_TO_SECOND),
-      entry(
-        OracleType.INTERVAL_YEAR_TO_MONTH,
-        OracleR2dbcType.INTERVAL_YEAR_TO_MONTH),
-      entry(JDBCType.LONGVARBINARY, OracleR2dbcType.LONG_RAW),
-      entry(JDBCType.LONGVARCHAR, OracleR2dbcType.LONG),
-      entry(JDBCType.NCHAR, R2dbcType.NCHAR),
-      entry(JDBCType.NCLOB, OracleR2dbcType.NCLOB),
-      entry(JDBCType.NUMERIC, R2dbcType.NUMERIC),
-      entry(JDBCType.NVARCHAR, R2dbcType.NVARCHAR),
-      entry(JDBCType.REAL, R2dbcType.REAL),
-      entry(JDBCType.ROWID, OracleR2dbcType.ROW_ID),
-      entry(JDBCType.SMALLINT, R2dbcType.SMALLINT),
-      entry(JDBCType.TIME, R2dbcType.TIME),
-      entry(JDBCType.TIME_WITH_TIMEZONE, R2dbcType.TIME_WITH_TIME_ZONE),
-      entry(JDBCType.TIMESTAMP, R2dbcType.TIMESTAMP),
-      entry(
-        OracleType.TIMESTAMP_WITH_LOCAL_TIME_ZONE,
-        OracleR2dbcType.TIMESTAMP_WITH_LOCAL_TIME_ZONE),
-      entry(
-        JDBCType.TIMESTAMP_WITH_TIMEZONE,
-        new Type() { // This is a placeholder
-          @Override
-          public Class<?> getJavaType() {
-            return OffsetDateTime.class;
-          }
-
-          @Override
-          public String getName() {
-            return "TIMESTAMP WITH TIME ZONE";
-          }
-        }),
-        // TODO: Replace above with:
-        // R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
-        // Needs Fix:
-       // https://github.com/r2dbc/r2dbc-spi/commit/a86562421a312df2d8a3ae187553bf6c2b291aad
-
-      entry(JDBCType.TINYINT, R2dbcType.TINYINT),
-      entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
-      entry(JDBCType.VARCHAR, R2dbcType.VARCHAR)
-      // TODO Define Oracle Specific types
-      // TODO Map character types to NCHAR types by default?
-    );
-
-  private static final Map<Type, SQLType> R2DBC_TO_JDBC_TYPE_MAP =
-    // Swap R2DBC key and JDBC value
-    JDBC_TO_R2DBC_TYPE_MAP.entrySet().stream()
-      .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
-
-  /**
-   * Mapping of Java classes to JDBC's {@link SQLType}.
-   */
-  private static final Map<Class<?>, SQLType> JAVA_TO_SQL_TYPE_MAP =
-    Map.ofEntries(
-    // Standard mappings listed in the R2DBC Specification
-    entry(String.class, JDBCType.VARCHAR),
-    entry(Boolean.class, JDBCType.BOOLEAN),
-    entry(ByteBuffer.class, JDBCType.VARBINARY),
-    entry(Integer.class, JDBCType.INTEGER),
-    entry(Byte.class, JDBCType.TINYINT),
-    entry(Short.class, JDBCType.SMALLINT),
-    entry(Long.class, JDBCType.BIGINT),
-    entry(BigDecimal.class, JDBCType.NUMERIC),
-    entry(Float.class, JDBCType.REAL),
-    entry(Double.class, JDBCType.DOUBLE),
-    entry(LocalDate.class, JDBCType.DATE),
-    entry(LocalTime.class, JDBCType.TIME),
-    entry(OffsetTime.class, JDBCType.TIME_WITH_TIMEZONE),
-    entry(LocalDateTime.class, JDBCType.TIMESTAMP),
-    entry(OffsetDateTime.class, JDBCType.TIMESTAMP_WITH_TIMEZONE),
-    entry(io.r2dbc.spi.Blob.class, JDBCType.BLOB),
-    entry(io.r2dbc.spi.Clob.class, JDBCType.CLOB),
-
-    // Extended mappings supported by Oracle
-    entry(Duration.class, oracle.jdbc.OracleType.INTERVAL_DAY_TO_SECOND),
-    entry(Period.class, oracle.jdbc.OracleType.INTERVAL_YEAR_TO_MONTH),
-    entry(RowId.class, oracle.jdbc.OracleType.ROWID)
-
-  );
-
-  // Swap Class key and SQLType value
-  private static final Map<SQLType, Class<?>> SQL_TO_JAVA_TYPE_MAP =
-    JAVA_TO_SQL_TYPE_MAP.entrySet().stream()
-      .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
-
-  /**
    * The column's R2DBC SQL type.
    */
-  private final Type sqlType;
+  private final Type r2dbcType;
 
   /**
    * The column's JDBC SQL type.
    */
-  private final SQLType jdbcSqlType;
+  private final SQLType jdbcType;
 
   /**
    * The column's Java type mapping, as returned by {@link Row#get(int)} and
@@ -313,8 +148,7 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
   /**
    * Constructs a new instance that supplies column metadata values as
    * specified by parameters to this constructor.
-   * @param r2dbcSqlType The column's SQL type.
-   * @param javaType The column's Java type mapping. Not null.
+   * @param jdbcType The column's SQL type.
    * @param name The column's name, as specified in the SQL statement that
  *             returned the column. Not null.
    * @param nullability The column's nullability. Not the Java Language
@@ -323,21 +157,22 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
 *                  applicable to the column's type.
    * @param scale The column's scale, or null if scale is not applicable to
    *              the column's type.
+   * @throws IllegalStateException If the {@code jdbcType} is not recognized
    */
   private OracleColumnMetadataImpl(
-    SQLType sqlType, String name, Nullability nullability, Integer precision,
+    SQLType jdbcType, String name, Nullability nullability, Integer precision,
     Integer scale) {
-    this.jdbcSqlType = sqlType;
+    this.jdbcType = jdbcType;
     this.name = name;
     this.nullability = nullability;
     this.precision = precision;
     this.scale = scale;
 
-    this.sqlType = JDBC_TO_R2DBC_TYPE_MAP.get(jdbcSqlType);
-    if (this.sqlType == null) // TODO: OracleR2dbcType.UNKNOWN? Future proof
-      throw new IllegalStateException("Unrecognized SQL type:" + sqlType);
+    this.r2dbcType = toR2dbcType(jdbcType);
+    if (this.r2dbcType == null)
+      throw new IllegalStateException("Unrecognized SQL type:" + jdbcType);
 
-    this.javaType = this.sqlType.getJavaType();
+    this.javaType = r2dbcType.getJavaType();
   }
 
   /**
@@ -376,7 +211,7 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
    */
   @Override
   public SQLType getNativeTypeMetadata() {
-    return jdbcSqlType;
+    return jdbcType;
   }
 
   /**
@@ -431,7 +266,7 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
    */
   @Override
   public Type getType() {
-    return sqlType;
+    return r2dbcType;
   }
 
   /**
@@ -464,46 +299,32 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
       resultSetMetaData.getScale(jdbcIndex)));
   }
 
-  static OracleColumnMetadataImpl create(String name, Type type) {
+  /**
+   * Creates {@code ColumnMetadata} for an out parameter. The returned
+   * {@code ColumnMetaData} has a specified {@code name} and {@code type}.
+   * The Java type mapping of the returned metadata is obtained by invoking
+   * {@link Type#getJavaType()} on {@code type}. The nullablity is
+   * {@link Nullability#NULLABLE}, as all PL/SQL out parameters may be {@code
+   * null}.
+   * @param name Column name
+   * @param type Column type
+   * @return Column metadata having {@code name} and {@code type}
+   */
+  static OracleColumnMetadataImpl createParameterMetadata(
+    String name, Type type) {
     return new OracleColumnMetadataImpl(
-      //TODO: don't map it twice
-      R2DBC_TO_JDBC_TYPE_MAP.get(type), name, Nullability.NULLABLE, null, null);
+      toJdbcType(type), name, Nullability.NULLABLE, null, null);
   }
 
   /**
-   * <p>
-   * Returns the JDBC {@code SQLType} corresponding to an {@code r2dbcType};
-   * Returns {@link JDBCType#VARCHAR} for {@link R2dbcType#VARCHAR},
-   * {@link JDBCType#DATE} for {@link R2dbcType#DATE}, etc.
-   * </p>
-   * @param r2dbcType An R2DBC type
-   * @return A JDBC type, or {@code null} if {@code r2dbcType} is not
-   * recognized by Oracle R2DBC.
+   *
+   * @param type
+   * @param name
+   * @param nullability
+   * @param precision
+   * @param scale
+   * @return
    */
-  static SQLType r2dbcToSQLType(Type r2dbcType) {
-    return r2dbcType instanceof Type.InferredType
-      ? javaToSQLType(r2dbcType.getJavaType())
-      : R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
-  }
-
-  static SQLType javaToSQLType(Class<?> javaType) {
-    SQLType sqlType = JAVA_TO_SQL_TYPE_MAP.get(javaType);
-
-    if (sqlType != null) {
-      return sqlType;
-    }
-    else {
-      // Attempt to find a supported super-type of the object
-      return JAVA_TO_SQL_TYPE_MAP.entrySet()
-        .stream()
-        .filter(entry -> entry.getKey().isAssignableFrom(javaType))
-        .map(Map.Entry::getValue)
-        .findFirst()
-        .orElseThrow(() ->
-          new IllegalArgumentException("Unsupported Java type:" + javaType));
-    }
-  }
-
   private static OracleColumnMetadataImpl fromJdbc(
     SQLType type, String name, Nullability nullability, int precision,
     int scale) {
@@ -660,7 +481,7 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
    * index specified as {@code jdbcIndex}
    * </p><p>
    * A {@link JDBCType} is returned if one is found to have a matching type
-   * number. Otherwise, an {@link OracleR2dbcType} is returned if one is found to
+   * number. Otherwise, an {@link OracleR2dbcTypes} is returned if one is found to
    * have a matching type number. Otherwise, {@link JDBCType#OTHER} is
    * returned if no {@link SQLType} is found to have a matching type number.
    * </p>
@@ -705,25 +526,6 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
       case ResultSetMetaData.columnNullableUnknown:
       default:
         return Nullability.UNKNOWN;
-    }
-  }
-
-  /**
-   * Returns the {@code Class} identified by {@code className}.
-   * @param className A class name. May be null.
-   * @return {@code Class} identified by {@code className}, or
-   * {@code Object.class} if {@code className} is {@code null}
-   * @throws IllegalStateException If the identified {@code Class} can not be
-   * found.
-   */
-  private static Class<?> getClass(String className) {
-    try {
-      return className == null ? Object.class : Class.forName(className);
-    }
-    catch (ClassNotFoundException columnClassNotFound) {
-      throw new IllegalStateException(
-        "Could not find Java class for ColumnMetaData",
-        columnClassNotFound);
     }
   }
 

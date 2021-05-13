@@ -23,10 +23,8 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
-import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
-import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingSupplier;
@@ -53,14 +51,13 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
-import static oracle.r2dbc.impl.OracleColumnMetadataImpl.r2dbcToSQLType;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcTypes.toJdbcType;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
-import static oracle.r2dbc.impl.OracleResultImpl.createQueryResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createUpdateCountResult;
 
 /**
@@ -559,18 +556,18 @@ final class OracleStatementImpl implements Statement {
     else if (object instanceof Parameter) {
       // TODO: OracleR2dbcType {SQLType sqlType; Type r2dbcType;}
       Type type = ((Parameter)object).getType();
-      if (type != null && null == r2dbcToSQLType(type))
+      if (type != null && null == toJdbcType(type))
         throw new IllegalArgumentException("TEMPORARY");
       else {
         Object value = ((Parameter) object).getValue();
-        if (value != null && null == OracleColumnMetadataImpl.javaToSQLType(value.getClass()))
+        if (value != null && null == toJdbcType(value.getClass()))
           throw new IllegalArgumentException("TEMPORARY");
       }
 
       parameters[index] =(Parameter)object;
     }
     else {
-      if (null == OracleColumnMetadataImpl.javaToSQLType(object.getClass()))
+      if (null == toJdbcType(object.getClass()))
         throw new IllegalArgumentException("TEMPORARY");
 
       parameters[index] = Parameters.in(object);
@@ -933,7 +930,7 @@ final class OracleStatementImpl implements Statement {
         }
       },
       new OracleRowMetadataImpl(IntStream.range(0, outBindIndexes.length)
-        .mapToObj(i -> OracleColumnMetadataImpl.create(
+        .mapToObj(i -> OracleColumnMetadataImpl.createParameterMetadata(
           Objects.requireNonNullElse(
             parameterNames.get(outBindIndexes[i]), String.valueOf(i)),
           parameters[outBindIndexes[i]].getType()))
@@ -1130,10 +1127,10 @@ final class OracleStatementImpl implements Statement {
 
       int jdbcIndex = i + 1;
       SQLType jdbcType = r2dbcType != null
-        ? r2dbcToSQLType(r2dbcType)
+        ? toJdbcType(r2dbcType)
         : value == null
         ? JDBCType.NULL
-        : OracleColumnMetadataImpl.javaToSQLType(value.getClass());
+        : toJdbcType(value.getClass());
 
       if (parameters[i] instanceof Parameter.Out)
         continue;
@@ -1264,7 +1261,7 @@ final class OracleStatementImpl implements Statement {
     for (int i = 0; i < parameters.length; i++) {
       if (parameters[i] instanceof Parameter.Out) {
         int jdbcIndex = i + 1;
-        SQLType jdbcType = r2dbcToSQLType(parameters[i].getType());
+        SQLType jdbcType = toJdbcType(parameters[i].getType());
         runOrHandleSQLException(() ->
           callableStatement.registerOutParameter(jdbcIndex, jdbcType));
       }
