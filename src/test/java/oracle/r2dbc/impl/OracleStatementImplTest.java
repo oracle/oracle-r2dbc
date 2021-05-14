@@ -22,11 +22,13 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
+import io.r2dbc.spi.Type;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -1242,6 +1244,192 @@ public class OracleStatementImplTest {
 
   /**
    * Verifies {@link OracleStatementImpl#execute()} when calling a procedure
+   * having a single in-out parameter.
+   */
+  @Test
+  public void testOneInOutCall() {
+
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+
+    try {
+      // Create a table with one value. Create a procedure that updates the
+      // value and returns the previous value
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testOneInOutCall (value NUMBER)"));
+      awaitUpdate(1, connection.createStatement(
+        "INSERT INTO testOneInOutCall VALUES (0)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testOneInOutCallAdd(" +
+          " inout_value IN OUT NUMBER) IS" +
+          " previous NUMBER;" +
+          " BEGIN " +
+          " SELECT value INTO previous FROM testOneInOutCall;" +
+          " UPDATE testOneInOutCall SET value = inout_value;" +
+          " inout_value := previous;" +
+          " END;"));
+
+      // Execute the procedure with one in-out parameter. Expect a single Result
+      // with no update count. Expect the IN parameter's value to have been
+      // inserted by the call.
+      Result result0 = awaitOne(connection.createStatement(
+        "BEGIN testOneInOutCallAdd(?); END;")
+        .bind(0, new InOutParameter(1, R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result0.getRowsUpdated());
+      awaitQuery(asList(1),
+        row -> row.get("value", Integer.class),
+        connection.createStatement("SELECT * FROM testOneInOutCall"));
+
+      // Execute the procedure again with one in-out parameter. Expect a single
+      // Result with one rows having the previous value. Expect the IN
+      // parameter's default value to have been inserted by the call.
+      Result result1 = awaitOne(connection.createStatement(
+        "BEGIN testOneInOutCallAdd(:value); END;")
+        .bind("value", new InOutParameter(2, R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(1, result1.map((row, metadata) ->
+        row.get("value", Integer.class)));
+      awaitQuery(asList(2),
+        row -> row.get(0, Integer.class),
+        connection.createStatement("SELECT * FROM testOneInOutCall"));
+
+      // Execute the procedure with one in-out parameter having an inferred
+      // type. Expect a single Result with no update count. Expect the IN
+      // parameter's value to have been inserted by the call.
+      Result result2 = awaitOne(connection.createStatement(
+        "BEGIN testOneInOutCallAdd(:value); END;")
+        .bind("value", new InOutParameter(3))
+        .execute());
+      awaitNone(result2.getRowsUpdated());
+      awaitQuery(asList(3),
+        row -> row.get(0, Integer.class),
+        connection.createStatement("SELECT * FROM testOneInOutCall"));;
+
+      // Execute the procedure again with one in-out parameter. Expect a single
+      // Result with one rows having the previous value. Expect the IN
+      // parameter's value to have been inserted by the call.
+      Result result3 = awaitOne(connection.createStatement(
+        "BEGIN testOneInOutCallAdd(?); END;")
+        .bind(0, new InOutParameter(4))
+        .execute());
+      awaitOne(3, result3.map((row, metadata) ->
+        row.get(0, Integer.class)));
+      awaitQuery(asList(4),
+        row -> row.get(0, Integer.class),
+        connection.createStatement("SELECT * FROM testOneInOutCall"));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement("DROP TABLE testOneInOutCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testOneInOutCallAdd"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies {@link OracleStatementImpl#execute()} when calling a procedure
+   * having multiple in-out parameters.
+   */
+  @Test
+  public void testMultiInOutCall() {
+
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+
+    try {
+      // Create a table with one value. Create a procedure that updates the
+      // value and returns the previous value
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testMultiInOutCall (value1 NUMBER, value2 NUMBER)"));
+      awaitUpdate(1, connection.createStatement(
+        "INSERT INTO testMultiInOutCall VALUES (0, 100)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testMultiInOutCallAdd(" +
+          " inout_value1 IN OUT NUMBER," +
+          " inout_value2 IN OUT NUMBER) IS" +
+          " previous1 NUMBER;" +
+          " previous2 NUMBER;" +
+          " BEGIN " +
+          " SELECT value1, value2 INTO previous1, previous2" +
+          "   FROM testMultiInOutCall;" +
+          " UPDATE testMultiInOutCall" +
+          "   SET value1 = inout_value1, value2 = inout_value2;" +
+          " inout_value1 := previous1;" +
+          " inout_value2 := previous2;" +
+          " END;"));
+
+      // Execute the procedure with one in-out parameter. Expect a single Result
+      // with no update count. Expect the IN parameter's value to have been
+      // inserted by the call.
+      Result result0 = awaitOne(connection.createStatement(
+        "BEGIN testMultiInOutCallAdd(:value1, :value2); END;")
+        .bind("value1", new InOutParameter(1, R2dbcType.NUMERIC))
+        .bind("value2", new InOutParameter(101, R2dbcType.NUMERIC))
+        .execute());
+      awaitNone(result0.getRowsUpdated());
+      awaitQuery(asList(asList(1, 101)),
+        row -> asList(
+          row.get("value1", Integer.class),row.get("value2", Integer.class)),
+        connection.createStatement("SELECT * FROM testMultiInOutCall"));
+
+      // Execute the procedure again with one in-out parameter. Expect a single
+      // Result with one rows having the previous value. Expect the IN
+      // parameter's default value to have been inserted by the call.
+      Result result1 = awaitOne(connection.createStatement(
+        "BEGIN testMultiInOutCallAdd(?, :value2); END;")
+        .bind(0, new InOutParameter(2, R2dbcType.NUMERIC))
+        .bind("value2", new InOutParameter(102, R2dbcType.NUMERIC))
+        .execute());
+      awaitOne(asList(1, 101), result1.map((row, metadata) ->
+        asList(
+          row.get(0, Integer.class), row.get("value2", Integer.class))));
+      awaitQuery(asList(asList(2, 102)),
+        row ->
+          asList(row.get("value1", Integer.class), row.get(1, Integer.class)),
+        connection.createStatement("SELECT * FROM testMultiInOutCall"));
+
+      // Execute the procedure with one in-out parameter having an inferred
+      // type. Expect a single Result with no update count. Expect the IN
+      // parameter's value to have been inserted by the call.
+      Result result2 = awaitOne(connection.createStatement(
+        "BEGIN testMultiInOutCallAdd(?, ?); END;")
+        .bind(0, new InOutParameter(3))
+        .bind(1, new InOutParameter(103))
+        .execute());
+      awaitNone(result2.getRowsUpdated());
+      awaitQuery(asList(asList(3, 103)),
+        row -> asList(row.get(0, Integer.class), row.get(1, Integer.class)),
+        connection.createStatement("SELECT * FROM testMultiInOutCall"));;
+
+      // Execute the procedure again with multiple in-out parameters having
+      // the same name. Expect a single Result with one rows having the
+      // previous value. Getting the parameter value by name should returned
+      // the value of the first parameter. Expect the IN parameter's value to
+      // have been inserted by the call.
+      Result result3 = awaitOne(connection.createStatement(
+        "BEGIN testMultiInOutCallAdd(" +
+          "inout_value2 => :value2, inout_value1 => :value1); END;")
+        .bind("value1", new InOutParameter(4))
+        .bind("value2", new InOutParameter(104))
+        .execute());
+      awaitOne(asList(3, 103), result3.map((row, metadata) ->
+        asList(
+          row.get("value1", Integer.class), row.get(0, Integer.class))));
+      awaitQuery(asList(asList(4, 104)),
+        row -> asList(row.get(0, Integer.class), row.get(1, Integer.class)),
+        connection.createStatement("SELECT * FROM testMultiInOutCall"));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement("DROP TABLE testMultiInOutCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testMultiInOutCallAdd"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies {@link OracleStatementImpl#execute()} when calling a procedure
    * having a single out parameter.
    */
   @Test
@@ -1262,7 +1450,7 @@ public class OracleStatementImplTest {
           "   RETURNING testOneOutCall.id INTO id;" +
           " END;"));
 
-      // Execute the procedure with one out parameter. Expect a single Result
+      // Execute the procedure with one in-out parameter. Expect a single Result
       // with no update count. Expect the IN parameter's default value to
       // have been inserted by the call.
       Result result0 = awaitOne(connection.createStatement(
@@ -1274,7 +1462,7 @@ public class OracleStatementImplTest {
         row -> asList(row.get("id", Integer.class), row.get("value")),
         connection.createStatement("SELECT * FROM testOneOutCall"));
 
-      // Execute the procedure again with one out parameter. Expect a single
+      // Execute the procedure again with one in-out parameter. Expect a single
       // Result with one rows Expect the IN parameter's default value to have
       // been inserted by the call.
       Result result1 =  awaitOne(connection.createStatement(
@@ -1290,7 +1478,7 @@ public class OracleStatementImplTest {
       awaitExecution(connection.createStatement(
         "TRUNCATE TABLE testOneOutCall"));
 
-      // Execute the procedure with one out parameter. Expect a single Result
+      // Execute the procedure with one in-out parameter. Expect a single Result
       // with no update count. Expect the an indexed based String bind to
       // have been inserted by the call.
       Result result2 = awaitOne(connection.createStatement(
@@ -1303,7 +1491,7 @@ public class OracleStatementImplTest {
         row -> asList(row.get(0, Integer.class), row.get(1)),
         connection.createStatement("SELECT * FROM testOneOutCall"));
 
-      // Execute the procedure with one out parameter. Expect a single Result
+      // Execute the procedure with one in-out parameter. Expect a single Result
       // with no update count. Expect the a named String bind to have been
       // inserted by the call.
       Result result3 = awaitOne(connection.createStatement(
@@ -1322,7 +1510,7 @@ public class OracleStatementImplTest {
       awaitExecution(connection.createStatement(
         "TRUNCATE TABLE testOneOutCall"));
 
-      // Execute the procedure with one out parameter. Expect a single Result
+      // Execute the procedure with one in-out parameter. Expect a single Result
       // with no update count. Expect the an indexed based Parameter bind to
       // have been inserted by the call.
       Result result4 = awaitOne(connection.createStatement(
@@ -1335,7 +1523,7 @@ public class OracleStatementImplTest {
         row -> asList(row.get(0, Integer.class), row.get(1)),
         connection.createStatement("SELECT * FROM testOneOutCall"));
 
-      // Execute the procedure with one out parameter. Expect a single Result
+      // Execute the procedure with one in-out parameter. Expect a single Result
       // with no update count. Expect the a named Parameter bind to have been
       // inserted by the call.
       Result result5 = awaitOne(connection.createStatement(
@@ -1356,7 +1544,7 @@ public class OracleStatementImplTest {
       awaitExecution(connection.createStatement(
         "TRUNCATE TABLE testOneOutCall"));
 
-      // Execute the procedure with one out parameter. Expect a single Result
+      // Execute the procedure with one in-out parameter. Expect a single Result
       // with no update count. Expect the an indexed based Parameter.In bind to
       // have been inserted by the call.
       Result result6 = awaitOne(connection.createStatement(
@@ -1369,7 +1557,7 @@ public class OracleStatementImplTest {
         row -> asList(row.get(0, Integer.class), row.get(1)),
         connection.createStatement("SELECT * FROM testOneOutCall"));
 
-      // Execute the procedure with one out parameter. Expect a single Result
+      // Execute the procedure with one in-out parameter. Expect a single Result
       // with no update count. Expect the a named Parameter.In bind to have been
       // inserted by the call.
       Result result7 = awaitOne(connection.createStatement(
@@ -1384,11 +1572,6 @@ public class OracleStatementImplTest {
         row -> asList(row.get(0, Integer.class), row.get(1)),
         connection.createStatement(
           "SELECT * FROM testOneOutCall ORDER BY value"));
-    }
-    catch (Throwable e) {
-      showErrors(connection);
-      e.printStackTrace();
-      throw new RuntimeException(e);
     }
     finally {
       tryAwaitExecution(connection.createStatement("DROP TABLE testOneOutCall"));
@@ -1555,11 +1738,6 @@ public class OracleStatementImplTest {
         row -> asList(row.get(0, Integer.class), row.get(1)),
         connection.createStatement(
           "SELECT * FROM testMultiOutCall ORDER BY value"));
-    }
-    catch (Throwable e) {
-      showErrors(connection);
-      e.printStackTrace();
-      throw new RuntimeException(e);
     }
     finally {
       tryAwaitExecution(connection.createStatement("DROP TABLE testMultiOutCall"));
@@ -1796,4 +1974,39 @@ public class OracleStatementImplTest {
     }
   }
 
+  // TODO: Repalce with Parameters.inOut when that's available
+  private static final class InOutParameter
+    implements Parameter, Parameter.In, Parameter.Out {
+    final Type type;
+    final Object value;
+
+    InOutParameter(Object value) {
+      this(value, new Type.InferredType() {
+        @Override
+        public Class<?> getJavaType() {
+          return value.getClass();
+        }
+
+        @Override
+        public String getName() {
+          return "Inferred";
+        }
+      });
+    }
+
+    InOutParameter(Object value, Type type) {
+      this.value = value;
+      this.type = type;
+    }
+
+    @Override
+    public Type getType() {
+      return type;
+    }
+
+    @Override
+    public Object getValue() {
+      return value;
+    }
+  }
 }
