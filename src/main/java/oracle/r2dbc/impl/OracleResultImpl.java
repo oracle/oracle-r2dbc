@@ -270,7 +270,8 @@ abstract class OracleResultImpl implements Result {
 
     Publisher<T> rowPublisher =
       Flux.<T>from(publishRows(mappingFunction))
-        .doFinally(signalType -> consumedFuture.complete(null));
+        .doOnTerminate(() -> consumedFuture.complete(null))
+        .doOnCancel(() -> consumedFuture.complete(null));
 
     AtomicBoolean isSubscribed = new AtomicBoolean(false);
     return Flux.defer(() ->

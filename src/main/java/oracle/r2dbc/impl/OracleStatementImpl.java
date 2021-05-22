@@ -26,6 +26,7 @@ import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
+import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingRunnable;
 import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingSupplier;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -1332,7 +1333,7 @@ final class OracleStatementImpl implements Statement {
     AtomicReference<OracleResultImpl> lastResultRef =
       new AtomicReference<>(null);
 
-    return Flux.using(statementSupplier::get,
+    return Flux.usingWhen(Mono.fromSupplier(statementSupplier),
 
       preparedStatement ->
         Flux.usingWhen(
@@ -1340,26 +1341,17 @@ final class OracleStatementImpl implements Statement {
           discardQueue ->
             Flux.from(bindFunction.apply(preparedStatement, discardQueue))
               .thenMany(resultFunction.apply(preparedStatement))
+              .defaultIfEmpty(createUpdateCountResult(-1))
               .doOnNext(lastResultRef::set),
           discardQueue ->
             Flux.fromIterable(discardQueue)
               .concatMapDelayError(Function.identity())),
 
-      preparedStatement -> {
-        OracleResultImpl lastResult = lastResultRef.get();
-
-        if (lastResult != null) {
-          Mono.from(lastResultRef.get().onConsumed())
-            .doFinally(signalType ->
-              runOrHandleSQLException(preparedStatement::close))
-            .subscribe();
-        }
-        else {
-          runOrHandleSQLException(preparedStatement::close);
-        }
-      })
-      // Always emit at least one Result
-      .defaultIfEmpty(createUpdateCountResult(-1));
+      preparedStatement ->
+        Mono.justOrEmpty(lastResultRef.get())
+          .flatMap(result -> Mono.from(result.onConsumed()))
+          .doOnTerminate((ThrowingRunnable)preparedStatement::close)
+          .doOnCancel((ThrowingRunnable)preparedStatement::close));
   }
 
   /**
