@@ -24,7 +24,7 @@ package oracle.r2dbc.util;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
-import oracle.r2dbc.DatabaseConfig;
+import oracle.r2dbc.test.DatabaseConfig;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-import static oracle.r2dbc.DatabaseConfig.sqlTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;

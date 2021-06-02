@@ -54,7 +54,7 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
-import static oracle.r2dbc.impl.OracleR2dbcTypes.toJdbcType;
+import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createUpdateCountResult;

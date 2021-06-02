@@ -29,19 +29,18 @@ import java.sql.Types;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.util.Map;
 
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Nullability;
 import io.r2dbc.spi.R2dbcException;
-import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleTypes;
+import oracle.r2dbc.OracleR2dbcTypes;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
-import static oracle.r2dbc.impl.OracleR2dbcTypes.toJdbcType;
-import static oracle.r2dbc.impl.OracleR2dbcTypes.toR2dbcType;
+import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
+import static oracle.r2dbc.impl.SqlTypeMap.toR2dbcType;
 
 /**
  * <p>

@@ -41,7 +41,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static oracle.r2dbc.DatabaseConfig.user;
+import static oracle.r2dbc.test.DatabaseConfig.user;
 
 /**
  * <p>

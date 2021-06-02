@@ -29,18 +29,16 @@ import io.r2dbc.spi.Statement;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.SynchronousSink;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 
 import static java.util.Arrays.asList;
-import static oracle.r2dbc.DatabaseConfig.connectTimeout;
-import static oracle.r2dbc.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;

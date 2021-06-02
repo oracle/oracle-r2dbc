@@ -50,12 +50,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
-import static oracle.r2dbc.DatabaseConfig.connectTimeout;
-import static oracle.r2dbc.DatabaseConfig.databaseVersion;
-import static oracle.r2dbc.DatabaseConfig.sharedConnection;
-import static oracle.r2dbc.DatabaseConfig.sqlTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
+import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
-import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;

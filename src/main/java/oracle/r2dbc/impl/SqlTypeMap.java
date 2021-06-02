@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
+import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.sql.json.OracleJsonObject;
 
 import java.math.BigDecimal;
@@ -43,83 +44,9 @@ import java.util.stream.Collectors;
 import static java.util.Map.entry;
 
 /**
- * SQL types supported by Oracle Database that are not defined as standard types
- * by {@link io.r2dbc.spi.R2dbcType}.
+ * Defines the SQL to Java type mappings used by Oracle R2DBC.
  */
-final class OracleR2dbcTypes {
-
-  private OracleR2dbcTypes() {}
-
-  /**
-   * A 64-bit, double-precision floating-point number data type.
-   */
-  static final Type BINARY_DOUBLE = new TypeImpl(Double.class, "BINARY_DOUBLE");
-
-  /**
-   * A 32-bit, single-precision floating-point number data type.
-   */
-  static final Type BINARY_FLOAT = new TypeImpl(Float.class, "BINARY_FLOAT");
-
-  /**
-   * A Binary Large Object (BLOB) as implemented by Oracle Database. The default
-   * Java type mapping is {@link io.r2dbc.spi.Blob} rather than
-   * {@link java.nio.ByteBuffer}, which is the mapping of the standard
-   * {@link io.r2dbc.spi.R2dbcType#BLOB}.
-   */
-  static final Type BLOB = new TypeImpl(io.r2dbc.spi.Blob.class, "BLOB");
-
-  /**
-   * A Character Large Object (BLOB) as implemented by Oracle Database. The
-   * default Java type mapping is {@link io.r2dbc.spi.Clob} rather than
-   * {@link String}, which is the mapping of the standard
-   * {@link io.r2dbc.spi.R2dbcType#CLOB}.
-   */
-  static final Type CLOB = new TypeImpl(io.r2dbc.spi.Clob.class, "CLOB");
-
-  /**
-   * Stores a period of time in days, hours, minutes, and seconds.
-   */
-  static final Type INTERVAL_DAY_TO_SECOND =
-    new TypeImpl(Duration.class, "INTERVAL DAY TO SECOND");
-
-  /**
-   * Stores a period of time in years and months.
-   */
-  static final Type INTERVAL_YEAR_TO_MONTH =
-    new TypeImpl(Period.class, "INTERVAL YEAR TO MONTH");
-
-  static final Type JSON =
-    new TypeImpl(OracleJsonObject.class, "JSON");
-
-  /**
-   * Character data of variable length up to 2 gigabytes.
-   */
-  static final Type LONG = new TypeImpl(String.class, "LONG");
-
-  /**
-   * Raw binary data of variable length up to 2 gigabytes.
-   */
-  static final Type LONG_RAW = new TypeImpl(ByteBuffer.class, "LONG RAW");
-
-  /**
-   * A National Character Large Object (NCLOB) as implemented by Oracle
-   * Database. The default Java type mapping is {@link io.r2dbc.spi.Clob}
-   * rather than {@link String}, which is the mapping of the standard
-   * {@link io.r2dbc.spi.R2dbcType#NCLOB}.
-   */
-  static final Type NCLOB = new TypeImpl(io.r2dbc.spi.Clob.class, "NCLOB");
-
-  /**
-   * Base 64 string representing the unique address of a row in its table.
-   */
-  static final Type ROWID = new TypeImpl(RowId.class, "ROWID");
-
-  /**
-   * Timestamp that is converted to the database's timezone when stored, and
-   * converted to the local timezone (the session timezone) when retrieved.
-   */
-  static final Type TIMESTAMP_WITH_LOCAL_TIME_ZONE =
-    new TypeImpl(LocalDateTime.class, "TIMESTAMP WITH LOCAL TIME ZONE");
+final class SqlTypeMap {
 
   /**
    * Mapping of JDBC's {@link SQLType} to R2DBC {@link io.r2dbc.spi.Type}s.
@@ -167,15 +94,24 @@ final class OracleR2dbcTypes {
         // R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
         // When fix is released:
         // https://github.com/r2dbc/r2dbc-spi/commit/a86562421a312df2d8a3ae187553bf6c2b291aad
-        new TypeImpl(OffsetDateTime.class, "TIMESTAMP WITH TIME ZONE")),
+        new Type() {
+          @Override
+          public Class<?> getJavaType() {
+            return OffsetDateTime.class;
+          }
 
+          @Override
+          public String getName() {
+            return "TIMESTAMP_WITH_TIME_ZONE";
+          }
+        }),
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),
       entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
       entry(JDBCType.VARCHAR, R2dbcType.VARCHAR)
     );
 
   /**
-   * Mapping of R2DBC {@link io.r2dbc.spi.Type}s to JDBC's {@link SQLType}.
+   * Mapping of R2DBC {@link Type}s to JDBC's {@link SQLType}.
    */
   private static final Map<Type, SQLType> R2DBC_TO_JDBC_TYPE_MAP =
     // Swap R2DBC key and JDBC value
@@ -282,71 +218,4 @@ final class OracleR2dbcTypes {
         .orElse(null);
     }
   }
-
-  /**
-   * Implementation of the {@link Type} SPI.
-   */
-  private static final class TypeImpl implements Type {
-
-    /**
-     * The Java Language mapping of this SQL type.
-     */
-    private final Class<?> javaType;
-
-    /**
-     * The name of this SQL type, as it would appear in a DDL expression.
-     */
-    private final String sqlName;
-
-    /**
-     * Constructs a {@code Type} having a {@code javaType} mapping and
-     * {@code sqlName}.
-     * @param javaType Java type
-     * @param sqlName SQL type name
-     */
-    TypeImpl(Class<?> javaType, String sqlName) {
-      this.javaType = javaType;
-      this.sqlName = sqlName;
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Implements the R2DBC SPI method by returning the default Java type
-     * mapping for values of this SQL type. The Java type returned by this
-     * method is the type of {@code Object} returned by {@code Row.get
-     * (String/int)} when accessing a value of this SQL type.
-     * </p>
-     */
-    @Override
-    public Class<?> getJavaType() {
-      return javaType;
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Implements the R2DBC SPI method by returning the name of this SQL type.
-     * The name returned by this method is recognized in expressions of a SQL
-     * command, for instance: A column definition of a {@code CREATE TABLE}
-     * command.
-     * </p>
-     *
-     * @return
-     */
-    @Override
-    public String getName() {
-      return sqlName;
-    }
-
-    /**
-     * Returns the name of this type.
-     * @return Type name
-     */
-    @Override
-    public String toString() {
-      return getName();
-    }
-  }
-
 }

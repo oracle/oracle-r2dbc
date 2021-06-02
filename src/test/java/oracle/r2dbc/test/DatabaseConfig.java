@@ -19,7 +19,7 @@
   limitations under the License.
 */
 
-package oracle.r2dbc;
+package oracle.r2dbc.test;
 
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
@@ -30,7 +30,6 @@ import oracle.jdbc.OracleConnection;
 import oracle.r2dbc.util.SharedConnectionFactory;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import java.io.FileNotFoundException;
 import java.io.InputStream;
@@ -39,7 +38,6 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 /**
  * Stores configuration used by integration tests that connect to a database.

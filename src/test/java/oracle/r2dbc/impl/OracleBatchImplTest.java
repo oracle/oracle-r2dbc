@@ -28,8 +28,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import static java.util.Arrays.asList;
-import static oracle.r2dbc.DatabaseConfig.connectTimeout;
-import static oracle.r2dbc.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
