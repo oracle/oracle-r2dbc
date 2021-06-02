@@ -317,13 +317,16 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
   }
 
   /**
-   *
-   * @param type
-   * @param name
-   * @param nullability
-   * @param precision
-   * @param scale
-   * @return
+   * Creates {@code ColumnMetadata} from values of a JDBC
+   * {@code ResultSetMetaDataObject}.
+   * @param type SQL type of a column. Not null.
+   * @param name Name of a column. Not null.
+   * @param nullability Nullability of a column. Not null.
+   * @param precision Precision of a column, or {@code 0} if precision is not
+   * applicable to the column type.
+   * @param scale Scale of a column, or {@code 0} if scale is not applicable
+   * to the column type.
+   * @return {@code ColumnMetadata} derived from JDBC values. Not null.
    */
   private static OracleColumnMetadataImpl fromJdbc(
     SQLType type, String name, Nullability nullability, int precision,
