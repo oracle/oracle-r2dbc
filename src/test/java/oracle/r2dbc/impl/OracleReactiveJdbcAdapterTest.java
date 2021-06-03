@@ -50,18 +50,20 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.DRIVER;
 import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
+
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
 import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.user;
+
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Verifies that
@@ -174,32 +176,88 @@ public class OracleReactiveJdbcAdapterTest {
   /**
    * Verifies that
    * {@link OracleReactiveJdbcAdapter#createDataSource(ConnectionFactoryOptions)}
-   * handles the {@link OracleConnection#CONNECTION_PROPERTY_TNS_ADMIN} property
-   * correctly. This property configures a file system path to a
+   * handles Oracle Net Descriptors and the
+   * {@link OracleConnection#CONNECTION_PROPERTY_TNS_ADMIN} property
+   * correctly. The TNS ADMIN property configures a file system path to a
    * directory containing tnsnames.ora and ojdbc.properties files. If the TNS
-   * admin property is handled correctly, then TNS descriptors should be read
+   * admin property is handled correctly, then descriptors should be read
    * from tnsnames.ora, and connection properties should be read from
    * ojdbc.properties.
    */
   @Test
   public void testTnsAdmin() throws IOException {
 
-    // Create a tnsnames.ora file with a the TNS descriptor
+    // Create an Oracle Net Descriptor
+    String descriptor = String.format(
+      "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=tcp))" +
+        "(CONNECT_DATA=(SERVICE_NAME=%s)))",
+      host(), port(), serviceName());
+
+    // Create a tnsnames.ora file with an alias for the descriptor
     Files.writeString(Path.of("tnsnames.ora"),
-      String.format("test_alias=" +
-          "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=tcp))" +
-          "(CONNECT_DATA=(SERVICE_NAME=%s)))",
-          host(), port(), serviceName()),
+      String.format("test_alias=" + descriptor),
       StandardOpenOption.CREATE_NEW);
+
     try {
-      // Expect to connect with the tnsnames.ora file, when a URL specifies
-      // it's path and an alias, along with a user and password.
+      // Expect to connect with the descriptor in the R2DBC URL
       awaitNone(awaitOne(
         ConnectionFactories.get(String.format(
-          "r2dbc:oracle://%s:%s@%s?TNS_ADMIN=%s",
+          "r2dbc:oracle://%s:%s@?oracleNetDescriptor=%s",
+          user(), password(), descriptor))
+          .create())
+        .close());
+      awaitNone(awaitOne(
+        ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
+          "r2dbc:oracle://@?oracleNetDescriptor=%s", descriptor))
+          .mutate()
+          .option(USER, user())
+          .option(PASSWORD, password())
+          .build())
+          .create())
+        .close());
+
+      // Expect to connect with the tnsnames.ora file, when a URL specifies
+      // the file path and an alias
+      awaitNone(awaitOne(
+        ConnectionFactories.get(String.format(
+          "r2dbc:oracle://%s:%s@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
           user(), password(), "test_alias", System.getProperty("user.dir")))
           .create())
           .close());
+      awaitNone(awaitOne(
+        ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
+          "r2dbc:oracle://@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
+          "test_alias", System.getProperty("user.dir")))
+          .mutate()
+          .option(USER, user())
+          .option(PASSWORD, password())
+          .build())
+          .create())
+        .close());
+
+      // Expect IllegalArgumentException if HOST, PORT, DATABASE, or SSL options
+      // are provided with a descriptor
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get(
+          "r2dbc:oracle://"+host()+"?oracleNetDescriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle://"
+            +host()+":"+port()+"?oracleNetDescriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle://"+host()+":"+port()+"/"
+          +serviceName()+"?oracleNetDescriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle://"+host()+"/"
+          +serviceName()+"?oracleNetDescriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbc:oracle:///"
+            +serviceName()+"?oracleNetDescriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get("r2dbcs:oracle://" + // r2dbcs is SSL=true
+          "?oracleNetDescriptor="+descriptor));
+      assertThrows(IllegalArgumentException.class, () ->
+        ConnectionFactories.get(
+          "r2dbc:oracle://?oracleNetDescriptor="+descriptor+"&ssl=true"));
 
       // Create an ojdbc.properties file containing the user name
       Files.writeString(Path.of("ojdbc.properties"),
@@ -211,7 +269,7 @@ public class OracleReactiveJdbcAdapterTest {
         // specifies a user, and a standard option specifies the password.
         awaitNone(awaitOne(
           ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
-            "r2dbc:oracle://%s?TNS_ADMIN=%s",
+            "r2dbc:oracle://?oracleNetDescriptor=%s&TNS_ADMIN=%s",
             "test_alias", System.getProperty("user.dir")))
             .mutate()
             .option(PASSWORD, password())
