@@ -268,29 +268,31 @@ public class OracleResultImplTest {
         });
 
       // Expect 2 rows from SELECT of 2 rows
-      consumeOne(connection.createStatement(
-        "SELECT x,y FROM testMap WHERE x = 0 ORDER BY y")
-        .execute(),
-        selectResult -> {
+      awaitMany(asList(asList(0, 1), asList(0, 2)),
+        Mono.from(connection.createStatement(
+          "SELECT x,y FROM testMap WHERE x = 0 ORDER BY y")
+          .execute())
+          .flatMapMany(selectResult -> {
+            // Expect IllegalArgumentException for a null mapping function
+            assertThrows(
+              IllegalArgumentException.class, () -> selectResult.map(null));
 
-          // Expect IllegalArgumentException for a null mapping function
-          assertThrows(
-            IllegalArgumentException.class, () -> selectResult.map(null));
+            Publisher<List<Integer>> selectRowPublisher =
+              selectResult.map((row, metadata) ->
+                asList(
+                  row.get("x", Integer.class),
+                  row.get("y", Integer.class)));
 
-          Publisher<List<?>> selectRowPublisher =
-            selectResult.map((row, metadata) ->
-              asList(row.get("x", Integer.class), row.get("y", Integer.class)));
-          awaitMany(
-            asList(asList(0, 1), asList(0, 2)), selectRowPublisher);
+            // Expect IllegalStateException from multiple Result consumptions.
+            assertThrows(IllegalStateException.class,
+              () -> selectResult.map((row, metadata) -> "unexpected"));
+            assertThrows(IllegalStateException.class, selectResult::getRowsUpdated);
 
-          // Expect IllegalStateException from multiple Result consumptions.
-          assertThrows(IllegalStateException.class,
-            () -> selectResult.map((row, metadata) -> "unexpected"));
-          assertThrows(IllegalStateException.class, selectResult::getRowsUpdated);
-
-          // Expect row data publisher to reject multiple subscribers
-          awaitError(IllegalStateException.class, selectRowPublisher);
-        });
+            return Flux.from(selectRowPublisher)
+              .doFinally(signalType ->
+                // Expect row data publisher to reject multiple subscribers
+                awaitError(IllegalStateException.class, selectRowPublisher));
+          }));
 
       // Expect a Row to not be valid outside of the mapping function
       List<Row> rows = awaitMany(Flux.from(connection.createStatement(
@@ -302,39 +304,16 @@ public class OracleResultImplTest {
       assertThrows(IllegalStateException.class, () -> row0.get(1));
       Row row1 = rows.get(1);
       assertThrows(IllegalStateException.class, () -> row1.get(0));
-      assertThrows(IllegalStateException.class, () -> row1.get("y"));
-
-      consumeOne(connection.createStatement(
-        "SELECT x,y FROM testMap WHERE x = 0 ORDER BY y")
-        .execute(),
-        select2Result -> {
-          assertThrows(
-            IllegalArgumentException.class, () -> select2Result.map(null));
-
-          Publisher<List<?>> select2RowPublisher =
-            select2Result.map((row, metadata) ->
-              asList(row.get("x", Integer.class), row.get("y", Integer.class)));
-          awaitMany(
-            asList(asList(0, 1), asList(0, 2)), select2RowPublisher);
-
-          // Expect IllegalStateException from multiple Result consumptions.
-          assertThrows(IllegalStateException.class,
-            () -> select2Result.map((row, metadata) -> "unexpected"));
-          assertThrows(IllegalStateException.class, select2Result::getRowsUpdated);
-
-          // Expect row data publisher to reject multiple subscribers
-          awaitError(IllegalStateException.class, select2RowPublisher);
-        });
+      assertThrows(IllegalStateException.class, () -> row1.get("y"));;
 
       // Expect onError for a mapping function that throws
       RuntimeException thrown = new RuntimeException("Expected");
-      consumeOne(connection.createStatement(
+      awaitMany(asList(Signal.next(asList(0, 1)), Signal.error(thrown)),
+        Mono.from(connection.createStatement(
         "SELECT x,y FROM testMap WHERE x = 0 ORDER BY y")
-        .execute(),
-        select3Result -> {
-          awaitMany(
-            asList(Signal.next(asList(0, 1)), Signal.error(thrown)),
-            Flux.from(select3Result.map((row, metadata) -> {
+        .execute())
+        .flatMapMany(select3Result ->
+          Flux.from(select3Result.map((row, metadata) -> {
               if (row.get("y", Integer.class) == 1) {
                 return asList(
                   row.get("x", Integer.class), row.get("y", Integer.class));
@@ -342,16 +321,15 @@ public class OracleResultImplTest {
               else {
                 throw thrown;
               }
-            })).materialize());
-        });
+            }))
+            .materialize()));
 
       // Expect onError for a mapping function that outputs null
-      consumeOne(connection.createStatement(
-        "SELECT x,y FROM testMap WHERE x = 0 ORDER BY y")
-        .execute(),
-        select4Result -> {
-          List<Signal<List<Integer>>> signals =
-            awaitMany(
+      List<Signal<List<Integer>>> signals = awaitMany(Mono.from(
+        connection.createStatement(
+          "SELECT x,y FROM testMap WHERE x = 0 ORDER BY y")
+          .execute())
+          .flatMapMany(select4Result ->
               Flux.from(select4Result.map((row, metadata) -> {
                 if (row.get("y", Integer.class) == 1) {
                   return asList(
@@ -360,31 +338,32 @@ public class OracleResultImplTest {
                 else {
                   return null;
                 }
-              })).materialize());
-          assertEquals(signals.get(0).get(), asList(0, 1));
-          assertEquals(
-            signals.get(1).getThrowable().getClass(),
-            NullPointerException.class);
-        });
+              })).materialize()));
+      assertEquals(signals.get(0).get(), asList(0, 1));
+      assertEquals(
+        signals.get(1).getThrowable().getClass(),
+        NullPointerException.class);
 
       // Expect no rows from DELETE
-      consumeOne(connection.createStatement(
+      awaitNone(Mono.from(connection.createStatement(
         "DELETE FROM testMap WHERE x <>:y")
         .bind("y", 99)
-        .execute(),
-        deleteResult -> {
+        .execute())
+        .flatMap(deleteResult -> {
+
           Publisher<Object> deleteRowPublisher =
             deleteResult.map((row, metatdata) -> row.get("z"));
-          awaitNone(deleteRowPublisher);
 
           // Expect IllegalStateException from multiple Result consumptions.
           assertThrows(IllegalStateException.class,
             () -> deleteResult.map((row, metadata) -> "unexpected"));
           assertThrows(IllegalStateException.class, deleteResult::getRowsUpdated);
 
-          // Expect row data publisher to reject multiple subscribers
-          awaitError(IllegalStateException.class, deleteRowPublisher);
-        });
+          return Mono.from(deleteRowPublisher)
+            .doOnTerminate(() ->
+              // Expect row data publisher to reject multiple subscribers
+              awaitError(IllegalStateException.class, deleteRowPublisher));
+        }));
     }
     finally {
       tryAwaitExecution(connection.createStatement("DROP TABLE testMap"));
