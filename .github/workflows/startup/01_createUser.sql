@@ -40,6 +40,6 @@ GRANT SELECT ON v_$open_cursor TO r2dbc_test_user;
 GRANT SELECT ON v_$transaction TO r2dbc_test_user;
 
 CREATE USER test IDENTIFIED BY test;
-GRANT connect, resource, unlimited tablespace, select_open_cursor TO test;
+GRANT connect, create session, resource, unlimited tablespace, select_open_cursor TO test;
 ALTER USER test DEFAULT TABLESPACE users;
 ALTER USER test TEMPORARY TABLESPACE temp;
