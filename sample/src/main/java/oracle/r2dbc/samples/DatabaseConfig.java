@@ -61,7 +61,7 @@ public class DatabaseConfig {
   static final int PORT = Integer.parseInt(CONFIG.getProperty("PORT"));
 
   /** Service name of an Oracle Database */
-  static final String SERVICE_NAME = CONFIG.getProperty("SERVICE_NAME");
+  static final String SERVICE_NAME = CONFIG.getProperty("DATABASE");
 
   /** User name that connects to an Oracle Database */
   static final String USER = CONFIG.getProperty("USER");
