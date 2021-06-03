@@ -135,7 +135,9 @@ abstract class OracleResultImpl implements Result {
         return Flux.<T>from(adapter.publishRows(resultSet, jdbcRow ->
           mappingFunction.apply(
             new OracleRowImpl(jdbcRow, metadata, adapter), metadata)))
-          .doFinally(signalType ->
+          .doOnTerminate(() ->
+            runOrHandleSQLException(jdbcStatement::close))
+          .doOnCancel(() ->
             runOrHandleSQLException(jdbcStatement::close));
       }
     };

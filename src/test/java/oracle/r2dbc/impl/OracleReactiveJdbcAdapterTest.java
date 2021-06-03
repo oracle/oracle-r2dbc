@@ -30,6 +30,8 @@ import oracle.jdbc.datasource.OracleDataSource;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URL;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -196,6 +198,11 @@ public class OracleReactiveJdbcAdapterTest {
       String.format("test_alias=" + descriptor),
       StandardOpenOption.CREATE_NEW);
 
+    // Get the current working directory, with percent encodings to replace
+    // any characters that are invalid in a URL
+    String userDir = System.getProperty("user.dir")
+      .replace(" ", "%20");
+
     try {
       // Expect to connect with the descriptor in the R2DBC URL
       awaitNone(awaitOne(
@@ -219,13 +226,14 @@ public class OracleReactiveJdbcAdapterTest {
       awaitNone(awaitOne(
         ConnectionFactories.get(String.format(
           "r2dbc:oracle://%s:%s@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
-          user(), password(), "test_alias", System.getProperty("user.dir")))
+          user(), password(), "test_alias", userDir))
           .create())
           .close());
       awaitNone(awaitOne(
-        ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
-          "r2dbc:oracle://@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
-          "test_alias", System.getProperty("user.dir")))
+        ConnectionFactories.get(ConnectionFactoryOptions.parse(
+          String.format(
+            "r2dbc:oracle://@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
+            "test_alias", userDir))
           .mutate()
           .option(USER, user())
           .option(PASSWORD, password())
@@ -268,7 +276,7 @@ public class OracleReactiveJdbcAdapterTest {
         awaitNone(awaitOne(
           ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
             "r2dbc:oracle://?oracleNetDescriptor=%s&TNS_ADMIN=%s",
-            "test_alias", System.getProperty("user.dir")))
+            "test_alias", userDir))
             .mutate()
             .option(PASSWORD, password())
             .build())
