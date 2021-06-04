@@ -59,7 +59,7 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # database has started.
 # The database port number, 1521, is mapped to the host system. The Oracle
 # R2DBC test suite is configured to connect with this port.
-docker run -d --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database:18.4.0-xe
+docker run --name test_db --detach --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database:18.4.0-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "done" in the startup directory. When that file exists, it means
@@ -67,6 +67,7 @@ docker run -d --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database
 echo "Waiting for database to start..."
 until [ -f $startUpScripts/done ]
 do
+  docker logs --since 3s test_db
   sleep 3
 done
 
