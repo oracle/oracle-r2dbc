@@ -81,6 +81,16 @@ final class OracleR2dbcExceptions {
   }
 
   /**
+   * Checks if a {@code jdbcConnection} is open, and throws an exception if the
+   * check fails.
+   * @throws IllegalStateException If {@code jdbcConnection} is closed
+   */
+  static void requireOpenConnection(java.sql.Connection jdbcConnection) {
+    if (getOrHandleSQLException(jdbcConnection::isClosed))
+      throw new IllegalStateException("Connection is closed");
+  }
+
+  /**
    * <p>
    * Converts a {@link SQLException} into an {@link R2dbcException}. This
    * method a provides error mapping for Oracle R2DBC code that must handle

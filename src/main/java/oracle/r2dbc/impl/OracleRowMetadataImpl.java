@@ -24,6 +24,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.RowMetadata;
 
+import java.sql.ParameterMetaData;
 import java.sql.ResultSetMetaData;
 import java.util.AbstractCollection;
 import java.util.Arrays;
@@ -35,7 +36,9 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.function.IntFunction;
+import java.util.function.IntPredicate;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 
@@ -89,27 +92,42 @@ final class OracleRowMetadataImpl implements RowMetadata {
 
   /**
    * Constructs a new instance which supplies metadata from the specified
-   * {@code resultSetMetaData}.
-   * @param resultSetMetaData Metadata from the Oracle JDBC Driver.
+   * {@code columnMetadata}.
+   * @param columnMetadata Metadata from each column in a row. Not null.
+   * Retained. Not modified.
    */
-  OracleRowMetadataImpl(ResultSetMetaData resultSetMetaData) {
+  OracleRowMetadataImpl(OracleColumnMetadataImpl[] columnMetadata) {
+    // TODO: Use TreeMap with case insensitive comparator?
+    columnNameIndexes = new HashMap<>(columnMetadata.length);
+    for (int i = 0; i < columnMetadata.length; i++) {
+      // Store lower case names for case insensitivity
+      columnNameIndexes.putIfAbsent(
+        columnMetadata[i].getName().toLowerCase(), i);
+    }
+
+    columnMetadataList =
+      Collections.unmodifiableList(Arrays.asList(columnMetadata));
+    columnNames = new ColumnNamesCollection();
+  }
+
+  /**
+   * Creates {@code RowMetadata} that supplies column metadata from a
+   * JDBC {@code ResultSetMetaData} object.
+   * @param resultSetMetaData JDBC meta data. Not null. Retained.
+   * @return R2DBC {@code RowMetadata}. Not null. Not retained.
+   */
+  static OracleRowMetadataImpl createRowMetadata(ResultSetMetaData resultSetMetaData) {
     int columnCount =
       getOrHandleSQLException(resultSetMetaData::getColumnCount);
     OracleColumnMetadataImpl[] columnMetadataArray =
       new OracleColumnMetadataImpl[columnCount];
 
-    columnNameIndexes = new HashMap<>(columnCount);
     for (int i = 0; i < columnCount; i++) {
       columnMetadataArray[i] =
         OracleColumnMetadataImpl.fromResultSetMetaData(resultSetMetaData, i);
-      // Store lower case names for case insensitivity
-      columnNameIndexes.putIfAbsent(
-        columnMetadataArray[i].getName().toLowerCase(), i);
     }
 
-    columnMetadataList =
-      Collections.unmodifiableList(Arrays.asList(columnMetadataArray));
-    columnNames = new ColumnNamesCollection();
+    return new OracleRowMetadataImpl(columnMetadataArray);
   }
 
   /**
@@ -186,7 +204,7 @@ final class OracleRowMetadataImpl implements RowMetadata {
   /**
    * Returns the 0-based index of the column with the specified name. This
    * method implements a case-insensitive column name match. If more than one
-   * column has a matching name, this method returns lowest index of a
+   * column has a matching name, this method returns the lowest index of a
    * matching column.
    * @param name The name of a column
    * @return The index of the named column within a row, or {@code -1} if no

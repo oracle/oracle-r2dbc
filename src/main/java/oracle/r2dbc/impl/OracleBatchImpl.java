@@ -24,22 +24,16 @@ package oracle.r2dbc.impl;
 import java.sql.Connection;
 import java.util.LinkedList;
 import java.util.Queue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiFunction;
 
 import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.R2dbcException;
-import io.r2dbc.spi.Result;
-import io.r2dbc.spi.Row;
-import io.r2dbc.spi.RowMetadata;
-import io.r2dbc.spi.Statement;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 
 /**
  * <p>
@@ -72,7 +66,7 @@ final class OracleBatchImpl implements Batch {
    * Ordered sequence of SQL commands that have been added to this batch. May
    * be empty.
    */
-  private Queue<Statement> statements = new LinkedList<>();
+  private Queue<OracleStatementImpl> statements = new LinkedList<>();
 
   /**
    * Constructs a new batch that uses the specified {@code adapter} to execute
@@ -96,6 +90,7 @@ final class OracleBatchImpl implements Batch {
    */
   @Override
   public Batch add(String sql) {
+    requireOpenConnection(jdbcConnection);
     requireNonNull(sql, "sql is null");
     statements.add(new OracleStatementImpl(adapter, jdbcConnection, sql));
     return this;
@@ -138,126 +133,47 @@ final class OracleBatchImpl implements Batch {
    * individually executing each statement in this batch.
    */
   @Override
-  public Publisher<? extends Result> execute() {
-    Queue<Statement> currentStatements = statements;
+  public Publisher<OracleResultImpl> execute() {
+    requireOpenConnection(jdbcConnection);
+    Queue<OracleStatementImpl> currentStatements = statements;
     statements = new LinkedList<>();
-
-    AtomicBoolean isSubscribed = new AtomicBoolean(false);
-    return Flux.defer(() -> isSubscribed.compareAndSet(false, true)
-      ? executeBatch(currentStatements)
-      : Mono.error(new IllegalStateException(
-          "Multiple subscribers are not supported by the Oracle R2DBC" +
-            " Batch.execute() publisher")));
-  }
-
-  /**
-   * Executes each {@code Statement} in a {@code Queue} of {@code statements}.
-   * A {@code Statement} is not executed until the {@code Result} of any
-   * previous {@code Statement} is fully-consumed.
-   * @param statements {@code Statement}s to execute. Not null.
-   * @return A {@code Publisher} of each {@code Statement}'s {@code Result}.
-   * Not null.
-   */
-  private static Publisher<? extends Result> executeBatch(
-    Queue<Statement> statements) {
-
-    // Reference a Publisher that terminates when the previous Statement's
-    // Result has been consumed.
-    AtomicReference<Publisher<Void>> previous =
-      new AtomicReference<>(Mono.empty());
-
-    return Flux.fromIterable(statements)
-      .concatMap(statement -> {
-
-        // Complete when this statement's result is consumed
-        CompletableFuture<Void> next = new CompletableFuture<>();
-
-        return Flux.from(statement.execute())
-          // Delay execution by delaying Publisher.subscribe(Subscriber) until the
-          // previous statement's result is consumed.
-          .delaySubscription(
-            // Update the reference; This statement is now the "previous"
-            // statement.
-            previous.getAndSet(Mono.fromCompletionStage(next)))
-          // Batch result completes the "next" future when fully consumed.
-          .map(result -> new BatchResult(next, result));
-      });
+    return publishBatch(currentStatements);
   }
 
   /**
    * <p>
-   * A {@code Result} that completes a {@link CompletableFuture} when it has
-   * been fully consumed. Instances of {@code BatchResult} are used by Oracle
-   * R2DBC to ensure that statement execution and row data processing do
-   * not occur concurrently; The completion of the future signals that the row
-   * data of a result has been fully consumed, and that no more database
-   * calls will be initiated to fetch additional rows.
+   * Publish a batch of {@code Result}s from {@code statements}. Each
+   * {@code Result} is published serially with the consumption of the
+   * previous {@code Result}.
    * </p><p>
-   * Instances of {@code BatchResult} delegate invocations of
-   * {@link #getRowsUpdated()} and {@link #map(BiFunction)} to a
-   * {@code Result} provided on construction; The behavior of {@code Publisher}s
-   * returned by these methods is identical to those returned by the delegate
-   * {@code Result}.
+   * This method returns an empty {@code Publisher} if {@code statements} is
+   * empty. Otherwise, this method dequeues the next {@code Statement} and
+   * executes it for a {@code Result}. After the {@code Result} has been
+   * fully consumed, this method is invoked recursively to publish the {@code
+   * Result}s of remaining {@code statements}.
    * </p>
+   * @param statements A batch to executed.
+   * @return {@code Publisher} of {@code statements} {@code Result}s
    */
-  private static final class BatchResult implements Result {
+  private static Publisher<OracleResultImpl> publishBatch(
+    Queue<OracleStatementImpl> statements) {
 
-    /** Completed when this {@code BatchResult} is fully consumed */
-     final CompletableFuture<Void> consumeFuture;
+    OracleStatementImpl next = statements.poll();
 
-    /** Delegate {@code Result} that provides row data or an update count */
-    final Result delegateResult;
+    if (next != null) {
+      AtomicReference<OracleResultImpl> lastResult =
+        new AtomicReference<>(null);
 
-    /**
-     * Constructs a new result that completes a {@code consumeFuture} when the
-     * row data or update count of a {@code delegateResult} has been fully
-     * consumed.
-     * @param consumeFuture Future completed upon consumption
-     * @param delegateResult Result of row data or an update count
-     */
-    BatchResult(CompletableFuture<Void> consumeFuture, Result delegateResult) {
-      this.consumeFuture = consumeFuture;
-      this.delegateResult = delegateResult;
+      return Flux.from(next.execute())
+        .doOnNext(lastResult::set)
+        .concatWith(Flux.defer(() ->
+          Mono.from(lastResult.get().onConsumed())
+            .thenMany(publishBatch(statements))));
     }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Immediately completes the {@link #consumeFuture} and then returns the
-     * update count {@code Publisher} of the {@link #delegateResult}. After
-     * returning an update count {@code Publisher}, the {@link #delegateResult}
-     * can not initiate any more database calls (based on the assumption
-     * noted below).
-     * </p>
-     * @implNote It is assumed that the {@link #delegateResult} will throw
-     * {@link IllegalStateException} upon multiple attempts to consume it, and
-     * this method does not check for multiple consumptions.
-     */
-    @Override
-    public Publisher<Integer> getRowsUpdated() {
-      consumeFuture.complete(null);
-      return Flux.from(delegateResult.getRowsUpdated());
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Completes the {@link #consumeFuture} after the row data {@code
-     * Publisher} of the {@link #delegateResult} emits a terminal signal or
-     * has it's {@code Subscription} cancelled. After emitting a terminal
-     * signal or having it's {@code Subscription} cancelled, the
-     * {@link #delegateResult} can not initiate any more database calls.
-     * </p>
-     * @implNote It is assumed that the {@link #delegateResult} will throw
-     * {@link IllegalStateException} upon multiple attempts to consume it, and
-     * this method does not check for multiple consumptions.
-     */
-    @Override
-    public <T> Publisher<T> map(
-      BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
-      return Flux.<T>from(delegateResult.map(mappingFunction))
-        .doFinally(signalType -> consumeFuture.complete(null));
+    else {
+      return Mono.empty();
     }
   }
+
 }
 
