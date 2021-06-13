@@ -83,4 +83,4 @@ echo "USER=test" >> src/test/resources/config.properties
 echo "PASSWORD=test" >> src/test/resources/config.properties
 echo "CONNECT_TIMEOUT=30" >> src/test/resources/config.properties
 echo "SQL_TIMEOUT=30" >> src/test/resources/config.properties
-mvn clean compile test -Djava.util.concurrent.ForkJoinPool.common.parallelism=4
+mvn clean compile test -Djava.util.concurrent.ForkJoinPool.common.parallelism=1
