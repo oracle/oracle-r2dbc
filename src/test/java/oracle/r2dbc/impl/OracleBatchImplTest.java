@@ -28,8 +28,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import static java.util.Arrays.asList;
-import static oracle.r2dbc.DatabaseConfig.connectTimeout;
-import static oracle.r2dbc.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
@@ -59,7 +59,7 @@ public class OracleBatchImplTest {
       assertThrows(IllegalArgumentException.class, () -> batch.add(null));
 
       // Expect add to return the same object
-      assertTrue(batch == batch.add("SELECT x FROM dual"));
+      assertTrue(batch == batch.add("SELECT x FROM sys.dual"));
     }
     finally {
       awaitNone(connection.close());
@@ -82,7 +82,7 @@ public class OracleBatchImplTest {
 
       // Expect batch of 1 to emit 1 value
       awaitOne(1, Flux.from(batch.add(
-        "SELECT 1 FROM dual")
+        "SELECT 1 FROM sys.dual")
         .execute())
         .flatMap(result ->
           result.map((row, metadata) -> row.get(0, Integer.class))));
@@ -92,11 +92,11 @@ public class OracleBatchImplTest {
 
       // Expect statements to execute in order
       awaitMany(asList(1, 2, 3, 4, 5),
-        Flux.from(batch.add("SELECT 1 FROM dual")
-          .add("SELECT 2 FROM dual")
-          .add("SELECT 3 FROM dual")
-          .add("SELECT 4 FROM dual")
-          .add("SELECT 5 FROM dual")
+        Flux.from(batch.add("SELECT 1 FROM sys.dual")
+          .add("SELECT 2 FROM sys.dual")
+          .add("SELECT 3 FROM sys.dual")
+          .add("SELECT 4 FROM sys.dual")
+          .add("SELECT 5 FROM sys.dual")
           .execute())
           .flatMap(result ->
             result.map((row, metadata) -> row.get(0, Integer.class))));

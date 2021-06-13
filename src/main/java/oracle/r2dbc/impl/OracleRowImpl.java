@@ -33,6 +33,7 @@ import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 
@@ -210,6 +211,14 @@ final class OracleRowImpl implements Row {
     requireNonNull(name, "name must not be null");
     requireNonNull(type, "type must not be null");
     return convertColumnValue(getColumnIndex(name), type);
+  }
+
+  /**
+   * Returns the metadata of this {@code Row}.
+   * @return Metadata of this {@code Row}
+   */
+  OracleRowMetadataImpl metadata() {
+    return rowMetadata;
   }
 
   /**

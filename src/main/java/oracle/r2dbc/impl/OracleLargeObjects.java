@@ -152,15 +152,8 @@ final class OracleLargeObjects {
 
       if (isSubscribed.compareAndSet(false, true)) {
         Flux.from(contentPublisher)
-          .doFinally(signalType -> {
-            switch (signalType) {
-              case CANCEL:
-              case ON_COMPLETE:
-              case ON_ERROR:
-                Mono.from(releasePublisher)
-                  .subscribe();
-            }
-          })
+          .doOnTerminate(() -> Mono.from(releasePublisher).subscribe())
+          .doOnCancel(() -> Mono.from(releasePublisher).subscribe())
           .subscribe(subscriber);
       }
       else {

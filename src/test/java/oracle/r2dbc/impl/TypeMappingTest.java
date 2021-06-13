@@ -36,13 +36,13 @@ import reactor.core.publisher.Mono;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
+import java.sql.RowId;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.Month;
 import java.time.OffsetDateTime;
 import java.time.Period;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.function.BiConsumer;
@@ -50,15 +50,16 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
-import static oracle.r2dbc.DatabaseConfig.connectTimeout;
-import static oracle.r2dbc.DatabaseConfig.databaseVersion;
-import static oracle.r2dbc.DatabaseConfig.sharedConnection;
-import static oracle.r2dbc.DatabaseConfig.sqlTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
+import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
-import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * <p>
@@ -149,7 +150,7 @@ public class TypeMappingTest {
         "LONG");
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -209,7 +210,7 @@ public class TypeMappingTest {
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -253,7 +254,7 @@ public class TypeMappingTest {
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -320,7 +321,7 @@ public class TypeMappingTest {
 
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -329,7 +330,7 @@ public class TypeMappingTest {
    * Verifies the implementation of Java to SQL and SQL to Java type mappings
    * for row ID data types. The R2DBC 0.8.3 Specification does not contain
    * mapping guidelines for row ID data types. The Oracle R2DBC Driver is
-   * expected to map these types to {@link String} values of base 64 characters.
+   * expected to map these types to {@link java.sql.RowId}.
    *</p>
    */
   @Test
@@ -337,27 +338,23 @@ public class TypeMappingTest {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      // This rowId String is a base 64 encoded binary value, but it can't be
-      // just any binary value, it must encode the bytes of a valid row ID.
-      // If it were not a valid row ID, the Oracle Database would reject it
-      // when this test uses it as a bind value for an INSERT statement. The
-      // "dual" table is queried to retrieve a valid row ID.
-      String rowId = awaitOne(Mono.from(connection.createStatement(
+      // The "dual" table is queried to retrieve a valid row ID.
+      RowId rowId = awaitOne(Mono.from(connection.createStatement(
         "SELECT rowid FROM dual")
         .execute())
         .flatMap(result ->
           Mono.from(result.map((row, metadata) ->
-            row.get(0, String.class)))
+            row.get(0, RowId.class)))
         ));
 
-      // Expect ROWID and String to map.
+      // Expect ROWID and RowId to map.
       verifyTypeMapping(connection, rowId, "ROWID");
 
-      // Expect UROWID and String to map.
+      // Expect UROWID and RowId to map.
       verifyTypeMapping(connection, rowId, "UROWID");
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 
@@ -373,9 +370,9 @@ public class TypeMappingTest {
   public void testJsonMapping() {
 
     // The JSON data type was introduced in Oracle Database version 21c, so this
-    // test is a no-op if the version is older than 21c.
-    if (databaseVersion() < 21)
-      return;
+    // test is skipped if the version is older than 21c.
+    assumeTrue(databaseVersion() >= 21,
+      "JSON columns are not supported by database versions older than 21");
 
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
@@ -390,7 +387,7 @@ public class TypeMappingTest {
       verifyTypeMapping(connection, oracleJson, "JSON");
     }
     finally {
-      awaitNone(connection.close());
+      tryAwaitNone(connection.close());
     }
   }
 

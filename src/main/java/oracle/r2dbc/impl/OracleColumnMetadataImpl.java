@@ -21,29 +21,26 @@
 
 package oracle.r2dbc.impl;
 
-import java.nio.ByteBuffer;
 import java.sql.JDBCType;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.Types;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.Period;
 
-import io.r2dbc.spi.Blob;
-import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Nullability;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Row;
-import oracle.jdbc.OracleType;
+import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleTypes;
-import oracle.sql.json.OracleJsonObject;
+import oracle.r2dbc.OracleR2dbcTypes;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
+import static oracle.r2dbc.impl.SqlTypeMap.toR2dbcType;
 
 /**
  * <p>
@@ -94,9 +91,25 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
   private static final int LOCAL_DATE_TIME_PRECISION = 29;
 
   /**
-   * The column's SQL type.
+   * The number of characters needed to represent a {@link LocalDate}. This is
+   * the value returned by {@link #getPrecision()} for column types that map to
+   * {@code LocalDate}. The 10 character length format is specified by
+   * {@link LocalDate#toString()} and {@link LocalDate#parse(CharSequence)} as:
+   * <pre>
+   * uuuu-MM-dd
+   * </pre>
    */
-  private final SQLType sqlType;
+  private static final int LOCAL_DATE_PRECISION = 10;
+
+  /**
+   * The column's R2DBC SQL type.
+   */
+  private final Type r2dbcType;
+
+  /**
+   * The column's JDBC SQL type.
+   */
+  private final SQLType jdbcType;
 
   /**
    * The column's Java type mapping, as returned by {@link Row#get(int)} and
@@ -134,8 +147,7 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
   /**
    * Constructs a new instance that supplies column metadata values as
    * specified by parameters to this constructor.
-   * @param sqlType The column's SQL type.
-   * @param javaType The column's Java type mapping. Not null.
+   * @param jdbcType The column's SQL type.
    * @param name The column's name, as specified in the SQL statement that
  *             returned the column. Not null.
    * @param nullability The column's nullability. Not the Java Language
@@ -144,390 +156,22 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
 *                  applicable to the column's type.
    * @param scale The column's scale, or null if scale is not applicable to
    *              the column's type.
+   * @throws IllegalStateException If the {@code jdbcType} is not recognized
    */
   private OracleColumnMetadataImpl(
-    SQLType sqlType, Class<?> javaType, String name, Nullability nullability,
-    Integer precision, Integer scale) {
-    this.sqlType = sqlType;
-    this.javaType = javaType;
+    SQLType jdbcType, String name, Nullability nullability, Integer precision,
+    Integer scale) {
+    this.jdbcType = jdbcType;
     this.name = name;
     this.nullability = nullability;
     this.precision = precision;
     this.scale = scale;
-  }
 
-  /**
-   * <p>
-   * Returns a new instance of {@code ColumnMetaData} with metadata values
-   * derived from a JDBC {@code ResultSetMetaData} object. The returned
-   * metadata object supplies values for the column at the specified
-   * 0-based {@code index}.
-   * </p><p>
-   * This method handles cases where JDBC and R2DBC standards diverge,
-   * returning a metadata object that conforms with R2DBC standards.
-   * </p>
-   *
-   * @param resultSetMetaData Column metadata from JDBC
-   * @param index 0-based column index
-   * @return Metadata for the column at the specified index
-   */
-  static OracleColumnMetadataImpl fromResultSetMetaData(
-    ResultSetMetaData resultSetMetaData, int index) {
-    int jdbcIndex = index + 1;
-    int sqlTypeCode = getOrHandleSQLException(() ->
-      resultSetMetaData.getColumnType(jdbcIndex));
+    this.r2dbcType = toR2dbcType(jdbcType);
+    if (this.r2dbcType == null)
+      throw new IllegalStateException("Unrecognized SQL type:" + jdbcType);
 
-    switch (sqlTypeCode) {
-
-      case Types.BLOB:
-        // Override JDBC's java.sql.Blob mapping to use io.r2dbc.spi.Blob,
-        // and to use an appropriate precision value
-        // (OracleResultSetMetaData.getPrecision(int) returns -1 for BLOB)
-        // Not supporting the ByteBuffer type mapping guideline. See
-        // OracleRowImpl.get(int/String)
-        // Note: The actual precision is (4GB x Database-Block-Size), which
-        //  exceeds Integer.MAX_VALUE. R2DBC SPI uses the Integer type for
-        //  precision values, so using the null value is used for now.
-        return newMetadata(Blob.class, null, resultSetMetaData, jdbcIndex);
-
-      case Types.CLOB:
-      case Types.NCLOB:
-        // Override JDBC's java.sql.Clob and java.sql.NClob mapping to use
-        // io.r2dbc.spi.Clob, and to use an appropriate precision value
-        // (OracleResultSetMetaData.getPrecision(int) returns -1 for CLOB)
-        // Not supporting the String type mapping guideline. See
-        // OracleRowImpl.get(int/String)
-        // Note: The actual precision is (4GB x Database-Block-Size), which
-        //  exceeds Integer.MAX_VALUE. R2DBC SPI uses the Integer type for
-        //  precision values, so using the null value is used for now.
-        return newMetadata(Clob.class, null, resultSetMetaData, jdbcIndex);
-
-      case Types.DATE:
-        // Override JDBC's java.sql.Date type mapping to use LocalDate
-        return newMetadata(LocalDate.class, resultSetMetaData, jdbcIndex);
-
-      case Types.TIMESTAMP:
-      case OracleTypes.TIMESTAMPLTZ:
-        // Override JDBC's java.sql.Timestamp type mapping, and Oracle JDBC's
-        // oracle.sql.TIMESTAMPLTZ type mapping to use LocalDateTime, and to
-        // use an appropriate precision value. Note that the Oracle type
-        // named "DATE" is equivalent to a TIMESTAMP with 0 digits of fractional
-        // second precision, so OracleResultSetMetaData.getColumnType(int)
-        // returns TIMESTAMP for Oracle's "DATE" columns.
-        return newMetadata(LocalDateTime.class, LOCAL_DATE_TIME_PRECISION,
-          resultSetMetaData, jdbcIndex);
-
-      case Types.TIMESTAMP_WITH_TIMEZONE:
-      case OracleTypes.TIMESTAMPTZ:
-        // The JDBC 4.3 Specification does not specify a TIMESTAMP WITH
-        // TIMEZONE mapping. Override JDBC's type mapping, and Oracle JDBC's
-        // oracle.sql.TIMESTAMPLTZ type mapping to use OffsetDateTime, and to
-        // use an appropriate precision value.
-        return newMetadata(OffsetDateTime.class,
-          JDBCType.TIMESTAMP_WITH_TIMEZONE, OFFSET_DATE_TIME_PRECISION,
-          resultSetMetaData, jdbcIndex);
-
-      case Types.VARBINARY:
-        // Override JDBC's byte[] type mapping to use ByteBuffer. Work around
-        // OracleResultSetMetaData implementation of getPrecision(int), which
-        // returns 0 for RAW type columns, but implements
-        // getColumnDisplaySize(int) method to return the RAW column's max
-        // length in bytes.
-        // TODO: Push this logic into the OracleReactiveJdbcAdapter?
-        return newMetadata(ByteBuffer.class,
-          getOrHandleSQLException(() ->
-              resultSetMetaData.getColumnDisplaySize(jdbcIndex)),
-          resultSetMetaData, jdbcIndex);
-
-      case Types.BINARY:
-      case Types.LONGVARBINARY:
-        // Override JDBC's byte[] type mapping to use ByteBuffer. Work around
-        // OracleResultSetMetaData implementation of getPrecision(int), which
-        // returns 0 for RAW type columns. The getColumnDisplaySize(int) method
-        // returns the RAW column's max length in bytes.
-        return newMetadata(ByteBuffer.class, resultSetMetaData, jdbcIndex);
-
-      case OracleTypes.INTERVALYM:
-        // Override Oracle JDBC's oracle.sql.INTERVALYM type mapping to use
-        // Period
-        return newMetadata(Period.class, resultSetMetaData, jdbcIndex);
-
-      case OracleTypes.INTERVALDS:
-        // Override Oracle JDBC's oracle.sql.INTERVALDS type mapping to use
-        // Duration
-        return newMetadata(Duration.class, resultSetMetaData, jdbcIndex);
-
-      case Types.ROWID:
-        // Override JDBC's java.sql.RowId type mapping to use String
-        return newMetadata(String.class, resultSetMetaData, jdbcIndex);
-
-      case OracleTypes.JSON:
-        // Override JDBC's javax.json.JsonValue type mapping to use
-        // OracleJsonValue. Set the precision as null.
-        // OracleResultSetMetaData.getPrecision(int) returns -1 for JSON
-        // TODO: Or require the R2DBC application to have javax.json API on
-        //  classpath? Need to make a decision before 1.0.0 release
-        return newMetadata(
-          OracleJsonObject.class, null, resultSetMetaData, jdbcIndex);
-
-      default:
-        // Derive metadata values directly from JDBC
-        return newMetadata(resultSetMetaData, jdbcIndex);
-    }
-  }
-
-  /**
-   * Returns a new metadata object that supplies values that are directly
-   * mapped from JDBC metadata as follows:
-   * <ul>
-   *   <li>
-   *     {@link ColumnMetadata#getJavaType()} returns the class named by
-   *     {@link ResultSetMetaData#getColumnClassName(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getName()} returns the same value as
-   *     {@link ResultSetMetaData#getColumnLabel(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getNullability()} returns a
-   *     {@link Nullability} enum value equivalent to the {@code int} constant
-   *     returned by {@link ResultSetMetaData#isNullable(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getPrecision()} returns an {@code Integer} with
-   *     the same {@code int} value returned by
-   *     {@link ResultSetMetaData#getPrecision(int)} if the JDBC API indicates
-   *     that precision is applicable by returning a non-zero value, or returns
-   *     {@code null} if the JDBC API indicates that precision is not applicable
-   *     by returning {@code 0}.
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getScale()} returns an {@code Integer} with
-   *     the same {@code int} value returned by
-   *     {@link ResultSetMetaData#getScale(int)} if the JDBC API indicates
-   *     that scale is applicable by returning a non-zero value, or returns
-   *     {@code null} if the JDBC API indicates that scale is not applicable
-   *     by returning {@code 0}.
-   *   </li>
-   * </ul>
-   * @param resultSetMetaData JDBC metadata
-   * @param jdbcIndex 1-based column index
-   * @return Metadata for the specified column
-   */
-  private static OracleColumnMetadataImpl newMetadata(
-    ResultSetMetaData resultSetMetaData, int jdbcIndex)
-    throws R2dbcException {
-    return newMetadata(
-      getJavaType(resultSetMetaData, jdbcIndex),
-      resultSetMetaData,
-      jdbcIndex);
-  }
-
-  /**
-   * Returns a new metadata object with {@link ColumnMetadata#getJavaType()}
-   * returning the specified {@code javaType}, and with all other values
-   * directly mapped from JDBC metadata as follows:
-   * <ul>
-   *   <li>
-   *     {@link ColumnMetadata#getName()} returns the same value as
-   *     {@link ResultSetMetaData#getColumnLabel(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getNullability()} returns a
-   *     {@link Nullability} enum value equivalent to the {@code int} constant
-   *     returned by {@link ResultSetMetaData#isNullable(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getPrecision()} returns an {@code Integer} with
-   *     the same {@code int} value returned by
-   *     {@link ResultSetMetaData#getPrecision(int)} if the JDBC API indicates
-   *     that precision is applicable by returning a non-zero value, or returns
-   *     {@code null} if the JDBC API indicates that precision is not applicable
-   *     by returning {@code 0}.
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getScale()} returns an {@code Integer} with
-   *     the same {@code int} value returned by
-   *     {@link ResultSetMetaData#getScale(int)} if the JDBC API indicates
-   *     that scale is applicable by returning a non-zero value, or returns
-   *     {@code null} if the JDBC API indicates that scale is not applicable
-   *     by returning {@code 0}.
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getNativeTypeMetadata()} returns a
-   *     {@link SQLType} having the same type number as the {@code int}
-   *     value returned by {@link ResultSetMetaData#getColumnType(int)}.
-   *   </li>
-   * </ul>
-   * @param javaType Java type mapping
-   * @param resultSetMetaData JDBC metadata
-   * @param jdbcIndex 1-based column index
-   * @return Metadata for the specified column
-   */
-  private static OracleColumnMetadataImpl newMetadata(
-    Class<?> javaType, ResultSetMetaData resultSetMetaData, int jdbcIndex) {
-    return getOrHandleSQLException(() -> {
-      int precision = resultSetMetaData.getPrecision(jdbcIndex);
-      int scale = resultSetMetaData.getScale(jdbcIndex);
-      return new OracleColumnMetadataImpl(
-        getSqlType(resultSetMetaData, jdbcIndex),
-        javaType,
-        resultSetMetaData.getColumnLabel(jdbcIndex),
-        getNullability(resultSetMetaData, jdbcIndex),
-        precision == 0 ? null : precision,
-        scale == 0 ? null : scale);
-    });
-  }
-
-  /**
-   * Returns a new metadata object with {@link ColumnMetadata#getJavaType()}
-   * returning the specified {@code javaType}, with
-   * {@link ColumnMetadata#getPrecision()} returning the specified
-   * {@code precision}, and with all other values directly mapped from JDBC
-   * metadata as follows:
-   * <ul>
-   *   <li>
-   *     {@link ColumnMetadata#getName()} returns the same value as
-   *     {@link ResultSetMetaData#getColumnLabel(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getNullability()} returns a
-   *     {@link Nullability} enum value equivalent to the {@code int} constant
-   *     returned by {@link ResultSetMetaData#isNullable(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getScale()} returns an {@code Integer} with
-   *     the same {@code int} value returned by
-   *     {@link ResultSetMetaData#getScale(int)} if the JDBC API indicates
-   *     that scale is applicable by returning a non-zero value, or returns
-   *     {@code null} if the JDBC API indicates that scale is not applicable
-   *     by returning {@code 0}.
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getNativeTypeMetadata()} returns a
-   *     {@link SQLType} having the same type number as the {@code int}
-   *     value returned by {@link ResultSetMetaData#getColumnType(int)}.
-   *   </li>
-   * </ul>
-   * @param javaType Java type mapping
-   * @param precision The column's precision, or null if precision is not
-   *                  applicable.
-   * @param resultSetMetaData JDBC metadata
-   * @param jdbcIndex 1-based column index
-   * @return Metadata for the specified column
-   */
-  private static OracleColumnMetadataImpl newMetadata(
-    Class<?> javaType, Integer precision, ResultSetMetaData resultSetMetaData,
-    int jdbcIndex) {
-    return getOrHandleSQLException(() -> {
-      int scale = resultSetMetaData.getScale(jdbcIndex);
-      return new OracleColumnMetadataImpl(
-        getSqlType(resultSetMetaData, jdbcIndex), javaType,
-        resultSetMetaData.getColumnLabel(jdbcIndex),
-        getNullability(resultSetMetaData, jdbcIndex),
-        precision, scale == 0 ? null : scale);
-    });
-  }
-
-
-  /**
-   * Returns a new metadata object with {@link ColumnMetadata#getJavaType()}
-   * returning the specified {@code javaType}, with
-   * {@link ColumnMetadata#getPrecision()} returning the specified
-   * {@code precision}, with {@link ColumnMetadata#getNativeTypeMetadata()}
-   * returning the specified {@code sqlType}, and with all other values
-   * directly mapped from JDBC metadata as follows:
-   * <ul>
-   *   <li>
-   *     {@link ColumnMetadata#getName()} returns the same value as
-   *     {@link ResultSetMetaData#getColumnLabel(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getNullability()} returns a
-   *     {@link Nullability} enum value equivalent to the {@code int} constant
-   *     returned by {@link ResultSetMetaData#isNullable(int)}
-   *   </li>
-   *   <li>
-   *     {@link ColumnMetadata#getScale()} returns an {@code Integer} with
-   *     the same {@code int} value returned by
-   *     {@link ResultSetMetaData#getScale(int)} if the JDBC API indicates
-   *     that scale is applicable by returning a non-zero value, or returns
-   *     {@code null} if the JDBC API indicates that scale is not applicable
-   *     by returning {@code 0}.
-   *   </li>
-   * </ul>
-   * @param javaType Java type mapping
-   * @param precision The column's precision, or null if precision is not
-   *                  applicable.
-   * @param resultSetMetaData JDBC metadata
-   * @param jdbcIndex 1-based column index
-   * @return Metadata for the specified column
-   */
-  private static OracleColumnMetadataImpl newMetadata(
-    Class<?> javaType, SQLType sqlType, Integer precision,
-    ResultSetMetaData resultSetMetaData, int jdbcIndex) {
-    return getOrHandleSQLException(() -> {
-      int scale = resultSetMetaData.getScale(jdbcIndex);
-      return new OracleColumnMetadataImpl(sqlType, javaType,
-        resultSetMetaData.getColumnLabel(jdbcIndex),
-        getNullability(resultSetMetaData, jdbcIndex),
-        precision, scale == 0 ? null : scale);
-    });
-  }
-
-  /**
-   * Returns the Java {@code Class} type mapping of a {@code ResultSetMetaData}
-   * column at the 1-based index specified by {@code jdbcIndex}. This method
-   * maps the class name {@code String} returned by
-   * {@link ResultSetMetaData#getColumnClassName(int)} to the {@code Class}
-   * object that is associated to that name.
-   * @param resultSetMetaData Indicates the Java type mapping for a row of
-   *   columns.
-   * @param jdbcIndex 1-based index of a column
-   * @return The Java type of the specified column.
-   * @throws R2dbcException If a database access error occurs
-   * @throws io.r2dbc.spi.R2dbcNonTransientException If the class loader can not
-   * find a class with the specified {@code className}
-   */
-  private static Class<?> getJavaType(
-    ResultSetMetaData resultSetMetaData, int jdbcIndex) {
-    try {
-      String className = getOrHandleSQLException(() ->
-        resultSetMetaData.getColumnClassName(jdbcIndex));
-      return className == null ? Object.class : Class.forName(className);
-    }
-    catch (ClassNotFoundException columnClassNotFound) {
-      throw OracleR2dbcExceptions.newNonTransientException(
-        "Could not find the Java class type for column at index: "
-          + (jdbcIndex - 1),
-        columnClassNotFound);
-    }
-  }
-
-  /**
-   * Returns the {@code Nullability} of a {@code ResultSetMetaData} column at
-   * the 1-based index specified by {@code jdbcIndex}. This method maps the
-   * {@code int} constant returned by {@link ResultSetMetaData#isNullable(int)}
-   * to the equivalent {@link Nullability} enum value.
-   * @param resultSetMetaData Indicates nullability for a row of columns.
-   * @param jdbcIndex 1-based index of a column
-   * @return The nullability of the specified column.
-   * @throws R2dbcException If a database access error occurs
-   */
-  private static Nullability getNullability(
-    ResultSetMetaData resultSetMetaData, int jdbcIndex) {
-    int nullability = getOrHandleSQLException(() ->
-      resultSetMetaData.isNullable(jdbcIndex));
-
-    switch (nullability) {
-      case ResultSetMetaData.columnNoNulls:
-        return Nullability.NON_NULL;
-      case ResultSetMetaData.columnNullable:
-        return Nullability.NULLABLE;
-      case ResultSetMetaData.columnNullableUnknown:
-      default:
-        return Nullability.UNKNOWN;
-    }
+    this.javaType = r2dbcType.getJavaType();
   }
 
   /**
@@ -566,7 +210,7 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
    */
   @Override
   public SQLType getNativeTypeMetadata() {
-    return sqlType;
+    return jdbcType;
   }
 
   /**
@@ -613,13 +257,233 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
   }
 
   /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by returning the R2DBC {@code Type}.
+   * </p>
+   * @return
+   */
+  @Override
+  public Type getType() {
+    return r2dbcType;
+  }
+
+  /**
+   * <p>
+   * Returns a new instance of {@code ColumnMetaData} with metadata values
+   * derived from a JDBC {@code ResultSetMetaData} object. The returned
+   * {@code ColumnMetaData} supplies values for the column at the specified
+   * 0-based {@code index}.
+   * </p><p>
+   * This method handles cases where JDBC and R2DBC standards diverge,
+   * returning a metadata object that conforms with R2DBC standards.
+   * </p>
+   * @param resultSetMetaData ResultSet metadata from JDBC
+   * @param index 0-based column index
+   * @return {@code ColumnMetaData} for the parameer at the specified  index
+   */
+  static OracleColumnMetadataImpl fromResultSetMetaData(
+    ResultSetMetaData resultSetMetaData, int index) {
+
+    int jdbcIndex = index + 1;
+    SQLType jdbcType = getSqlType(getOrHandleSQLException(() ->
+      resultSetMetaData.getColumnType(jdbcIndex)));
+
+    return getOrHandleSQLException(() -> fromJdbc(jdbcType,
+      resultSetMetaData.getColumnName(jdbcIndex),
+      getNullability(resultSetMetaData.isNullable(jdbcIndex)),
+      jdbcType.equals(JDBCType.VARBINARY) // Oracle JDBC implementation
+        ? resultSetMetaData.getColumnDisplaySize(jdbcIndex)
+        : resultSetMetaData.getPrecision(jdbcIndex),
+      resultSetMetaData.getScale(jdbcIndex)));
+  }
+
+  /**
+   * Creates {@code ColumnMetadata} for an out parameter. The returned
+   * {@code ColumnMetaData} has a specified {@code name} and {@code type}.
+   * The Java type mapping of the returned metadata is obtained by invoking
+   * {@link Type#getJavaType()} on {@code type}. The nullablity is
+   * {@link Nullability#NULLABLE}, as all PL/SQL out parameters may be {@code
+   * null}.
+   * @param name Column name
+   * @param type Column type
+   * @return Column metadata having {@code name} and {@code type}
+   */
+  static OracleColumnMetadataImpl createParameterMetadata(
+    String name, Type type) {
+    return new OracleColumnMetadataImpl(
+      toJdbcType(type), name, Nullability.NULLABLE, null, null);
+  }
+
+  /**
+   * Creates {@code ColumnMetadata} from values of a JDBC
+   * {@code ResultSetMetaDataObject}.
+   * @param type SQL type of a column. Not null.
+   * @param name Name of a column. Not null.
+   * @param nullability Nullability of a column. Not null.
+   * @param precision Precision of a column, or {@code 0} if precision is not
+   * applicable to the column type.
+   * @param scale Scale of a column, or {@code 0} if scale is not applicable
+   * to the column type.
+   * @return {@code ColumnMetadata} derived from JDBC values. Not null.
+   */
+  private static OracleColumnMetadataImpl fromJdbc(
+    SQLType type, String name, Nullability nullability, int precision,
+    int scale) {
+
+    switch (type.getVendorTypeNumber()) {
+      case Types.BLOB:
+        return createBlobMetaData(name, nullability);
+      case Types.CLOB:
+      case Types.NCLOB:
+        return createClobMetaData(type, name, nullability);
+      case Types.DATE:
+        return createDateMetaData(name, nullability);
+      case Types.TIMESTAMP:
+      case OracleTypes.TIMESTAMPLTZ:
+        return createTimestampMetadata(type, name, nullability, scale);
+      case Types.TIMESTAMP_WITH_TIMEZONE:
+      case OracleTypes.TIMESTAMPTZ:
+        return createTimestampWithTimeZoneMetadata(name, nullability, scale) ;
+      case Types.BINARY:
+      case Types.VARBINARY:
+      case Types.LONGVARBINARY:
+        return createBinaryMetaData(type, name, nullability, precision);
+      case OracleTypes.JSON:
+        return createJsonMetaData(name, nullability);
+      default:
+        // Return metadata with the same values as JDBC.
+        return new OracleColumnMetadataImpl(type, name, nullability,
+          // JDBC returns 0 when precision or scale is not applicable
+          precision == 0 ? null : precision,
+          scale == 0 ? null : scale);
+    }
+  }
+
+  /**
+   * Override JDBC's java.sql.Blob mapping to use io.r2dbc.spi.Blob,
+   * and to use an appropriate precision value
+   * (OracleResultSetMetaData.getPrecision(int) returns -1 for BLOB)
+   * Not supporting the ByteBuffer type mapping guideline. See
+   * OracleRowImpl.get(int/String)
+   * Note: The actual precision is (4GB x Database-Block-Size), which
+   *  exceeds Integer.MAX_VALUE. R2DBC SPI uses the Integer type for
+   *  precision values, so using the null value is used for now.
+   */
+  private static OracleColumnMetadataImpl createBlobMetaData(
+    String name, Nullability nullability) {
+    return new OracleColumnMetadataImpl(
+      JDBCType.BLOB, name, nullability, null, null);
+  }
+
+  /**
+   * Override JDBC's java.sql.Clob and java.sql.NClob mapping to use
+   * io.r2dbc.spi.Clob, and to use an appropriate precision value
+   * (OracleResultSetMetaData.getPrecision(int) returns -1 for CLOB)
+   * Not supporting the String type mapping guideline. See
+   * OracleRowImpl.get(int/String)
+   * Note: The actual precision is (4GB x Database-Block-Size), which
+   *  exceeds Integer.MAX_VALUE. R2DBC SPI uses the Integer type for
+   *  precision values, so using the null value is used for now.
+   */
+  private static OracleColumnMetadataImpl createClobMetaData(
+    SQLType sqlType, String name, Nullability nullability) {
+    return new OracleColumnMetadataImpl(
+      sqlType, name, nullability, null, null);
+  }
+
+  /** Override JDBC's java.sql.Date type mapping to use LocalDate */
+  private static OracleColumnMetadataImpl createDateMetaData(
+    String name, Nullability nullability) {
+    return new OracleColumnMetadataImpl(
+      JDBCType.DATE, name, nullability,
+      LOCAL_DATE_PRECISION, null);
+  }
+
+  /**
+   * Override JDBC's java.sql.Timestamp type mapping, and Oracle JDBC's
+   * oracle.sql.TIMESTAMPLTZ type mapping to use LocalDateTime, and to
+   * use an appropriate precision value. Note that the Oracle type
+   * named "DATE" is equivalent to a TIMESTAMP with 0 digits of fractional
+   * second precision, so OracleResultSetMetaData.getColumnType(int)
+   * returns TIMESTAMP for Oracle's "DATE" columns.
+   */
+  private static OracleColumnMetadataImpl createTimestampMetadata(
+    SQLType type, String name, Nullability nullability, int scale) {
+    return new OracleColumnMetadataImpl(
+      type, name, nullability, LOCAL_DATE_TIME_PRECISION, scale);
+  }
+
+  /**
+   * The JDBC 4.3 Specification does not specify a TIMESTAMP WITH
+   * TIMEZONE mapping. Override JDBC's type mapping, and Oracle JDBC's
+   * oracle.sql.TIMESTAMPLTZ type mapping to use OffsetDateTime, and to
+   * use an appropriate precision value.
+   */
+  private static OracleColumnMetadataImpl createTimestampWithTimeZoneMetadata(
+    String name, Nullability nullability, int scale) {
+    return new OracleColumnMetadataImpl(
+      JDBCType.TIMESTAMP_WITH_TIMEZONE, name,
+      nullability, OFFSET_DATE_TIME_PRECISION, scale);
+  }
+
+  /**
+   * Override JDBC's byte[] type mapping to use ByteBuffer. Work around
+   * OracleResultSetMetaData implementation of getPrecision(int), which
+   * returns 0 for RAW type columns, but implements
+   * getColumnDisplaySize(int) method to return the RAW column's max
+   * length in bytes.
+   * TODO: Push this logic into the OracleReactiveJdbcAdapter?
+   */
+  private static OracleColumnMetadataImpl createBinaryMetaData(
+    SQLType sqlType, String name, Nullability nullability, int precision) {
+    return new OracleColumnMetadataImpl(
+      sqlType, name, nullability, precision, null);
+  }
+
+  /**
+   * Override Oracle JDBC's oracle.sql.INTERVALYM type mapping to use
+   * Period
+   */
+  private static OracleColumnMetadataImpl createIntervalYearToMonthMetaData(
+    String name, Nullability nullability, int precision) {
+    return new OracleColumnMetadataImpl(
+      oracle.jdbc.OracleType.INTERVAL_YEAR_TO_MONTH, name, nullability,
+      precision, null);
+  }
+
+  /**
+   * Override Oracle JDBC's oracle.sql.INTERVALDS type mapping to use
+   * Duration
+   */
+  private static OracleColumnMetadataImpl createIntervalDayToSecondMetaData(
+    String name, Nullability nullability, int precision) {
+    return new OracleColumnMetadataImpl(
+      oracle.jdbc.OracleType.INTERVAL_DAY_TO_SECOND, name, nullability,
+      precision, null);
+  }
+
+  /**
+   * Override JDBC's javax.json.JsonValue type mapping to use
+   *  OracleJsonValue. Set the precision as null.
+   *  OracleResultSetMetaData.getPrecision(int) returns -1 for JSON
+   *  TODO: Or require the R2DBC application to have javax.json API on
+   *    classpath? Need to make a decision before 1.0.0 release
+   */
+  private static OracleColumnMetadataImpl createJsonMetaData(
+    String name, Nullability nullability) {
+    return new OracleColumnMetadataImpl(
+      oracle.jdbc.OracleType.JSON, name, nullability, null, null);
+  }
+
+  /**
    * <p>
    * Returns a {@link SQLType} that having the type number returned by
    * {@link ResultSetMetaData#getColumnType(int)} at a 1-based column
    * index specified as {@code jdbcIndex}
    * </p><p>
    * A {@link JDBCType} is returned if one is found to have a matching type
-   * number. Otherwise, an {@link OracleType} is returned if one is found to
+   * number. Otherwise, an {@link OracleR2dbcTypes} is returned if one is found to
    * have a matching type number. Otherwise, {@link JDBCType#OTHER} is
    * returned if no {@link SQLType} is found to have a matching type number.
    * </p>
@@ -627,10 +491,7 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
    * @param jdbcIndex 1-based index of a column
    * @return A {@link SQLType} having the type number of the specified column.
    */
-  private static SQLType getSqlType(ResultSetMetaData resultSetMetaData,
-                                    int jdbcIndex) {
-    int typeNumber = getOrHandleSQLException(() ->
-      resultSetMetaData.getColumnType(jdbcIndex));
+  private static SQLType getSqlType(int typeNumber) {
 
     for (JDBCType jdbcType : JDBCType.values()) {
       Integer vendorTypeNumber = jdbcType.getVendorTypeNumber();
@@ -639,11 +500,34 @@ final class OracleColumnMetadataImpl implements ColumnMetadata {
     }
 
     try {
-      OracleType oracleType = OracleType.toOracleType(typeNumber);
+      oracle.jdbc.OracleType oracleType =
+        oracle.jdbc.OracleType.toOracleType(typeNumber);
       return oracleType != null ? oracleType : JDBCType.OTHER;
     }
     catch (SQLException typeNotFound) {
       return JDBCType.OTHER;
+    }
+  }
+
+  /**
+   * Returns the {@code Nullability} of a {@code ResultSetMetaData} column at
+   * the 1-based index specified by {@code jdbcIndex}. This method maps the
+   * {@code int} constant returned by {@link ResultSetMetaData#isNullable(int)}
+   * to the equivalent {@link Nullability} enum value.
+   * @param resultSetMetaData Indicates nullability for a row of columns.
+   * @param jdbcIndex 1-based index of a column
+   * @return The nullability of the specified column.
+   * @throws R2dbcException If a database access error occurs
+   */
+  private static Nullability getNullability(int jdbcNullability) {
+    switch (jdbcNullability) {
+      case ResultSetMetaData.columnNoNulls:
+        return Nullability.NON_NULL;
+      case ResultSetMetaData.columnNullable:
+        return Nullability.NULLABLE;
+      case ResultSetMetaData.columnNullableUnknown:
+      default:
+        return Nullability.UNKNOWN;
     }
   }
 

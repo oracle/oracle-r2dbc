@@ -53,12 +53,14 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
-import static oracle.r2dbc.DatabaseConfig.connectTimeout;
-import static oracle.r2dbc.DatabaseConfig.host;
-import static oracle.r2dbc.DatabaseConfig.password;
-import static oracle.r2dbc.DatabaseConfig.port;
-import static oracle.r2dbc.DatabaseConfig.serviceName;
-import static oracle.r2dbc.DatabaseConfig.user;
+
+import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.host;
+import static oracle.r2dbc.test.DatabaseConfig.password;
+import static oracle.r2dbc.test.DatabaseConfig.port;
+import static oracle.r2dbc.test.DatabaseConfig.serviceName;
+import static oracle.r2dbc.test.DatabaseConfig.user;
+
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;

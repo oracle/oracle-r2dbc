@@ -4,14 +4,13 @@ The Oracle R2DBC Driver is a Java library that supports reactive programming wit
 
 Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified by the Reactive Relational Database Connectivity (R2DBC) project. The R2DBC SPI exposes Reactive Streams as an abstraction for remote database operations. Reactive Streams is a well defined standard for asynchronous, non-blocking, and back-pressured communication. This standard allows an R2DBC driver to interoperate with other reactive libraries and frameworks, such as Spring, Project Reactor, RxJava, and Akka Streams.
 
-Oracle R2DBC 0.1.0 is the initial release of this driver. Release numbers follow the [Semantic Versioning](https://semver.org) specification. As indicated by the major version number of 0, this is a development release in which the behavior implemented for any API may change.
 
 ### Learn More About R2DBC:
 [R2DBC Project Home Page](https://r2dbc.io)
 
-[R2DBC Javadocs v0.8.2](https://r2dbc.io/spec/0.8.2.RELEASE/api/)
+[R2DBC Javadocs v0.9.0.M1](https://r2dbc.io/spec/0.9.0.M1/api/)
 
-[R2DBC Specification v0.8.2](https://r2dbc.io/spec/0.8.2.RELEASE/spec/html/)
+[R2DBC Specification v0.9.0.M1](https://r2dbc.io/spec/0.9.0.M1/spec/html/)
 
 ### Learn More About Reactive Streams:
 [Reactive Streams Project Home Page](http://www.reactive-streams.org)
@@ -19,6 +18,23 @@ Oracle R2DBC 0.1.0 is the initial release of this driver. Release numbers follow
 [Reactive Streams Javadocs v1.0.3](http://www.reactive-streams.org/reactive-streams-1.0.3-javadoc/org/reactivestreams/package-summary.html)
 
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
+# About This Version
+Oracle R2DBC 0.2.0 updates the implemented SPI version to 0.9.0.M1. With the
+ 0.9.0.M1 SPI update, Oracle R2DBC 0.2.0 introduces support for procedural
+  calls (PL/SQL), the ```Statement.bind(...)``` methods are enhanced to accept
+   ```io.r2dbc.spi.Parameter``` objects, and the 
+   ```Connection.beginTransaction(TransactionDefintion)``` method is 
+    implemented to support named and read-only/read-write transactions.
+
+# Performance Goals
+The primary goal of these early releases of Oracle R2DBC is to support the R2DBC
+ SPI on Oracle Database. The only performance goal is to enable concurrent
+ database calls to be executed by a single thread.
+
+The R2DBC SPI and Oracle's implementation are both pre-production. As these
+ projects mature we will shift our development focus from implementing
+ the SPI to optimizing the implementation.
+
 
 # Installation
 Oracle R2DBC can be built from source using Maven:
@@ -37,7 +53,7 @@ Artifacts can also be found on Maven Central.
 ```
 
 Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime dependencies:
-- R2DBC SPI 0.8.2
+- R2DBC SPI 0.9.0.M1
 - Reactive Streams 1.0.3
 - Project Reactor 3.0.0
 - Oracle JDBC 21.1.0.0 for JDK 11 (ojdbc11.jar)
@@ -112,8 +128,8 @@ This document specifies the behavior of the R2DBC SPI implemented for the
 Oracle Database. This SPI implementation is referred to as the "Oracle R2DBC
 Driver" or "Oracle R2DBC" throughout the remainder of this document.
 
-The Oracle R2DBC Driver implements behavior specified by the R2DBC 0.8.2 
-[Specification](https://r2dbc.io/spec/0.8.2.RELEASE/spec/html/)
+The Oracle R2DBC Driver implements behavior specified by the R2DBC 0.9.0.M1 
+[Specification](https://r2dbc.io/spec/0.9.0.M1/spec/html/)
 and [Javadoc](https://r2dbc.io/spec/0.8.3.RELEASE/api/)
 
 Publisher objects created by Oracle R2DBC implement behavior specified by
@@ -190,6 +206,8 @@ or Oracle JDBC Driver error message](https://docs.oracle.com/en/database/oracle/
 - READ COMMITTED is the default transaction isolation level, and is the
 only level supported in this release.
 - Transaction savepoints are not supported in this release.
+- TransactionDefinition.LOCK_WAIT_TIMEOUT is not supported in this release.
+  - Oracle Database does not support a lock wait timeout that applies to all statements within a transaction.
 
 ### Statements
 - Batch execution is only supported for DML type SQL commands (INSERT/UPDATE/DELETE).
@@ -219,6 +237,36 @@ values for a non-empty set of column names.
   - The Oracle Database SQL Language Reference defines INSERT and UPDATE commands for which a RETURNING INTO clause is supported.
   - INSERT: https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423
   - UPDATE: https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/UPDATE.html#GUID-027A462D-379D-4E35-8611-410F3AC8FDA5
+
+### Procedural Calls
+- Use ```Connection.createStatement(String)``` to create a
+ ```Statement``` that executes a PL/SQL call:
+  ```java
+  connection.createStatement("BEGIN sayHello(:name_in, :greeting_out); END;")
+  ```
+- Register out parameters by invoking ```Statement.bind(int/String, Object)```
+ with an instance of ```io.r2dbc.spi.Parameter``` implementing the 
+  ```io.r2dbc.spi.Parameter.Out``` marker interface:
+  ```java
+  statement.bind("greeting_out", Parameters.out(R2dbcType.VARCHAR))
+  ```
+- Register in out parameters  by invoking
+ ```Statement.bind(int/String, Object)``` with an instance of
+  ```io.r2dbc.spi.Parameter``` implementing both the
+   ```io.r2dbc.spi.Parameter.Out``` and 
+   ```io.r2dbc.spi.Parameter.In``` marker interfaces.
+- Consume out parameters by invoking
+ ```Result.map(BiFunction<Row, RowMetadata>)```:
+  ```java
+  result.map((row,metadata) -> row.get("greeting_out", String.class))
+  ```
+- ```Statement.execute()``` returns a ```Publisher<Result>``` that emits one
+ ```Result``` for each cursor returned by ```DBMS_SQL.RETURN_RESULT```
+    - The order in which a ```Result``` is emitted for a cursor
+     corresponds to the order in which the procedure returns each cursor.
+    - If a procedure returns cursors and also has out parameters, then the 
+    ```Result``` for out parameters is emitted last, after the
+    ```Result``` for each returned cursor.
 
 ### Type Mappings
 - Blob and Clob objects are the default mapping implemented by Row.get(...) for 
