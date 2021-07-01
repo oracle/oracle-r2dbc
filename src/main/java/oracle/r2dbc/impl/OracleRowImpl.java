@@ -254,6 +254,7 @@ final class OracleRowImpl implements Row {
   private <T> T convertColumnValue(int index, Class<T> type) {
     requireSupportedTypeMapping(index, type);
 
+    //TODO Should support type.isAssignableFrom(...) here?
     if (type.equals(ByteBuffer.class))
       return type.cast(getByteBuffer(index));
     else if (type.equals(io.r2dbc.spi.Blob.class))

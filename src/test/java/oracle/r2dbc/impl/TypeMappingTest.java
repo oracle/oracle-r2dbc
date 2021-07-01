@@ -47,6 +47,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -410,13 +411,21 @@ public class TypeMappingTest {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      // Expect NUMBER and Boolean to map.
+      // Expect NUMBER and Boolean to map, with Row.get(...) mapping the
+      // NUMBER column value to BigDecimal
       verifyTypeMapping(connection, true, "NUMBER",
-        row -> assertEquals(BigDecimal.ONE, row.get(0)),
-        row -> assertTrue(row.get(0, Boolean.class)));
+        (expected, actual) -> assertEquals(BigDecimal.ONE, actual));
       verifyTypeMapping(connection, false, "NUMBER",
-        row -> assertEquals(BigDecimal.ZERO, row.get(0)),
-        row -> assertFalse(row.get(0, Boolean.class)));
+        (expected, actual) -> assertEquals(BigDecimal.ZERO, actual));
+
+      // Expect NUMBER and Boolean to map, with Row.get(..., Boolean.class)
+      // mapping the NUMBER column value to Boolean
+      verifyTypeMapping(connection, true, "NUMBER",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertTrue(actual));
+      verifyTypeMapping(connection, false, "NUMBER",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertFalse(actual));
     }
     finally {
       tryAwaitNone(connection.close());
@@ -472,7 +481,7 @@ public class TypeMappingTest {
     Connection connection, T javaValue, String sqlTypeDdl,
     BiConsumer<T, Object> verifyEquals) {
     verifyTypeMapping(connection, javaValue, sqlTypeDdl,
-      row -> verifyEquals.accept(javaValue, row.get("javaValue")));
+      row -> row.get("javaValue"), verifyEquals);
   }
   /**
    * <p>
@@ -494,10 +503,9 @@ public class TypeMappingTest {
    * @param rowVerifiers Verifies the {@code Row} that results from
    * querying back the inserted {@code javaValue}.
    */
-  @SafeVarargs
-  private static <T> void verifyTypeMapping(
+  private static <T, U> void verifyTypeMapping(
     Connection connection, T javaValue, String sqlTypeDdl,
-    Consumer<Row>... rowVerifiers) {
+    Function<Row, U> rowMapper, BiConsumer<T, U> verifyEquals) {
     String table = "verify_" + sqlTypeDdl.replaceAll("[^\\p{Alnum}]", "_");
     try {
       awaitExecution(connection.createStatement(String.format(
@@ -508,15 +516,13 @@ public class TypeMappingTest {
         .bind("javaValue", javaValue).add()
         .bindNull("javaValue", javaValue.getClass()).add());
 
-     awaitOne(Flux.from(connection.createStatement(
-       "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
-       .execute())
-       .flatMap(result ->
-         result.map((row, metadata) -> {
-           for (Consumer<Row> rowVerifier : rowVerifiers)
-             rowVerifier.accept(row);
-           return true;
-         })));
+      verifyEquals.accept(javaValue,
+        awaitOne(Flux.from(connection.createStatement(
+          "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
+          .execute())
+          .flatMap(result ->
+            result.map((row, metadata) -> rowMapper.apply(row))
+          )));
 
       awaitOne(true,
         Flux.from(connection.createStatement(
