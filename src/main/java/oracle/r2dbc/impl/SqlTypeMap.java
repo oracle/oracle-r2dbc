@@ -186,16 +186,16 @@ final class SqlTypeMap {
    * that SQL type. Where the specification defines a Java type that maps to
    * multiple SQL types, the return value of this method is as follows:
    * <ul>
-   *   <li>String -> VARCHAR</li>
-   *   <li>ByteBuffer -> VARBINARY</li>
+   *   <li>{@link String} -> VARCHAR</li>
+   *   <li>{@link ByteBuffer} -> VARBINARY</li>
    * </ul>
    * This method returns non-standard SQL types supported by Oracle
    * Database for the following Java types:
    * <ul>
-   *   <li>Double -> BINARY_DOUBLE</li>
-   *   <li>Float -> BINARY_FLOAT</li>
-   *   <li>Duration -> INTERVAL DAY TO SECOND</li>
-   *   <li>Period -> INTERVAL YEAR TO MONTH</li>
+   *   <li>{@link Double} -> BINARY_DOUBLE</li>
+   *   <li>{@link Float} -> BINARY_FLOAT</li>
+   *   <li>{@link Duration} -> INTERVAL DAY TO SECOND</li>
+   *   <li>{@link Period} -> INTERVAL YEAR TO MONTH</li>
    *   <li>{@link RowId} -> ROWID</li>
    *   <li>{@link OracleJsonObject} -> JSON</li>
    * </ul>

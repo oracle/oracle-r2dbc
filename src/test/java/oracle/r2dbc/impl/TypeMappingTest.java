@@ -46,6 +46,7 @@ import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -59,6 +60,8 @@ import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -393,6 +396,35 @@ public class TypeMappingTest {
 
   /**
    * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * where the Java type is {@link Boolean} and the SQL type is a numeric type.
+   * The R2DBC 0.9.0 Specification only requires that Java {@code Boolean} be
+   * mapped to the SQL BOOLEAN type, however Oracle Database does not support a
+   * BOOLEAN column type. To allow the use of the {@code Boolean} bind
+   * values, Oracle JDBC supports binding the Boolean as a NUMBER. Oracle
+   * R2DBC is expected to expose this functionality as well.
+   *</p>
+   */
+  @Test
+  public void testBooleanNumericMapping() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Expect NUMBER and Boolean to map.
+      verifyTypeMapping(connection, true, "NUMBER",
+        row -> assertEquals(BigDecimal.ONE, row.get(0)),
+        row -> assertTrue(row.get(0, Boolean.class)));
+      verifyTypeMapping(connection, false, "NUMBER",
+        row -> assertEquals(BigDecimal.ZERO, row.get(0)),
+        row -> assertFalse(row.get(0, Boolean.class)));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
    * Verifies the conversion between a Java Language type and a SQL Language
    * type. The Java Language {@code javaValue} is converted to a SQL Language
    * value of a type specified by {@code sqlTypeDdl}. The SQL Language value is
@@ -439,6 +471,33 @@ public class TypeMappingTest {
   private static <T> void verifyTypeMapping(
     Connection connection, T javaValue, String sqlTypeDdl,
     BiConsumer<T, Object> verifyEquals) {
+    verifyTypeMapping(connection, javaValue, sqlTypeDdl,
+      row -> verifyEquals.accept(javaValue, row.get("javaValue")));
+  }
+  /**
+   * <p>
+   * Verifies the conversion between a Java Language type and a SQL Language
+   * type. The Java Language {@code javaValue} is converted to a SQL Language
+   * value of a type specified by {@code sqlTypeDdl}, and inserted into a table.
+   * </p><p>
+   * The inserted value is then queried back and the resulting {@code Row} is
+   * input to each function the {@code rowVerifiers} array. These functions
+   * should verify that the row returns an expected value.
+   * </p><p>
+   * This method will also INSERT a Java {@code null} bind value, and expect
+   * to get a Java {@code null} value from a SELECT of the SQL NULL value.
+   * </p>
+   * @param connection Connection to a database
+   * @param javaValue Value to insert. Maybe null.
+   * @param sqlTypeDdl SQL Language DDL for a column type, such as
+   *                   "NUMBER" or "VARCHAR(100)". Not null.
+   * @param rowVerifiers Verifies the {@code Row} that results from
+   * querying back the inserted {@code javaValue}.
+   */
+  @SafeVarargs
+  private static <T> void verifyTypeMapping(
+    Connection connection, T javaValue, String sqlTypeDdl,
+    Consumer<Row>... rowVerifiers) {
     String table = "verify_" + sqlTypeDdl.replaceAll("[^\\p{Alnum}]", "_");
     try {
       awaitExecution(connection.createStatement(String.format(
@@ -449,13 +508,15 @@ public class TypeMappingTest {
         .bind("javaValue", javaValue).add()
         .bindNull("javaValue", javaValue.getClass()).add());
 
-      verifyEquals.accept(javaValue, awaitOne(
-        Flux.from(connection.createStatement(
-          "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
-          .execute())
-          .flatMap(result ->
-            result.map((row, metadata) -> row.get("javaValue"))
-          )));
+     awaitOne(Flux.from(connection.createStatement(
+       "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
+       .execute())
+       .flatMap(result ->
+         result.map((row, metadata) -> {
+           for (Consumer<Row> rowVerifier : rowVerifiers)
+             rowVerifier.accept(row);
+           return true;
+         })));
 
       awaitOne(true,
         Flux.from(connection.createStatement(

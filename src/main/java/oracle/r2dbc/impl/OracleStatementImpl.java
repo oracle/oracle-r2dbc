@@ -22,7 +22,6 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Parameter;
-import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
@@ -142,6 +141,13 @@ import static oracle.r2dbc.impl.OracleResultImpl.createUpdateCountResult;
  */
 final class OracleStatementImpl implements Statement {
 
+  /**
+   * Instance of {@code Object} representing a null bind value. This object
+   * is stored at indexes of {@link #bindValues} that have been set with a
+   * null value.
+   */
+  private static final Object NULL_BIND = new Object();
+
   /** A JDBC connection that executes this statement's {@link #sql}. */
   private final Connection jdbcConnection;
 
@@ -166,13 +172,13 @@ final class OracleStatementImpl implements Statement {
    * to a {@code bind} method of this {@code Statement} are stored in this
    * array.
    */
-  private final Parameter[] parameters;
+  private final Object[] bindValues;
 
   /**
-   * The current batch of bind values. A copy of {@link #parameters} is added
+   * The current batch of bind values. A copy of {@link #bindValues} is added
    * to this queue when {@link #add()} is invoked.
    */
-  private Queue<Parameter[]> batch = new LinkedList<>();
+  private Queue<Object[]> batch = new LinkedList<>();
 
   /**
    * Fetch size that has been provided to {@link #fetchSize(int)}.
@@ -209,14 +215,14 @@ final class OracleStatementImpl implements Statement {
     this.jdbcConnection = jdbcConnection;
     this.sql = sql;
     this.parameterNames = SqlParameterParser.parse(sql);
-    this.parameters = new Parameter[parameterNames.size()];
+    this.bindValues = new Object[parameterNames.size()];
   }
 
   /**
    * {@inheritDoc}
    * <p>
    * Implements the R2DBC SPI method by storing the bind {@code value} at the
-   * specified {@code index} in {@link #parameters}. A reference to the
+   * specified {@code index} in {@link #bindValues}. A reference to the
    * {@code value} is retained until this statement is executed.
    * </p>
    */
@@ -284,7 +290,7 @@ final class OracleStatementImpl implements Statement {
     requireOpenConnection(jdbcConnection);
     requireNonNull(type, "type is null");
     requireValidIndex(index);
-    bindObject(index, Parameters.in(type));
+    bindObject(index, null);
     return this;
   }
 
@@ -331,7 +337,7 @@ final class OracleStatementImpl implements Statement {
     requireOpenConnection(jdbcConnection);
     requireNonNull(identifier, "identifier is null");
     requireNonNull(type, "type is null");
-    bindNamedParameter(identifier, Parameters.in(type));
+    bindNamedParameter(identifier, null);
     return this;
   }
 
@@ -352,7 +358,7 @@ final class OracleStatementImpl implements Statement {
   @Override
   public Statement add() {
     requireOpenConnection(jdbcConnection);
-    addBatchParameters();
+    addBatchValues();
     return this;
   }
 
@@ -548,27 +554,50 @@ final class OracleStatementImpl implements Statement {
    * bind value.
    */
   private void bindObject(int index, Object object) {
+    if (object == null){
+      bindValues[index] = NULL_BIND;
+    }
+    else if (object instanceof Parameter) {
+      bindParameter(index, (Parameter)object);
+    }
+    else if (object instanceof Parameter.In
+      || object instanceof Parameter.Out) {
+      throw new IllegalArgumentException(
+        "Parameter.In and Parameter.Out bind values must implement Parameter");
+    }
+    else {
+      requireSupportedJavaType(object);
+      bindValues[index] = object;
+    }
+  }
 
-    Parameter parameter = object instanceof Parameter
-      ? (Parameter) object
-      : Parameters.in(object);
+  /**
+   * Binds a {@code parameter} to a specified {@code index} of this
+   * {@code Statement}.
+   * @param index A 0-based parameter index
+   * @param parameter Parameter to bind
+   * @throws IllegalArgumentException If the Java or SQL type of the
+   * {@code parameter} is not supported.
+   */
+  private void bindParameter(int index, Parameter parameter) {
 
-    Type sqlType =
+    // TODO: This method should check if Java type can be converted to the
+    //  specified SQL type. If the conversion is unsupported, then JDBC
+    //  setObject(...) will throw when this statement is executed. The correct
+    //  behavior is to throw IllegalArgumentException here, and not from
+    //  execute()
+
+    Type r2dbcType =
       requireNonNull(parameter.getType(), "Parameter type is null");
-    requireNonNull(toJdbcType(sqlType), "Unsupported SQL type: " + sqlType);
+    SQLType jdbcType = toJdbcType(r2dbcType);
 
-    Object value = parameter.getValue();
-    if (value != null) {
-      Class<?> javaType = value.getClass();
-      // TODO: Should check if Java type can be converted to the specified
-      //  SQL type. If the conversion is unsupported, JDBC setObject(...) will
-      //  throw when this statement is executed. Correct behavior is to throw
-      //  IllegalArgumentException here.
-      requireNonNull(toJdbcType(javaType),
-        "Unsupported Java type:" + javaType);
+    if (jdbcType == null) {
+      throw new IllegalArgumentException(
+        "Unsupported SQL type: " + r2dbcType);
     }
 
-    parameters[index] = parameter;
+    requireSupportedJavaType(parameter.getValue());
+    bindValues[index] = parameter;
   }
 
   /**
@@ -595,14 +624,14 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * Adds the current set of {@link #parameters} to the {@link #batch}, and
+   * Adds the current set of {@link #bindValues} to the {@link #batch}, and
    * then resets the {@code parameters} array to store {@code null} at all
    * positions.
    * @throws IllegalStateException If a parameter has not been set
    * @throws IllegalStateException If an out parameter has been set
    */
-  private void addBatchParameters() {
-    for (Parameter parameter : parameters) {
+  private void addBatchValues() {
+    for (Object parameter : bindValues) {
       if (parameter == null) {
         throw parameterNotSet();
       }
@@ -611,18 +640,18 @@ final class OracleStatementImpl implements Statement {
           "Batch execution with out binds is not supported");
       }
     }
-    batch.add(parameters.clone());
-    Arrays.fill(parameters, null);
+    batch.add(bindValues.clone());
+    Arrays.fill(bindValues, null);
   }
 
   /**
-   * Returns {@code true} if {@link #parameters} contains an out parameter.
+   * Returns {@code true} if {@link #bindValues} contains an out parameter.
    * @return {@code true} if an out parameter is present, otherwise
    * {@code false}
    */
   private boolean isOutParameterPresent() {
-    for (Parameter parameter : parameters) {
-      if (parameter instanceof Parameter.Out)
+    for (Object value : bindValues) {
+      if (value instanceof Parameter.Out)
         return true;
     }
     return false;
@@ -632,7 +661,7 @@ final class OracleStatementImpl implements Statement {
    * <p>
    * Executes this {@code Statement} as an arbitrary SQL command that may return
    * an update count, row data, implicit results, or nothing. The SQL command
-   * is executed with the current set of {@link #parameters}. The returned
+   * is executed with the current set of {@link #bindValues}. The returned
    * {@code Publisher} does not emit {@code Results} with out parameters or
    * values generated by DML.
    * </p><p>
@@ -651,7 +680,7 @@ final class OracleStatementImpl implements Statement {
    * execute the command; Any mutations that occur after this method returns
    * will not effect the returned {@code Publisher}.
    * </p><p>
-   * When this method returns, {@link #parameters} contains {@code null} at all
+   * When this method returns, {@link #bindValues} contains {@code null} at all
    * positions.
    * </p><p>
    * The returned publisher initiates SQL execution <i>the first time</i> a
@@ -664,14 +693,14 @@ final class OracleStatementImpl implements Statement {
   private Publisher<OracleResultImpl> executeSql() {
 
     requireAllParametersSet();
-    Parameter[] currentParameters = parameters.clone();
-    Arrays.fill(parameters, null);
+    Object[] currentBindValues = bindValues.clone();
+    Arrays.fill(bindValues, null);
     int currentFetchSize = fetchSize;
 
     return execute(() ->
         jdbcConnection.prepareStatement(sql),
       (preparedStatement, discardQueue) ->
-        setInParameters(preparedStatement, currentParameters, discardQueue),
+        setBindValues(preparedStatement, currentBindValues, discardQueue),
       preparedStatement ->
         publishSqlResult(preparedStatement, currentFetchSize));
   }
@@ -680,7 +709,7 @@ final class OracleStatementImpl implements Statement {
    * <p>
    * Executes this {@code Statement} as a procedural call returning out
    * parameters. The call is executed with the current set of
-   * {@link #parameters}. The returned {@code Publisher} does not emit
+   * {@link #bindValues}. The returned {@code Publisher} does not emit
    * {@code Results} with values generated by DML.
    * </p><p>
    * If the command returns an update count or row data, then the returned
@@ -697,7 +726,7 @@ final class OracleStatementImpl implements Statement {
    * execute the command; Any mutations that occur after this method returns
    * will not effect the returned {@code Publisher}.
    * </p><p>
-   * When this method returns, {@link #parameters} contains {@code null} at all
+   * When this method returns, {@link #bindValues} contains {@code null} at all
    * positions.
    * </p><p>
    * The returned publisher initiates call execution <i>the first time</i> a
@@ -710,28 +739,28 @@ final class OracleStatementImpl implements Statement {
   Publisher<OracleResultImpl> executeCall() {
 
     requireAllParametersSet();
-    Parameter[] currentParameters = parameters.clone();
-    Arrays.fill(parameters, null);
+    Object[] currentBindValues = bindValues.clone();
+    Arrays.fill(bindValues, null);
     int currentFetchSize = fetchSize;
 
     return execute(() -> jdbcConnection.prepareCall(sql),
       (callableStatement, discardQueue) ->
-        Mono.from(setInParameters(
-          callableStatement, currentParameters, discardQueue))
+        Mono.from(setBindValues(
+          callableStatement, currentBindValues, discardQueue))
           .doOnSuccess(nil ->
-            registerOutParameters(callableStatement, currentParameters)),
+            registerOutParameters(callableStatement, currentBindValues)),
       callableStatement ->
         publishCallResult(
-          callableStatement, currentParameters, currentFetchSize));
+          callableStatement, currentBindValues, currentFetchSize));
   }
 
   /**
    * Checks that a bind value has been set for all positions in the
-   * current set of {@link #parameters}
+   * current set of {@link #bindValues}
    * @throws IllegalStateException if one or more parameters are not set.
    */
   private void requireAllParametersSet() {
-    for (Parameter parameter : parameters) {
+    for (Object parameter : bindValues) {
       if (parameter == null)
         throw parameterNotSet();
     }
@@ -848,15 +877,15 @@ final class OracleStatementImpl implements Statement {
    * Publishes any implicit results generated by {@code DBMS_SQL.RETURN_RESULT}
    * followed by a single {@code Result} of out parameters.
    * @param callableStatement JDBC statement having out parameters
-   * @param parameters Parameters of this {@code Statement}
+   * @param bindValues Bind values of this {@code Statement}
    * @return Publisher emitting implicit results and out parameters.
    */
   private Publisher<OracleResultImpl> publishCallResult(
-    CallableStatement callableStatement, Parameter[] parameters,
+    CallableStatement callableStatement, Object[] bindValues,
     int fetchSize) {
     return Flux.from(publishSqlResult(callableStatement, fetchSize))
       .concatWith(Mono.just(createCallResult(createOutParameterRow(
-        callableStatement, parameters))));
+        callableStatement, bindValues))));
   }
 
   /**
@@ -896,7 +925,7 @@ final class OracleStatementImpl implements Statement {
    *
    *
    * @param callableStatement JDBC statement having out parameters
-   * @param parameters Parameters of this {@code Statement}
+   * @param bindValues Bind values of this {@code Statement}
    * @return A {@code Row} accessing the out parameters of {@code
    * callableStatement}.
    *
@@ -905,10 +934,10 @@ final class OracleStatementImpl implements Statement {
    * {@code RowMetaData}.
    */
   private OracleRowImpl createOutParameterRow(
-    CallableStatement callableStatement, Parameter[] parameters) {
+    CallableStatement callableStatement, Object[] bindValues) {
 
-    int[] outBindIndexes = IntStream.range(0, parameters.length)
-      .filter(i -> parameters[i] instanceof Parameter.Out)
+    int[] outBindIndexes = IntStream.range(0, bindValues.length)
+      .filter(i -> bindValues[i] instanceof Parameter.Out)
       .toArray();
 
     return new OracleRowImpl(
@@ -916,7 +945,6 @@ final class OracleStatementImpl implements Statement {
 
         @Override
         public <T> T getObject(int index, Class<T> type) {
-          // TODO Check supported type? or does OracleRowImpl do it still?
           return getOrHandleSQLException(() ->
             callableStatement.getObject(1 + outBindIndexes[index], type));
         }
@@ -930,7 +958,7 @@ final class OracleStatementImpl implements Statement {
         .mapToObj(i -> OracleColumnMetadataImpl.createParameterMetadata(
           Objects.requireNonNullElse(
             parameterNames.get(outBindIndexes[i]), String.valueOf(i)),
-          parameters[outBindIndexes[i]].getType()))
+          ((Parameter)bindValues[outBindIndexes[i]]).getType()))
         .toArray(OracleColumnMetadataImpl[]::new)),
       adapter);
   }
@@ -939,7 +967,7 @@ final class OracleStatementImpl implements Statement {
    * <p>
    * Executes this {@code Statement} as a DML command that returns generated
    * values. The DML command is executed with the current set of
-   * {@link #parameters}. The returned {@code Publisher} does not emit
+   * {@link #bindValues}. The returned {@code Publisher} does not emit
    * {@code Results} with row data, out parameters, or implicit results.
    * </p><p>
    * The returned {@code Publisher} emits a single {@code Result} with an
@@ -949,7 +977,7 @@ final class OracleStatementImpl implements Statement {
    * execute the command; Any mutations that occur after this method returns
    * will not effect the returned {@code Publisher}.
    * </p><p>
-   * When this method returns, {@link #parameters} contains {@code null} at all
+   * When this method returns, {@link #bindValues} contains {@code null} at all
    * positions.
    * </p><p>
    * The returned publisher initiates SQL execution <i>the first time</i> a
@@ -962,8 +990,8 @@ final class OracleStatementImpl implements Statement {
   private Publisher<OracleResultImpl> executeGeneratingValues() {
 
     requireAllParametersSet();
-    Parameter[] currentParameters = parameters.clone();
-    Arrays.fill(parameters, null);
+    Object[] currentBindValues = bindValues.clone();
+    Arrays.fill(bindValues, null);
     int currentFetchSize = fetchSize;
     String[] currentGeneratedColumns = generatedColumns.clone();
 
@@ -972,7 +1000,7 @@ final class OracleStatementImpl implements Statement {
         ? jdbcConnection.prepareStatement(sql, RETURN_GENERATED_KEYS)
         : jdbcConnection.prepareStatement(sql, currentGeneratedColumns),
       (preparedStatement, discardQueue) ->
-        setInParameters(preparedStatement, currentParameters, discardQueue),
+        setBindValues(preparedStatement, currentBindValues, discardQueue),
       preparedStatement -> {
         runOrHandleSQLException(() ->
           preparedStatement.setFetchSize(currentFetchSize));
@@ -991,7 +1019,7 @@ final class OracleStatementImpl implements Statement {
   /**
    * <p>
    * Executes this {@code Statement} as a batch DML command. The returned
-   * {@code Publisher} emits 1 {@code Result} for each set of parameters in
+   * {@code Publisher} emits 1 {@code Result} for each set of bind values in
    * this {@code Statement}'s {@link #batch}. Each {@code Result} has an
    * update count and no row data. Update counts are floored to a maximum of
    * {@link Integer#MAX_VALUE}.
@@ -1001,7 +1029,7 @@ final class OracleStatementImpl implements Statement {
    * not effect the returned {@code Publisher}.
    * </p><p>
    * When this method returns, the {@link #batch} is empty and
-   * {@link #parameters} contains {@code null} at all positions.
+   * {@link #bindValues} contains {@code null} at all positions.
    * </p><p>
    * The returned publisher initiates a batch execution <i>the first time</i> a
    * subscriber subscribes, before the subscriber emits a {@code request}
@@ -1027,13 +1055,13 @@ final class OracleStatementImpl implements Statement {
     }
 
     addImplicit();
-    Queue<Parameter[]> currentBatch = batch;
+    Queue<Object[]> currentBatch = batch;
     batch = new LinkedList<>();
 
     return execute(
       () -> jdbcConnection.prepareStatement(sql),
       (preparedStatement, discardQueue) ->
-        setParameterBatch(preparedStatement, currentBatch, discardQueue),
+        setBatchBindValues(preparedStatement, currentBatch, discardQueue),
       preparedStatement ->
         Flux.from(adapter.publishBatchUpdate(preparedStatement))
           .map(updateCount -> (int) Math.min(Integer.MAX_VALUE, updateCount))
@@ -1041,7 +1069,7 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * Adds the current set of {@link #parameters} to the {@link #batch} if all
+   * Adds the current set of {@link #bindValues} to the {@link #batch} if all
    * positions are set with a value. A full set of bind values are implicitly
    * {@link #add() added} when an R2DBC {@code Statement} is executed. This
    * behavior is specified in "Section 7.2.2. Batching" of the R2DBC 0.8.2
@@ -1054,12 +1082,12 @@ final class OracleStatementImpl implements Statement {
    * or more parameters, but not for all parameters.
    */
   private void addImplicit() {
-    if (parameters.length != 0 && parameters[0] != null) {
+    if (bindValues.length != 0 && bindValues[0] != null) {
       add();
     }
     else {
-      for (int i = 1; i < parameters.length; i++) {
-        if (parameters[i] != null) {
+      for (int i = 1; i < bindValues.length; i++) {
+        if (bindValues[i] != null) {
           throw new IllegalStateException(
             "One or more parameters are not set");
         }
@@ -1069,10 +1097,9 @@ final class OracleStatementImpl implements Statement {
 
   /**
    * <p>
-   * Sets a {@code batch} of parameters as bind values for a
-   * {@code preparedStatement}. The returned {@code Publisher} completes after
-   * all values are materialized and added to the batch of the
-   * {@code preparedStatement}.
+   * Sets a {@code batch} of bind values for a {@code preparedStatement}. The
+   * returned {@code Publisher} completes after all values are materialized
+   * and added to the batch of the {@code preparedStatement}.
    * </p><p>
    * This method ignores any {@code Parameter} that is an instance of
    * {@link Parameter.Out} and is not also an instance of {@link Parameter.In}.
@@ -1086,24 +1113,22 @@ final class OracleStatementImpl implements Statement {
    * @return A {@code Publisher} that emits {@code onComplete} when all
    * {@code parameters} have been added to the batch.
    */
-  private Publisher<Void> setParameterBatch(
-    PreparedStatement preparedStatement, Queue<Parameter[]> batch,
+  private Publisher<Void> setBatchBindValues(
+    PreparedStatement preparedStatement, Queue<Object[]> batch,
     Queue<Publisher<Void>> discardQueue) {
     return Flux.fromStream(Stream.generate(batch::poll)
       .takeWhile(Objects::nonNull))
       .concatMap(parameters ->
-        Mono.from(setInParameters(preparedStatement, parameters, discardQueue))
+        Mono.from(setBindValues(preparedStatement, parameters, discardQueue))
           .doOnSuccess(nil ->
             runOrHandleSQLException(preparedStatement::addBatch)));
   }
 
-
   /**
    * <p>
-   * Sets input {@code parameters} as bind values of a
-   * {@code preparedStatement}. The returned {@code Publisher} completes
-   * after all parameter values have materialized and been set on the
-   * {@code preparedStatement}.
+   * Sets input {@code bindValues} of a {@code preparedStatement}. The
+   * returned {@code Publisher} completes after all bind values have
+   * materialized and been set on the {@code preparedStatement}.
    * </p><p>
    * This method ignores any {@code Parameter} that is an instance of
    * {@link Parameter.Out} and is not also an instance of {@link Parameter.In}.
@@ -1112,37 +1137,40 @@ final class OracleStatementImpl implements Statement {
    * this method adds to the {@code discardQueue}.
    * </p>
    * @param preparedStatement JDBC statement
-   * @param parameters Parameters to set on the {@code preparedStatement}
+   * @param bindValues Bind values of this {@code Statement}
    * @param discardQueue Resource deallocation queue
    * @return A {@code Publisher} that emits {@code onComplete} when all
-   * {@code parameters} have been set.
+   * {@code bindValues} have been set.
    */
-  private Publisher<Void> setInParameters(
-    PreparedStatement preparedStatement, Parameter[] parameters,
+  private Publisher<Void> setBindValues(
+    PreparedStatement preparedStatement, Object[] bindValues,
     Queue<Publisher<Void>> discardQueue) {
 
     Mono<Void> bindPublisher = Mono.empty();
 
-    for (int i = 0; i < parameters.length; i++) {
+    for (int i = 0; i < bindValues.length; i++) {
 
-      if (parameters[i] instanceof Parameter.Out
-        && !(parameters[i] instanceof Parameter.In))
+      if (bindValues[i] instanceof Parameter.Out
+        && !(bindValues[i] instanceof Parameter.In))
         continue;
 
       int jdbcIndex = i + 1;
-      SQLType jdbcType = toJdbcType(parameters[i].getType());
-      Object jdbcValue =
-        convertToJdbcBindValue(parameters[i].getValue(), discardQueue);
+      Object jdbcValue = convertToJdbcBindValue(bindValues[i], discardQueue);
+      SQLType jdbcType =
+        bindValues[i] instanceof Parameter
+          ? toJdbcType(((Parameter)bindValues[i]).getType())
+          : null; // JDBC infers the type
 
       if (jdbcValue instanceof Publisher<?>) {
         bindPublisher = bindPublisher.then(Mono.from((Publisher<?>)jdbcValue))
-          .doOnSuccess(allocatedValue -> runOrHandleSQLException(() ->
-            preparedStatement.setObject(jdbcIndex, allocatedValue, jdbcType)))
+          .doOnSuccess(allocatedValue ->
+            setJdbcBindValue(
+              preparedStatement, jdbcIndex, allocatedValue, jdbcType))
           .then();
       }
       else {
-        runOrHandleSQLException(() ->
-          preparedStatement.setObject(jdbcIndex, jdbcValue, jdbcType));
+        setJdbcBindValue(
+          preparedStatement, jdbcIndex, jdbcValue, jdbcType);
       }
     }
 
@@ -1173,16 +1201,25 @@ final class OracleStatementImpl implements Statement {
    */
   private Object convertToJdbcBindValue(
     Object bindValue, Queue<Publisher<Void>> discardQueue) {
-    if (bindValue == null)
+    if (bindValue == null || bindValue == NULL_BIND) {
       return null;
-    else if (bindValue instanceof io.r2dbc.spi.Blob)
+    }
+    else if (bindValue instanceof Parameter) {
+      return convertToJdbcBindValue(
+        ((Parameter) bindValue).getValue(), discardQueue);
+    }
+    else if (bindValue instanceof io.r2dbc.spi.Blob) {
       return convertBlobBind((io.r2dbc.spi.Blob) bindValue, discardQueue);
-    else if (bindValue instanceof io.r2dbc.spi.Clob)
+    }
+    else if (bindValue instanceof io.r2dbc.spi.Clob) {
       return convertClobBind((io.r2dbc.spi.Clob) bindValue, discardQueue);
-    else if (bindValue instanceof ByteBuffer)
+    }
+    else if (bindValue instanceof ByteBuffer) {
       return convertByteBufferBind((ByteBuffer) bindValue);
-    else
+    }
+    else {
       return bindValue;
+    }
   }
 
   /**
@@ -1246,21 +1283,39 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * <p>
-   * Registers output {@code parameters} of a {@code callableStatement}.
-   * </p><p>
-   * This method ignores any {@code Parameter} that is not an instance of
-   * {@link Parameter.Out}.
-   * </p><p>
+   * Sets the {@code value} of a {@code preparedStatement} parameter at the
+   * specified {@code index}. If a non-null {@code type} is provided, then it is
+   * specified as the SQL type for the bind. Otherwise, if the
+   * {@code type} is {@code null}, then the JDBC driver infers the SQL type
+   * of the bind.
+   * @param preparedStatement JDBC statement. Not null.
+   * @param index 1-based parameter index
+   * @param value Value. May be null.
+   * @param type SQL type. May be null.
+   */
+  private void setJdbcBindValue(
+    PreparedStatement preparedStatement, int index, Object value,
+    SQLType type) {
+    runOrHandleSQLException(() -> {
+      if (type != null)
+        preparedStatement.setObject(index, value, type);
+      else
+        preparedStatement.setObject(index, value);
+    });
+  }
+
+  /**
+   * Registers instances of {@link Parameter.Out} in {@code bindValues}
+   * as output parameters of a {@code callableStatement}.
    * @param callableStatement JDBC statement
-   * @param parameters Parameters to register with the {@code callableStatement}
+   * @param bindValues Bind values of this {@code Statement}
    */
   private static void registerOutParameters(
-    CallableStatement callableStatement, Parameter[] parameters) {
-    for (int i = 0; i < parameters.length; i++) {
-      if (parameters[i] instanceof Parameter.Out) {
+    CallableStatement callableStatement, Object[] bindValues) {
+    for (int i = 0; i < bindValues.length; i++) {
+      if (bindValues[i] instanceof Parameter.Out) {
         int jdbcIndex = i + 1;
-        SQLType jdbcType = toJdbcType(parameters[i].getType());
+        SQLType jdbcType = toJdbcType(((Parameter)bindValues[i]).getType());
         runOrHandleSQLException(() ->
           callableStatement.registerOutParameter(jdbcIndex, jdbcType));
       }
@@ -1360,6 +1415,20 @@ final class OracleStatementImpl implements Statement {
    */
   private static IllegalStateException parameterNotSet() {
     return new IllegalStateException("One or more parameters are not set");
+  }
+
+  /**
+   * Checks that the class type of an {@code object} is supported as a bind
+   * value.
+   * @param object Object to check. May be null.
+   * @throws IllegalArgumentException If the class type of {@code object} is not
+   * supported
+   */
+  private static void requireSupportedJavaType(Object object) {
+    if (object != null && toJdbcType(object.getClass()) == null) {
+      throw new IllegalArgumentException(
+        "Unsupported Java type:" + object.getClass());
+    }
   }
 
 }
