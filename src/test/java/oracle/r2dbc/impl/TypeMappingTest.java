@@ -60,6 +60,7 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -431,6 +432,46 @@ public class TypeMappingTest {
       tryAwaitNone(connection.close());
     }
   }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * where the Java type is a {@code byte} array and the SQL type is RAW or
+   * BLOB. The R2DBC 0.9.0 Specification does not require drivers to
+   * support byte array mapping, however this mapping is required by
+   * the JDBC 4.3 specification. Oracle R2DBC is expected to expose mappings
+   * supported by Oracle JDBC.
+   *</p>
+   */
+  @Test
+  public void testByteArrayMapping() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      byte[] byteArray = new byte[100];
+
+      for (int i = 0; i < byteArray.length; i++)
+        byteArray[i] = (byte) i;
+
+      // Expect RAW and byte[] to map, with Row.get(...) mapping the
+      // RAW column value to ByteBuffer
+      verifyTypeMapping(connection, byteArray, "RAW(100)",
+        (expected, actual) -> assertEquals(ByteBuffer.wrap(byteArray), actual));
+
+      // Expect RAW and byte[] to map, with Row.get(..., byte[].class)
+      // mapping the RAW column value to byte[]
+      verifyTypeMapping(connection, byteArray, "RAW(100)",
+        row -> row.get(0, byte[].class),
+        (expected, actual) -> assertArrayEquals(byteArray, actual));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  // TODO: More tests for JDBC 4.3 mappings like BigInteger to BIGINT,
+  //  java.sql.Date to DATE, java.sql.Blob to BLOB? Oracle R2DBC exposes all
+  //  type mappings supported by Oracle JDBC.
 
   /**
    * <p>
