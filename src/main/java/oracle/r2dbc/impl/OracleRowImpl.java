@@ -33,7 +33,6 @@ import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 
@@ -252,8 +251,6 @@ final class OracleRowImpl implements Row {
    * @throws R2dbcException If the conversion is not supported.
    */
   private <T> T convertColumnValue(int index, Class<T> type) {
-    requireSupportedTypeMapping(index, type);
-
     if (type.equals(ByteBuffer.class))
       return type.cast(getByteBuffer(index));
     else if (type.equals(io.r2dbc.spi.Blob.class))
@@ -394,37 +391,6 @@ final class OracleRowImpl implements Row {
   }
 
   /**
-   * <p>
-   * Checks if the Oracle R2DBC Driver supports mapping the database type
-   * of the column at the specified {@code index} to the Java type specified
-   * as {@code type}.
-   * </p><p>
-   * This method handles cases where the JDBC driver may support a mapping 
-   * that the Oracle R2DBC Driver does not support. For instance, the JDBC
-   * driver may support mapping CLOB columns to String, but the Oracle R2DBC
-   * Driver does not support this as the JDBC driver may require blocking 
-   * network I/O to convert a CLOB into a String.
-   * </p>
-   *
-   * @param index 0-based column index
-   * @param type Class of the type that the column value is converted to
-   * @throws R2dbcException if the type mapping is not supported
-   */
-  private void requireSupportedTypeMapping(int index, Class<?> type) {
-
-    switch (getColumnTypeNumber(index)) {
-      case Types.BLOB:
-        if (! type.equals(Blob.class))
-          throw unsupportedTypeMapping("BLOB", index, type);
-        break;
-      case Types.CLOB:
-        if (! type.equals(Clob.class))
-          throw unsupportedTypeMapping("CLOB", index, type);
-        break;
-    }
-  }
-
-  /**
    * Returns the SQL type number of the column at a given {@code index}. The
    * returned number identifies either a standard type defined by
    * {@link Types} or a vendor specific type defined by the JDBC driver. This
@@ -439,24 +405,6 @@ final class OracleRowImpl implements Row {
       .getVendorTypeNumber();
 
     return typeNumber == null ? Types.OTHER : typeNumber;
-  }
-
-  /**
-   * Returns an exception indicating that the Oracle R2DBC Driver does
-   * not support mapping the database type specified as {@code sqlTypeName}
-   * to the Java type specified as {@code type}.
-   * @param sqlTypeName Name of a SQL type, like "BLOB" or "NUMBER"
-   * @param index Column index having a SQL type named {@code sqlTypeName}
-   * @param type Java type to which mapping is not supported
-   * @return An exception that expresses the unsupported mapping
-   */
-  private static R2dbcException unsupportedTypeMapping(
-    String sqlTypeName, int index, Class<?> type) {
-    return OracleR2dbcExceptions.newNonTransientException(
-      String.format("Unsupported SQL to Java type mapping. " +
-        "SQL Type: %s, Column Index: %d, Java Type: %s",
-        sqlTypeName, index, type.getName()),
-      null);
   }
 
 }
