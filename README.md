@@ -173,6 +173,7 @@ Options. For Options having any of the following names, a CharSequence value may
   - [oracle.net.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_SSL_CONTEXT_PROTOCOL)
   - [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
   - [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
+  - [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
 - Oracle Net Descriptors of the form ```(DESCRIPTION=...)``` may be specified as an io.r2dbc.spi.Option having the name `oracleNetDescriptor`.
   - If `oracleNetDescriptor` is specified, then it is invalid to specify any other options that might conflict with information in the descriptor, such as: `HOST`, `PORT`, `DATABASE`, and `SSL`.
   - The `oracleNetDescriptor` option may appear in the query section of an R2DBC URL: `r2dbc:oracle://?oracleNetDescriptor=(DESCRIPTION=...)`
@@ -269,15 +270,6 @@ values for a non-empty set of column names.
     ```Result``` for each returned cursor.
 
 ### Type Mappings
-- Blob and Clob objects are the default mapping implemented by Row.get(...) for 
-BLOB and CLOB columns. ByteBuffer and String mappings are not supported for BLOB
-and CLOB.
-  - Oracle Database allows BLOBs and CLOBs to store terabytes of data; This
-  amount would exceed the capacity of a ByteBuffer or String. 
-  - Blob and Clob objects stream data over a series of ByteBuffers or Strings. 
-  - Requiring content to be streamed over multiple buffers is necessary for Oracle
-  R2DBC to avoid a potentially memory exhausting implementation in which BLOBs and 
-  CLOBs must be fully materialized as a return value for Row.get(...).
 - javax.json.JsonObject and oracle.sql.json.OracleJsonObject are supported as 
 Java type mappings for JSON column values.
 - java.time.Duration is supported as a Java type mapping for INTERVAL DAY TO SECOND 
@@ -287,6 +279,27 @@ column values.
 - java.time.LocalDateTime is supported as a Java type mapping for DATE column values.
 The Oracle Database type named "DATE" stores the same information as a LocalDateTime:
 year, month, day, hour, minute, and  second.
+
+### BLOB, CLOB, and NCLOB
+When a SQL query returns a LOB value, a
+portion of that value is prefetched from the database and the remaining portion
+must be fetched with additional database calls. The number of prefetched
+bytes is configured by an ```Option``` named [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
+. The default value of this ```Option``` is 1 GB.
+ 
+The ```Row.get(...)``` method allows LOB values to be mapped into materialized
+types like ```ByteBuffer``` and ```String```. If the prefetch size is large
+enough to have fetched the entire LOB value, then ```Row.get(...)```  can
+return a ```ByteBuffer/String``` without any additional database calls.
+Otherwise, if the LOB value is larger than the prefetch size, then
+```Row.get(...)```  must execute a **blocking database call** to fetch the
+remainder of that value. 
+
+For systems in which LOB values are too large to be prefetched, a smaller
+prefetch size can be configured, and LOB values may be mapped into ```Blob```
+or ```Clob``` objects rather than ```ByteBuffer``` or ```String```. ```Blob```
+and ```Clob``` objects allow the LOB value to be streamed using non-blocking
+database calls.
 
 # Secure Programming Guidelines
 The following security guidelines should be followed when programming with the Oracle R2DBC Driver.
