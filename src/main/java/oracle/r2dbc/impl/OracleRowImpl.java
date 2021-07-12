@@ -84,19 +84,7 @@ final class OracleRowImpl implements Row {
    * Implements the R2DBC SPI method by using the {@code JdbcRow} that backs
    * this row to convert the specified column value into the Oracle R2DBC
    * Driver's default Java type mapping for the column's SQL type.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation will map {@code BLOB} to
-   * {@link Blob} and map {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of
-   * data. If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
    *
    * @throws IllegalArgumentException If the {@code index} is less than 0,
    * or greater than the maximum column index.
@@ -114,20 +102,7 @@ final class OracleRowImpl implements Row {
    * Implements the R2DBC SPI method by using the JDBC ResultSet that backs
    * this row to convert the specified column value into the specified {@code
    * type}.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation only supports mapping
-   * {@code BLOB} to {@link Blob} and {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of data.
-   * If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   *
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code index} is less than 0,
    * or greater than the maximum column index.
@@ -151,20 +126,7 @@ final class OracleRowImpl implements Row {
    * This method uses a case-insensitive column name match. If more than one
    * column has a matching name, this method returns the value of the
    * matching column with the lowest index.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation will map {@code BLOB} to
-   * {@link Blob} and map {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of data.
-   * If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   *
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If there is no column with a matching
    * {@code name}.
@@ -187,20 +149,7 @@ final class OracleRowImpl implements Row {
    * This method uses a case-insensitive column name match. If more than one
    * column has a matching name, this method returns the value of the
    * matching column with the lowest index.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation only supports mapping
-   * {@code BLOB} to {@link Blob} and {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of data.
-   * If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   *
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If conversion to the specified
    * {@code type} is not supported.
@@ -271,10 +220,6 @@ final class OracleRowImpl implements Row {
    * A JDBC driver is not required to support {@code ByteBuffer} conversions
    * for any SQL type, so this method is necessary to implement the
    * conversion to {@code ByteBuffer} from a type that is supported by JDBC.
-   * </p><p>
-   * This method should NOT be called when the database column type is BLOB.
-   * The JDBC driver may require blocking network I/O in order to materialize a
-   * BLOB as a ByteBuffer.
    * </p>
    * @param index 0 based column index
    * @return A column value as a {@code ByteBuffer}, or null if the column
