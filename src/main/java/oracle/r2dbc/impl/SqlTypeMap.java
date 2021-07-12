@@ -60,7 +60,22 @@ final class SqlTypeMap {
       entry(JDBCType.BLOB, R2dbcType.BLOB),
       entry(JDBCType.BOOLEAN, R2dbcType.BOOLEAN),
       entry(JDBCType.CHAR, R2dbcType.CHAR),
-      entry(JDBCType.CLOB, R2dbcType.CLOB),
+      entry(
+        JDBCType.CLOB,
+        // TODO: This is a placeholder. Replace with:
+        // R2dbcType.CLOB), when fix is released:
+        // https://github.com/r2dbc/r2dbc-spi/pull/222
+        new Type() {
+          @Override
+          public Class<?> getJavaType() {
+            return String.class;
+          }
+
+          @Override
+          public String getName() {
+            return "CLOB";
+          }
+        }),
       entry(JDBCType.ARRAY, R2dbcType.COLLECTION),
       entry(JDBCType.DATE, R2dbcType.DATE),
       entry(JDBCType.DECIMAL, R2dbcType.DECIMAL),
@@ -76,7 +91,21 @@ final class SqlTypeMap {
       entry(JDBCType.LONGVARBINARY, OracleR2dbcTypes.LONG_RAW),
       entry(JDBCType.LONGVARCHAR, OracleR2dbcTypes.LONG),
       entry(JDBCType.NCHAR, R2dbcType.NCHAR),
-      entry(JDBCType.NCLOB, R2dbcType.NCLOB),
+      entry(JDBCType.NCLOB,
+        // TODO: This is a placeholder. Replace with:
+        // R2dbcType.CLOB), when fix is released:
+        // https://github.com/r2dbc/r2dbc-spi/pull/222
+        new Type() {
+          @Override
+          public Class<?> getJavaType() {
+            return String.class;
+          }
+
+          @Override
+          public String getName() {
+            return "NCLOB";
+          }
+        }),
       entry(JDBCType.NUMERIC, R2dbcType.NUMERIC),
       entry(JDBCType.NVARCHAR, R2dbcType.NVARCHAR),
       entry(JDBCType.REAL, R2dbcType.REAL),

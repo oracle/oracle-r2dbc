@@ -46,6 +46,7 @@ import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -120,6 +121,7 @@ public class TypeMappingTest {
       // Expect CLOB and io.r2dbc.spi.Clob to map
       verifyTypeMapping(connection,
         Clob.from(Mono.just("Hola, Oracle")), "CLOB",
+        row -> row.get(0, Clob.class),
         (expected, actual) ->
           assertEquals("Hola, Oracle", clobToString(actual)));
 
@@ -130,6 +132,7 @@ public class TypeMappingTest {
       // Expect NCLOB and io.r2dbc.spi.Clob to map
       verifyTypeMapping(connection,
         Clob.from(Mono.just("こんにちは, Oracle")), "NCLOB",
+        row -> row.get(0, Clob.class),
         (expected, actual) ->
           assertEquals("こんにちは, Oracle", clobToString(actual)));
 
@@ -191,6 +194,7 @@ public class TypeMappingTest {
       // Expect BLOB and io.r2dbc.spi.Blob to map
       verifyTypeMapping(connection,
         Blob.from(Mono.just(byteBuffer)), "BLOB",
+        row -> row.get(0, Blob.class),
         (expected, actual) ->
           assertEquals(byteBuffer, blobToByteBuffer(actual)));
 
@@ -423,6 +427,36 @@ public class TypeMappingTest {
   private static <T> void verifyTypeMapping(
     Connection connection, T javaValue, String sqlTypeDdl,
     BiConsumer<T, Object> verifyEquals) {
+
+    verifyTypeMapping(connection, javaValue, sqlTypeDdl,
+      row -> row.get("javaValue"), verifyEquals);
+  }
+
+  /**
+   * <p>
+   * Verifies the conversion between a Java Language type and a SQL Language
+   * type. The Java Language {@code javaValue} is converted to a SQL Language
+   * value of a type specified by {@code sqlTypeDdl}, and inserted into a table.
+   * </p><p>
+   * The inserted value is then queried back and the resulting {@code Row} is
+   * input to each function the {@code rowVerifiers} array. These functions
+   * should verify that the row returns an expected value.
+   * </p><p>
+   * This method will also INSERT a Java {@code null} bind value, and expect
+   * to get a Java {@code null} value from a SELECT of the SQL NULL value.
+   * </p>
+   * @param connection Connection to a database
+   * @param javaValue Value to insert. Maybe null.
+   * @param sqlTypeDdl SQL Language DDL for a column type, such as
+   *                   "NUMBER" or "VARCHAR(100)". Not null.
+   * @param rowMapper Outputs a Java value for an input Row
+   * @param verifyEquals Verifies the {@code rowMapper} output is equal to
+   * {@code javaValue}.
+   */
+  private static <T, U> void verifyTypeMapping(
+    Connection connection, T javaValue, String sqlTypeDdl,
+    Function<Row, U> rowMapper, BiConsumer<T, U> verifyEquals) {
+
     String table = "verify_" + sqlTypeDdl.replaceAll("[^\\p{Alnum}]", "_");
     try {
       awaitExecution(connection.createStatement(String.format(
@@ -438,7 +472,7 @@ public class TypeMappingTest {
           "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
           .execute())
           .flatMap(result ->
-            result.map((row, metadata) -> row.get("javaValue"))
+            result.map((row, metadata) -> rowMapper.apply(row))
           )));
 
       awaitOne(true,
