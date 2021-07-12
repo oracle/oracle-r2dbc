@@ -91,11 +91,6 @@ public class TypeMappingTest {
    * <a href="https://r2dbc.io/spec/0.8.3.RELEASE/spec/html/#datatypes.mapping">
    * Table 4 of Section 12 of the R2DBC 0.8.3 Specification.
    * </a>
-   * </p><p>
-   * Oracle Database CLOB values may exceed the maximum size of a Java
-   * Language {@link String}, so the Oracle R2DBC Driver is not expected to
-   * support the mapping of CLOB/NCLOB data to {@code String}, however it is
-   * expected to support the mapping {@code String} to CLOB/NCLOB.
    * </p>
    */
   @Test
@@ -119,10 +114,8 @@ public class TypeMappingTest {
       // equivalent to the standard type named "NVARCHAR"
       verifyTypeMapping(connection, "नमस्कार, Oracle", "NVARCHAR2(100)");
 
-      // Expect CLOB and String to map for bind values, but not for row values.
-      // For row values, expect Oracle CLOB to be mapped to io.r2dbc.spi.Clob
-      verifyTypeMapping(connection, "Hola, Oracle", "CLOB",
-        (expected, actual) -> assertEquals(expected, clobToString(actual)));
+      // Expect CLOB and String to map
+      verifyTypeMapping(connection, "Hola, Oracle", "CLOB");
 
       // Expect CLOB and io.r2dbc.spi.Clob to map
       verifyTypeMapping(connection,
@@ -132,8 +125,7 @@ public class TypeMappingTest {
 
       // Expect NCLOB and String to map for bind values, but not for row values.
       // For row values, expect Oracle CLOB to be mapped to io.r2dbc.spi.Clob
-      verifyTypeMapping(connection, "こんにちは, Oracle", "NCLOB",
-        (expected, actual) -> assertEquals(expected, clobToString(actual)));
+      verifyTypeMapping(connection, "こんにちは, Oracle", "NCLOB");
 
       // Expect NCLOB and io.r2dbc.spi.Clob to map
       verifyTypeMapping(connection,
@@ -164,13 +156,8 @@ public class TypeMappingTest {
    * </a>
    * </p><p>
    * The Oracle Database does not support a fixed length binary type, like
-   * BINARY, so the Oracle R2DBC Driver is not expected to  support this
+   * BINARY, so the Oracle R2DBC Driver is not expected to support this
    * mapping.
-   * </p><p>
-   * Oracle Database BLOB values may exceed the maximum size of a Java
-   * Language {@link ByteBuffer}, so the Oracle R2DBC Driver is not expected to
-   * support the mapping of BLOB data to {@code ByteBuffer}, however it is
-   * expected to support the mapping {@code ByteBuffer} to BLOB.
    *</p>
    */
   @Test
@@ -199,8 +186,7 @@ public class TypeMappingTest {
       // Expect BLOB and ByteBuffer to map for bind values, but not for row
       // values. For row values, expect Oracle BLOB to be mapped to
       // io.r2dbc.spi.Blob
-      verifyTypeMapping(connection, byteBuffer, "BLOB",
-        (expected, actual) -> assertEquals(expected, blobToByteBuffer(actual)));
+      verifyTypeMapping(connection, byteBuffer, "BLOB");
 
       // Expect BLOB and io.r2dbc.spi.Blob to map
       verifyTypeMapping(connection,
@@ -422,9 +408,7 @@ public class TypeMappingTest {
    * from the {@code javaValue's} type, the {@code verifyEquals} function is
    * specified to convert the {@code Row's} expected mapping into the same type
    * as {@code javaValue}. This function is used when a bind type mapping
-   * isn't supported as a row type mapping, such as String type binds for CLOB
-   * type columns. The expected row mapping for CLOB is {@link Clob}, not
-   * String.
+   * isn't supported as a row type mapping.
    * </p><p>
    * This method will also INSERT a Java {@code null} bind value, and expect
    * to get a Java {@code null} value from a SELECT of the SQL NULL value.
