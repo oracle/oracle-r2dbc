@@ -411,9 +411,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       return "jdbc:oracle:thin:@" + descriptor.toString();
     }
     else {
-      String host = options.getRequiredValue(HOST);
-      Integer port = options.getValue(PORT);
-      String serviceName = options.getValue(DATABASE);
+      Object host = options.getRequiredValue(HOST);
+      Integer port = parseOptionValue(
+        PORT, options, Integer.class, Integer::valueOf);
+      Object serviceName = options.getValue(DATABASE);
       Boolean isTcps = parseOptionValue(
         SSL, options, Boolean.class, Boolean::valueOf);
 
@@ -466,11 +467,11 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static void configureStandardOptions(
     OracleDataSource oracleDataSource, ConnectionFactoryOptions options) {
 
-    String user = options.getValue(USER);
+    Object user = options.getValue(USER);
     if (user != null)
-      runOrHandleSQLException(() -> oracleDataSource.setUser(user));
+      runOrHandleSQLException(() -> oracleDataSource.setUser(user.toString()));
 
-    CharSequence password = options.getValue(PASSWORD);
+    Object password = options.getValue(PASSWORD);
     if (password != null) {
       runOrHandleSQLException(() ->
         oracleDataSource.setPassword(password.toString()));
@@ -502,12 +503,12 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     OracleDataSource oracleDataSource, ConnectionFactoryOptions options) {
 
     // Handle the short form of the TNS_ADMIN option
-    String tnsAdmin = options.getValue(Option.valueOf("TNS_ADMIN"));
+    Object tnsAdmin = options.getValue(Option.valueOf("TNS_ADMIN"));
     if (tnsAdmin != null) {
       // Configure using the long form: oracle.net.tns_admin
       runOrHandleSQLException(() ->
         oracleDataSource.setConnectionProperty(
-          OracleConnection.CONNECTION_PROPERTY_TNS_ADMIN, tnsAdmin));
+          OracleConnection.CONNECTION_PROPERTY_TNS_ADMIN, tnsAdmin.toString()));
     }
 
     // Apply any extended options as connection properties
@@ -552,13 +553,13 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static <T> T parseOptionValue(
     Option<T> option, ConnectionFactoryOptions options, Class<T> type,
     Function<String, T> parser) {
-    T value = options.getValue(option);
+    Object value = options.getValue(option);
 
     if (value == null) {
       return null;
     }
     else if (type.isInstance(value)) {
-      return value;
+      return type.cast(value);
     }
     else if (value instanceof String) {
       try {
