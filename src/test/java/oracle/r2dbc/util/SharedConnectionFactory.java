@@ -35,6 +35,7 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.LinkedList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -391,6 +392,18 @@ public class SharedConnectionFactory implements ConnectionFactory {
     public Publisher<Void> setAutoCommit(boolean autoCommit) {
       requireNotClosed();
       return connection.setAutoCommit(autoCommit);
+    }
+
+    @Override
+    public Publisher<Void> setLockWaitTimeout(Duration timeout) {
+      requireNotClosed();
+      return connection.setLockWaitTimeout(timeout);
+    }
+
+    @Override
+    public Publisher<Void> setStatementTimeout(Duration timeout) {
+      requireNotClosed();
+      return connection.setStatementTimeout(timeout);
     }
 
     @Override

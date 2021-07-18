@@ -24,6 +24,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
+import io.r2dbc.spi.RowMetadata;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -274,8 +275,8 @@ public class OracleResultImplTest {
           .execute())
           .flatMapMany(selectResult -> {
             // Expect IllegalArgumentException for a null mapping function
-            assertThrows(
-              IllegalArgumentException.class, () -> selectResult.map(null));
+            assertThrows(IllegalArgumentException.class,
+              () -> selectResult.map((BiFunction<Row, RowMetadata, ?>)null));
 
             Publisher<List<Integer>> selectRowPublisher =
               selectResult.map((row, metadata) ->

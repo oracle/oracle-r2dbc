@@ -33,6 +33,7 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import java.sql.SQLException;
+import java.time.Duration;
 
 import static io.r2dbc.spi.IsolationLevel.READ_COMMITTED;
 import static io.r2dbc.spi.IsolationLevel.SERIALIZABLE;
@@ -564,6 +565,16 @@ final class OracleConnectionImpl implements Connection {
       }
     }))
     .cache();
+  }
+
+  @Override
+  public Publisher<Void> setLockWaitTimeout(Duration timeout) {
+    return null;//TODO
+  }
+
+  @Override
+  public Publisher<Void> setStatementTimeout(Duration timeout) {
+    return null;//TODO
   }
 
   /**

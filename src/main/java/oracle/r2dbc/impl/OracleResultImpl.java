@@ -26,6 +26,8 @@ import java.sql.ResultSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
@@ -208,7 +210,7 @@ abstract class OracleResultImpl implements Result {
         BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
         return Mono.fromSupplier(() ->
           mappingFunction.apply(
-            outParameterRow, outParameterRow.metadata()));
+            outParameterRow, outParameterRow.getMetadata()));
       }
 
       @Override
@@ -280,6 +282,16 @@ abstract class OracleResultImpl implements Result {
         : Mono.error(new IllegalStateException(
             "Multiple subscribers are not supported by the Oracle R2DBC " +
               " Result.map(BiFunction) publisher")));
+  }
+
+  @Override
+  public Result filter(Predicate<Segment> filter) {
+    return null;//TODO
+  }
+
+  @Override
+  public <T> Publisher<T> flatMap(Function<Segment, ? extends Publisher<? extends T>> mappingFunction) {
+    return null;//TODO
   }
 
   /**

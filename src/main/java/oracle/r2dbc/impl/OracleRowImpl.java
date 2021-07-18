@@ -26,6 +26,7 @@ import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Row;
 
+import io.r2dbc.spi.RowMetadata;
 import oracle.jdbc.OracleTypes;
 
 import java.nio.ByteBuffer;
@@ -214,10 +215,17 @@ final class OracleRowImpl implements Row {
   }
 
   /**
-   * Returns the metadata of this {@code Row}.
-   * @return Metadata of this {@code Row}
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by returning the metadata this {@code Row}
+   * was constructed with. The return type is declared as
+   * {@code OracleRowMetadataImpl} rather than {@code RowMetadata} so that
+   * package internal callers can access any package private methods of
+   * {@code OracleRowMetadataImpl}.
+   * </p>
    */
-  OracleRowMetadataImpl metadata() {
+  @Override
+  public OracleRowMetadataImpl getMetadata() {
     return rowMetadata;
   }
 
