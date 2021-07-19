@@ -152,8 +152,10 @@ final class OracleLargeObjects {
 
       if (isSubscribed.compareAndSet(false, true)) {
         Flux.from(contentPublisher)
-          .doOnTerminate(() -> Mono.from(releasePublisher).subscribe())
-          .doOnCancel(() -> Mono.from(releasePublisher).subscribe())
+          // Call to free the LOB should happen *after* the LOB content
+          // publisher terminates, so that calls to Blob/Clob.freeAsyncOracle
+          // do not block.
+          .doFinally(signalType -> Mono.from(releasePublisher).subscribe())
           .subscribe(subscriber);
       }
       else {
