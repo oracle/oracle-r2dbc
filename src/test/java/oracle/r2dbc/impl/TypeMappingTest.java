@@ -59,7 +59,10 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -383,6 +386,83 @@ public class TypeMappingTest {
 
   /**
    * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * where the Java type is {@link Boolean} and the SQL type is a numeric type.
+   * The R2DBC 0.9.0 Specification only requires that Java {@code Boolean} be
+   * mapped to the SQL BOOLEAN type, however Oracle Database does not support a
+   * BOOLEAN column type. To allow the use of the {@code Boolean} bind
+   * values, Oracle JDBC supports binding the Boolean as a NUMBER. Oracle
+   * R2DBC is expected to expose this functionality as well.
+   *</p>
+   */
+  @Test
+  public void testBooleanNumericMapping() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Expect NUMBER and Boolean to map, with Row.get(...) mapping the
+      // NUMBER column value to BigDecimal
+      verifyTypeMapping(connection, true, "NUMBER",
+        (expected, actual) -> assertEquals(BigDecimal.ONE, actual));
+      verifyTypeMapping(connection, false, "NUMBER",
+        (expected, actual) -> assertEquals(BigDecimal.ZERO, actual));
+
+      // Expect NUMBER and Boolean to map, with Row.get(..., Boolean.class)
+      // mapping the NUMBER column value to Boolean
+      verifyTypeMapping(connection, true, "NUMBER",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertTrue(actual));
+      verifyTypeMapping(connection, false, "NUMBER",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertFalse(actual));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * where the Java type is a {@code byte} array and the SQL type is RAW or
+   * BLOB. The R2DBC 0.9.0 Specification does not require drivers to
+   * support byte array mapping, however this mapping is required by
+   * the JDBC 4.3 specification. Oracle R2DBC is expected to expose mappings
+   * supported by Oracle JDBC.
+   *</p>
+   */
+  @Test
+  public void testByteArrayMapping() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      byte[] byteArray = new byte[100];
+
+      for (int i = 0; i < byteArray.length; i++)
+        byteArray[i] = (byte) i;
+
+      // Expect RAW and byte[] to map, with Row.get(...) mapping the
+      // RAW column value to ByteBuffer
+      verifyTypeMapping(connection, byteArray, "RAW(100)",
+        (expected, actual) -> assertEquals(ByteBuffer.wrap(byteArray), actual));
+
+      // Expect RAW and byte[] to map, with Row.get(..., byte[].class)
+      // mapping the RAW column value to byte[]
+      verifyTypeMapping(connection, byteArray, "RAW(100)",
+        row -> row.get(0, byte[].class),
+        (expected, actual) -> assertArrayEquals(byteArray, actual));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  // TODO: More tests for JDBC 4.3 mappings like BigInteger to BIGINT,
+  //  java.sql.Date to DATE, java.sql.Blob to BLOB? Oracle R2DBC exposes all
+  //  type mappings supported by Oracle JDBC.
+
+  /**
+   * <p>
    * Verifies the conversion between a Java Language type and a SQL Language
    * type. The Java Language {@code javaValue} is converted to a SQL Language
    * value of a type specified by {@code sqlTypeDdl}. The SQL Language value is
@@ -427,11 +507,10 @@ public class TypeMappingTest {
   private static <T> void verifyTypeMapping(
     Connection connection, T javaValue, String sqlTypeDdl,
     BiConsumer<T, Object> verifyEquals) {
-
     verifyTypeMapping(connection, javaValue, sqlTypeDdl,
       row -> row.get("javaValue"), verifyEquals);
   }
-
+  
   /**
    * <p>
    * Verifies the conversion between a Java Language type and a SQL Language
@@ -456,7 +535,6 @@ public class TypeMappingTest {
   private static <T, U> void verifyTypeMapping(
     Connection connection, T javaValue, String sqlTypeDdl,
     Function<Row, U> rowMapper, BiConsumer<T, U> verifyEquals) {
-
     String table = "verify_" + sqlTypeDdl.replaceAll("[^\\p{Alnum}]", "_");
     try {
       awaitExecution(connection.createStatement(String.format(
@@ -467,8 +545,8 @@ public class TypeMappingTest {
         .bind("javaValue", javaValue).add()
         .bindNull("javaValue", javaValue.getClass()).add());
 
-      verifyEquals.accept(javaValue, awaitOne(
-        Flux.from(connection.createStatement(
+      verifyEquals.accept(javaValue,
+        awaitOne(Flux.from(connection.createStatement(
           "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
           .execute())
           .flatMap(result ->
