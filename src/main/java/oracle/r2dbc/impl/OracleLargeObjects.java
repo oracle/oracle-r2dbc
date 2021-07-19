@@ -155,7 +155,7 @@ final class OracleLargeObjects {
           // Call to free the LOB should happen *after* the LOB content
           // publisher terminates, so that calls to Blob/Clob.freeAsyncOracle
           // do not block.
-          .doAfterTerminate(() -> Mono.from(releasePublisher).subscribe())
+          .doFinally(signalType -> Mono.from(releasePublisher).subscribe())
           .subscribe(subscriber);
       }
       else {
