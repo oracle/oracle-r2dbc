@@ -213,7 +213,7 @@ public class OracleLargeObjectsTest {
         "SELECT x,y FROM testBlobInsert WHERE id = 0")
         .execute())
         .flatMap(result -> result.map((row, metadata) ->
-          asList((Blob)row.get("x"), (Blob)row.get("y"))))
+          asList(row.get("x", Blob.class), row.get("y", Blob.class))))
         .single());
 
       // Expect bytes written to INSERTed Blobs to match the bytes read from
@@ -263,7 +263,7 @@ public class OracleLargeObjectsTest {
         "SELECT x,y FROM testBlobInsert ORDER BY id")
         .execute())
         .flatMap(result -> result.map((row, metadata) ->
-          asList((Blob)row.get("x"), (Blob)row.get("y")))));
+          asList(row.get("x", Blob.class), row.get("y", Blob.class)))));
 
       // Expect bytes written to INSERTed Blobs to match the bytes read from
       // SELECTed Blobs
@@ -302,13 +302,12 @@ public class OracleLargeObjectsTest {
         .bind("x", createClob(xBytes))
         .bind("y", createClob(yBytes)));
 
-      // Expect row.get(int/String) to use Clob as the default Java type
-      // mapping for CLOB type columns.
+      // Expect row.get(int/String) to support Clob as a Java type mapping
       List<Clob> Clobs = awaitOne(Flux.from(connection.createStatement(
         "SELECT x,y FROM testClobInsert WHERE id = 0")
         .execute())
         .flatMap(result -> result.map((row, metadata) ->
-          asList((Clob) row.get("x"), (Clob) row.get("y"))))
+          asList(row.get("x", Clob.class), row.get("y", Clob.class))))
         .single());
 
       // Expect bytes written to INSERTed Clobs to match the bytes read from
@@ -358,7 +357,7 @@ public class OracleLargeObjectsTest {
         "SELECT x,y FROM testClobInsert ORDER BY id")
         .execute())
         .flatMap(result -> result.map((row, metadata) ->
-          asList((Clob)row.get("x"), (Clob)row.get("y")))));
+          asList(row.get("x", Clob.class), row.get("y", Clob.class)))));
 
       // Expect bytes written to INSERTed Clobs to match the bytes read from
       // SELECTed Clobs

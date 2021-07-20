@@ -31,17 +31,11 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.support.AbstractLobCreatingPreparedStatementCallback;
-import org.springframework.jdbc.support.lob.DefaultLobHandler;
-import org.springframework.jdbc.support.lob.LobCreator;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Collection;
@@ -64,7 +58,7 @@ import static oracle.r2dbc.test.DatabaseConfig.user;
  * Subclass implementation of the R2DBC {@link TestKit} for Oracle Database.
  * This test kit implementation overrides super class test methods that are
  * fundamentally incompatible with Oracle Database. The javadoc of each
- * overridden test method describes why it must be overriden when interacting
+ * overridden test method describes why it must be overridden when interacting
  * with an Oracle Database.
  * </p><p>
  * The developers of the Oracle R2DBC Driver are mindful of the fact that
@@ -295,157 +289,6 @@ public class OracleTestKit implements TestKit<Integer> {
       .expectNext("VALUE").as("Column label col1 (get by uppercase)")
       .expectNext(true).as("getColumnNames.contains(value)")
       .expectNext(true).as("getColumnNames.contains(VALUE)")
-      .verifyComplete();
-  }
-
-  /**
-   * {@inheritDoc}
-   * <p>
-   * Overrides the default implementation to expect {@link Clob} as the default
-   * Java type mapping for CLOB columns. The default implementation of this
-   * test in {@link TestKit#duplicateColumnNames()} expects the R2DBC
-   * Specification's default type mapping guideline for CLOB columns, which
-   * is java.lang.String.
-   * </p><p>
-   * Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} can not be
-   * supported because the Oracle Database allows LOBs to store terabytes of
-   * data. If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   * </p><p>
-   * This override does not prevent this test from verifying the behavior of a
-   * Clob returned from a SQL select query.
-   * </p>
-   */
-  @Test
-  public void clobSelect() {
-    getJdbcOperations().execute("INSERT INTO clob_test VALUES (?)", new AbstractLobCreatingPreparedStatementCallback(new DefaultLobHandler()) {
-
-      @Override
-      protected void setValues(PreparedStatement ps, LobCreator lobCreator) throws SQLException {
-        lobCreator.setClobAsString(ps, 1, "test-value");
-      }
-
-    });
-
-    // CLOB as String is not supported
-    Mono.from(getConnectionFactory().create())
-      .flatMapMany(connection -> Flux.from(connection
-
-        .createStatement("SELECT * from clob_test")
-        .execute())
-        .flatMap(result -> result
-          // Note the overridden behavior below: String conversion is an error
-          .map((row, rowMetadata) -> {
-            try {
-              row.get("value", String.class);
-              return "Returns normally";
-            }
-            catch (R2dbcException expected) {
-              return "Throws R2dbcException";
-            }
-          }))
-
-        .concatWith(close(connection)))
-      .as(StepVerifier::create)
-      .expectNext("Throws R2dbcException").as("get CLOB as String")
-      .verifyComplete();
-
-    // CLOB consume as Clob
-    Mono.from(getConnectionFactory().create())
-      .flatMapMany(connection -> Flux.from(connection
-
-        .createStatement("SELECT * from clob_test")
-        .execute())
-        .flatMap(result -> result
-          // Note the overridden behavior below: The default mapping is Clob
-          .map((row, rowMetadata) -> (Clob)row.get("value")))
-        .flatMap(clob -> Flux.from(clob.stream())
-          .reduce(new StringBuilder(), StringBuilder::append)
-          .map(StringBuilder::toString)
-          .concatWith(TestKit.discard(clob)))
-
-        .concatWith(close(connection)))
-      .as(StepVerifier::create)
-      .expectNext("test-value").as("value from select")
-      .verifyComplete();
-  }
-
-
-  /**
-   * {@inheritDoc}
-   * <p>
-   * Overrides the default implementation to expect Blob as the default Java
-   * type mapping for BLOB columns. The default implementation of this
-   * test in {@link TestKit#duplicateColumnNames()} expects the R2DBC
-   * Specification's default type mapping guideline for BLOB columns,
-   * which is java.nio.ByteBuffer.
-   * </p><p>
-   * Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} can not be
-   * supported because the Oracle Database allows LOBs to store terabytes of
-   * data. If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   * </p><p>
-   * This override does not prevent this test from verifying the behavior of a
-   * Blob returned from a SQL select query.
-   * </p>
-   */
-  @Test
-  public void blobSelect() {
-    getJdbcOperations().execute("INSERT INTO blob_test VALUES (?)", new AbstractLobCreatingPreparedStatementCallback(new DefaultLobHandler()) {
-
-      @Override
-      protected void setValues(PreparedStatement ps, LobCreator lobCreator) throws SQLException {
-        lobCreator.setBlobAsBytes(ps, 1, StandardCharsets.UTF_8.encode("test-value").array());
-      }
-
-    });
-
-    // BLOB as ByteBuffer is not supported
-    Mono.from(getConnectionFactory().create())
-      .flatMapMany(connection -> Flux.from(connection
-
-        .createStatement("SELECT * from blob_test")
-        .execute())
-
-        .flatMap(result -> result
-          // Note the overridden behavior below: ByteBuffer conversion is not
-          // supported
-          .map((row, rowMetadata) -> {
-            try {
-              row.get("value", ByteBuffer.class);
-              return "Returns normally";
-            }
-            catch (R2dbcException expected) {
-              return "Throws R2dbcException";
-            }
-          }))
-        .concatWith(close(connection)))
-      .as(StepVerifier::create)
-      .expectNext("Throws R2dbcException").as("get BLOB as ByteBuffer")
-      .verifyComplete();
-
-    // BLOB as Blob
-    Mono.from(getConnectionFactory().create())
-      .flatMapMany(connection -> Flux.from(connection
-
-        .createStatement("SELECT * from blob_test")
-        .execute())
-        .flatMap(result -> result
-          .map((row, rowMetadata) -> row.get("value", Blob.class)))
-        .flatMap(blob -> Flux.from(blob.stream())
-          .reduce(ByteBuffer::put)
-          .concatWith(TestKit.discard(blob)))
-
-        .concatWith(close(connection)))
-      .as(StepVerifier::create)
-      .expectNextMatches(actual -> {
-        ByteBuffer expected = StandardCharsets.UTF_8.encode("test-value");
-        return Arrays.equals(expected.array(), actual.array());
-      })
       .verifyComplete();
   }
 

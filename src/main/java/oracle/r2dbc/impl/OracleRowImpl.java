@@ -33,7 +33,6 @@ import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 
@@ -85,19 +84,7 @@ final class OracleRowImpl implements Row {
    * Implements the R2DBC SPI method by using the {@code JdbcRow} that backs
    * this row to convert the specified column value into the Oracle R2DBC
    * Driver's default Java type mapping for the column's SQL type.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation will map {@code BLOB} to
-   * {@link Blob} and map {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of
-   * data. If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
    *
    * @throws IllegalArgumentException If the {@code index} is less than 0,
    * or greater than the maximum column index.
@@ -115,20 +102,7 @@ final class OracleRowImpl implements Row {
    * Implements the R2DBC SPI method by using the JDBC ResultSet that backs
    * this row to convert the specified column value into the specified {@code
    * type}.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation only supports mapping
-   * {@code BLOB} to {@link Blob} and {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of data.
-   * If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   *
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code index} is less than 0,
    * or greater than the maximum column index.
@@ -152,20 +126,7 @@ final class OracleRowImpl implements Row {
    * This method uses a case-insensitive column name match. If more than one
    * column has a matching name, this method returns the value of the
    * matching column with the lowest index.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation will map {@code BLOB} to
-   * {@link Blob} and map {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of data.
-   * If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   *
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If there is no column with a matching
    * {@code name}.
@@ -188,20 +149,7 @@ final class OracleRowImpl implements Row {
    * This method uses a case-insensitive column name match. If more than one
    * column has a matching name, this method returns the value of the
    * matching column with the lowest index.
-   * </p><p>
-   * This implementation does not support mapping the {@code BLOB} SQL type to
-   * {@code ByteBuffer}, nor does it support mapping the {@code CLOB} SQL
-   * type to {@code String}. This implementation only supports mapping
-   * {@code BLOB} to {@link Blob} and {@code CLOB} to {@link Clob}.
    * </p>
-   *
-   * @implNote Mapping {@code BLOB/CLOB} to {@code ByteBuffer/String} is not
-   * supported because Oracle Database allows LOBs to store terabytes of data.
-   * If the Oracle R2DBC Driver were to fully materialize a LOB
-   * prior to emitting this row, the amount of memory necessary to do so
-   * might exceed the capacity of {@code ByteBuffer/String}, and could even
-   * exceed the amount of memory available to the Java Virtual Machine.
-   *
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If conversion to the specified
    * {@code type} is not supported.
@@ -252,9 +200,6 @@ final class OracleRowImpl implements Row {
    * @throws R2dbcException If the conversion is not supported.
    */
   private <T> T convertColumnValue(int index, Class<T> type) {
-    requireSupportedTypeMapping(index, type);
-
-    //TODO Should support type.isAssignableFrom(...) here?
     if (type.equals(ByteBuffer.class))
       return type.cast(getByteBuffer(index));
     else if (type.equals(io.r2dbc.spi.Blob.class))
@@ -275,10 +220,6 @@ final class OracleRowImpl implements Row {
    * A JDBC driver is not required to support {@code ByteBuffer} conversions
    * for any SQL type, so this method is necessary to implement the
    * conversion to {@code ByteBuffer} from a type that is supported by JDBC.
-   * </p><p>
-   * This method should NOT be called when the database column type is BLOB.
-   * The JDBC driver may require blocking network I/O in order to materialize a
-   * BLOB as a ByteBuffer.
    * </p>
    * @param index 0 based column index
    * @return A column value as a {@code ByteBuffer}, or null if the column
@@ -395,37 +336,6 @@ final class OracleRowImpl implements Row {
   }
 
   /**
-   * <p>
-   * Checks if the Oracle R2DBC Driver supports mapping the database type
-   * of the column at the specified {@code index} to the Java type specified
-   * as {@code type}.
-   * </p><p>
-   * This method handles cases where the JDBC driver may support a mapping 
-   * that the Oracle R2DBC Driver does not support. For instance, the JDBC
-   * driver may support mapping CLOB columns to String, but the Oracle R2DBC
-   * Driver does not support this as the JDBC driver may require blocking 
-   * network I/O to convert a CLOB into a String.
-   * </p>
-   *
-   * @param index 0-based column index
-   * @param type Class of the type that the column value is converted to
-   * @throws R2dbcException if the type mapping is not supported
-   */
-  private void requireSupportedTypeMapping(int index, Class<?> type) {
-
-    switch (getColumnTypeNumber(index)) {
-      case Types.BLOB:
-        if (! type.equals(Blob.class))
-          throw unsupportedTypeMapping("BLOB", index, type);
-        break;
-      case Types.CLOB:
-        if (! type.equals(Clob.class))
-          throw unsupportedTypeMapping("CLOB", index, type);
-        break;
-    }
-  }
-
-  /**
    * Returns the SQL type number of the column at a given {@code index}. The
    * returned number identifies either a standard type defined by
    * {@link Types} or a vendor specific type defined by the JDBC driver. This
@@ -440,24 +350,6 @@ final class OracleRowImpl implements Row {
       .getVendorTypeNumber();
 
     return typeNumber == null ? Types.OTHER : typeNumber;
-  }
-
-  /**
-   * Returns an exception indicating that the Oracle R2DBC Driver does
-   * not support mapping the database type specified as {@code sqlTypeName}
-   * to the Java type specified as {@code type}.
-   * @param sqlTypeName Name of a SQL type, like "BLOB" or "NUMBER"
-   * @param index Column index having a SQL type named {@code sqlTypeName}
-   * @param type Java type to which mapping is not supported
-   * @return An exception that expresses the unsupported mapping
-   */
-  private static R2dbcException unsupportedTypeMapping(
-    String sqlTypeName, int index, Class<?> type) {
-    return OracleR2dbcExceptions.newNonTransientException(
-      String.format("Unsupported SQL to Java type mapping. " +
-        "SQL Type: %s, Column Index: %d, Java Type: %s",
-        sqlTypeName, index, type.getName()),
-      null);
   }
 
 }

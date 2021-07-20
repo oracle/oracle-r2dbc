@@ -192,7 +192,14 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
       // Support statement cache configuration
       Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
+        OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE),
+
+      // Support LOB prefetch size configuration. A large size is configured
+      // by default to support cases where memory is available to store entire
+      // LOB values. A non-default size may be configured when LOB values are
+      // too large to be prefetched and must be streamed from Blob/Clob objects.
+      Option.valueOf(
+        OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
 
     );
 
@@ -599,28 +606,50 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     runOrHandleSQLException(() ->
       oracleDataSource.setConnectionProperty(enableJdbcSpecCompliance, "true"));
 
-    // Have the Oracle JDBC Driver cache PreparedStatements by default.
-    runOrHandleSQLException(() -> {
-      // Don't override a value set by user code
-      String userValue = oracleDataSource.getConnectionProperty(
-        OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE);
+    // Cache PreparedStatements by default. The default value of the
+    // OPEN_CURSORS parameter in the 21c and 19c databases is 50:
+    // https://docs.oracle.com/en/database/oracle/oracle-database/21/refrn/OPEN_CURSORS.html#GUID-FAFD1247-06E5-4E64-917F-AEBD4703CF40
+    // Assuming this default, then a default cache size of 25 will keep
+    // each session at or below 50% of it's cursor capacity, which seems
+    // reasonable.
+    setPropertyIfAbsent(oracleDataSource,
+      OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE, "25");
 
-      if (userValue == null) {
-        // The default value of the OPEN_CURSORS parameter in the 21c
-        // and 19c databases is 50:
-        // https://docs.oracle.com/en/database/oracle/oracle-database/21/refrn/OPEN_CURSORS.html#GUID-FAFD1247-06E5-4E64-917F-AEBD4703CF40
-        // Assuming this default, then a default cache size of 25 will keep
-        // each session at or below 50% of it's cursor capacity, which seems
-        // reasonable.
-        oracleDataSource.setConnectionProperty(
-          OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE,
-          "25");
-      }
-    });
+    // Prefetch LOB values by default. The database's maximum supported
+    // prefetch size, 1GB, is configured by default. This is done so that
+    // Row.get(...) can map LOB values into ByteBuffer/String without a
+    // blocking database call. If the entire value is prefetched, then JDBC
+    // won't need to fetch the remainder from the database when the entire is
+    // value requested as a ByteBuffer or String.
+    setPropertyIfAbsent(oracleDataSource,
+      OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
+      "1048576");
 
     // TODO: Disable the result set cache? This is needed to support the
     //  SERIALIZABLE isolation level, which requires result set caching to be
     //  disabled.
+  }
+
+  /**
+   * Sets a JDBC connection {@code property} to a provided {@code value} if an
+   * {@code oracleDataSource} has not already been configured with a
+   * {@code value} for that {@code property}. This method is used to set
+   * default values for properties that may otherwise be configured with user
+   * defined values.
+   * @param oracleDataSource DataSource to configure. Not null.
+   * @param property Name of property to set. Not null.
+   * @param value Value of {@code property} to set. Not null.
+   */
+  private static void setPropertyIfAbsent(
+    OracleDataSource oracleDataSource, String property, String value) {
+
+    runOrHandleSQLException(() -> {
+      String userValue = oracleDataSource.getConnectionProperty(property);
+
+      // Don't override a value set by user code
+      if (userValue == null)
+        oracleDataSource.setConnectionProperty(property, value);
+    });
   }
 
   /**

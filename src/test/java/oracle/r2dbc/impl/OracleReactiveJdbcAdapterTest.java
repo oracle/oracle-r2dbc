@@ -30,8 +30,6 @@ import oracle.jdbc.datasource.OracleDataSource;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.URL;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -79,6 +77,7 @@ public class OracleReactiveJdbcAdapterTest {
    * {@link OracleReactiveJdbcAdapter#createDataSource(ConnectionFactoryOptions)}
    */
   @Test
+  @SuppressWarnings("deprecation")
   public void testCreateDataSource() throws SQLException {
 
     // Verify extended options that configure Oracle JDBC Driver connection
@@ -92,6 +91,9 @@ public class OracleReactiveJdbcAdapterTest {
       OracleConnection.CONNECTION_PROPERTY_ENABLE_AC_SUPPORT, "false");
     defaultProperties.setProperty(
       OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE, "25");
+    defaultProperties.setProperty(
+      OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
+      "1048576");
 
     // Expect only default connection properties when no extended
     // options are supplied
@@ -197,8 +199,7 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Create a tnsnames.ora file with an alias for the descriptor
     Files.writeString(Path.of("tnsnames.ora"),
-      String.format("test_alias=" + descriptor),
-      StandardOpenOption.CREATE_NEW);
+      "test_alias="+descriptor, StandardOpenOption.CREATE_NEW);
 
     // Get the current working directory, with percent encodings to replace
     // any characters that are invalid in a URL
@@ -272,7 +273,7 @@ public class OracleReactiveJdbcAdapterTest {
         String.format("user=%s", user()),
         StandardOpenOption.CREATE_NEW);
       try {
-        // Expect to connect with the tnsnames.ora and ojdbc.propeties files,
+        // Expect to connect with the tnsnames.ora and ojdbc.properties files,
         // when a URL specifies their path and an alias, the properties file
         // specifies a user, and a standard option specifies the password.
         awaitNone(awaitOne(

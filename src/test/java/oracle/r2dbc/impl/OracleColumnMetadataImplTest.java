@@ -21,8 +21,6 @@
 
 package oracle.r2dbc.impl;
 
-import io.r2dbc.spi.Blob;
-import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Nullability;
@@ -57,7 +55,6 @@ import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Verifies that
@@ -95,16 +92,17 @@ public class OracleColumnMetadataImplTest {
         connection, "NVARCHAR2(888)", JDBCType.NVARCHAR, R2dbcType.NVARCHAR,
         888, null, String.class, "test");
 
-      // Expect CLOB and io.r2dbc.spi.Clob to map. String can be used as a
-      // bind value, but Clob is the default mapping for Row values.
+      // Expect CLOB and String to map.
       verifyColumnMetadata(
-        connection, "CLOB", JDBCType.CLOB, OracleR2dbcTypes.CLOB, null, null,
-        Clob.class, "test");
+        connection, "CLOB", JDBCType.CLOB,
+        SqlTypeMap.toR2dbcType(JDBCType.CLOB),/* TODO: R2dbcType.CLOB,*/
+        null, null, String.class, "test");
 
-      // Expect NCLOB and io.r2dbc.spi.Clob to map
+      // Expect NCLOB and String to map
       verifyColumnMetadata(
-        connection, "NCLOB", JDBCType.NCLOB, OracleR2dbcTypes.NCLOB, null, null,
-        Clob.class, "test");
+        connection, "NCLOB", JDBCType.NCLOB,
+        SqlTypeMap.toR2dbcType(JDBCType.NCLOB),/* TODO: R2dbcType.NCLOB,*/
+        null, null, String.class, "test");
 
       // Expect LONG and String to map.
       verifyColumnMetadata(
@@ -137,11 +135,10 @@ public class OracleColumnMetadataImplTest {
         OracleR2dbcTypes.LONG_RAW, Integer.MAX_VALUE, null, ByteBuffer.class,
         ByteBuffer.wrap(new byte[3]));
 
-      // Expect BLOB and io.r2dbc.spi.Blob to map. ByteBuffer can be used as
-      // a bind value, but Blob is the default mapping for Row values.
+      // Expect BLOB and ByteBuffer to map.
       verifyColumnMetadata(
-        connection, "BLOB", JDBCType.BLOB, OracleR2dbcTypes.BLOB, null, null,
-        Blob.class, ByteBuffer.wrap(new byte[3]));
+        connection, "BLOB", JDBCType.BLOB, R2dbcType.BLOB, null, null,
+        ByteBuffer.class, ByteBuffer.wrap(new byte[3]));
 
     }
     finally {
@@ -331,7 +328,7 @@ public class OracleColumnMetadataImplTest {
 
   /**
    * Calls
-   * {@link #verifyColumnMetadata(Connection, String, SQLType, Integer, Integer, Nullability, Class, Object)}
+   * {@link #verifyColumnMetadata(Connection, String, SQLType, Type, Integer, Integer, Nullability, Class, Object)}
    * with the nullable and not nullable variants of the {@code columnTypeDdl}
    */
   private void verifyColumnMetadata(
