@@ -322,7 +322,19 @@ public class OracleReactiveJdbcAdapterTest {
 
       verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.parse(
         "r2dbc:oracle://localhost:" + listeningChannel.socket().getLocalPort()
-          + "?connectTimeout=PT1S")); // The value is parsed as a Duration
+          + "?connectTimeout=PT2S")); // The value is parsed as a Duration
+
+      verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.builder()
+        .option(DRIVER, "oracle")
+        .option(HOST, "localhost")
+        .option(PORT, listeningChannel.socket().getLocalPort())
+        .option(DATABASE, serviceName())
+        .option(CONNECT_TIMEOUT, Duration.ofMillis(500))
+        .build());
+
+      verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.parse(
+        "r2dbc:oracle://localhost:" + listeningChannel.socket().getLocalPort()
+          + "?connectTimeout=PT0.5S")); // The value is parsed as a Duration
     }
   }
 
