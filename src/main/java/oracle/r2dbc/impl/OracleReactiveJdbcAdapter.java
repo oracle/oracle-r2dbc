@@ -68,8 +68,6 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.SSL;
 
-import static java.sql.Statement.RETURN_GENERATED_KEYS;
-
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
@@ -490,7 +488,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         oracleDataSource.setLoginTimeout(
           Math.toIntExact(timeout.getSeconds())
             // Round up to nearest whole second
-            + timeout.getNano() == 0 ? 0 : 1));
+            + (timeout.getNano() == 0 ? 0 : 1)));
     }
 
   }
