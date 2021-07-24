@@ -197,7 +197,7 @@ behavior of that Publisher in regards to deferred execution and multiple Subscri
 subscribes, supports multiple Subscribers, and caches the result of a database call
 (the same result of the same call is emitted to each Subscriber).
 - Typically, a Publisher of multiple items defers execution until a Subscriber 
-signals demand, and does not support mulitple subscribers.
+signals demand, and does not support multiple subscribers.
 
 ### Errors
 - The error code of an R2dbcException is an [Oracle Database 
