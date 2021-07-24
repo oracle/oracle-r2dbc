@@ -50,24 +50,6 @@ public final class OracleR2dbcTypes {
     new TypeImpl(Float.class, "BINARY_FLOAT");
 
   /**
-   * A Binary Large Object (BLOB) as implemented by Oracle Database. The default
-   * Java type mapping is {@link io.r2dbc.spi.Blob} rather than
-   * {@link java.nio.ByteBuffer}, which is the mapping of the standard
-   * {@link io.r2dbc.spi.R2dbcType#BLOB}.
-   */
-  public static final Type BLOB =
-    new TypeImpl(io.r2dbc.spi.Blob.class, "BLOB");
-
-  /**
-   * A Character Large Object (BLOB) as implemented by Oracle Database. The
-   * default Java type mapping is {@link io.r2dbc.spi.Clob} rather than
-   * {@link String}, which is the mapping of the standard
-   * {@link io.r2dbc.spi.R2dbcType#CLOB}.
-   */
-  public static final Type CLOB =
-    new TypeImpl(io.r2dbc.spi.Clob.class, "CLOB");
-
-  /**
    * Stores a period of time in days, hours, minutes, and seconds.
    */
   public static final Type INTERVAL_DAY_TO_SECOND =
@@ -93,15 +75,6 @@ public final class OracleR2dbcTypes {
    */
   public static final Type LONG_RAW =
     new TypeImpl(ByteBuffer.class, "LONG RAW");
-
-  /**
-   * A National Character Large Object (NCLOB) as implemented by Oracle
-   * Database. The default Java type mapping is {@link io.r2dbc.spi.Clob}
-   * rather than {@link String}, which is the mapping of the standard
-   * {@link io.r2dbc.spi.R2dbcType#NCLOB}.
-   */
-  public static final Type NCLOB =
-    new TypeImpl(io.r2dbc.spi.Clob.class, "NCLOB");
 
   /**
    * Base 64 string representing the unique address of a row in its table.

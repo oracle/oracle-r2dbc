@@ -46,6 +46,7 @@ import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -58,7 +59,10 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -91,11 +95,6 @@ public class TypeMappingTest {
    * <a href="https://r2dbc.io/spec/0.8.3.RELEASE/spec/html/#datatypes.mapping">
    * Table 4 of Section 12 of the R2DBC 0.8.3 Specification.
    * </a>
-   * </p><p>
-   * Oracle Database CLOB values may exceed the maximum size of a Java
-   * Language {@link String}, so the Oracle R2DBC Driver is not expected to
-   * support the mapping of CLOB/NCLOB data to {@code String}, however it is
-   * expected to support the mapping {@code String} to CLOB/NCLOB.
    * </p>
    */
   @Test
@@ -119,25 +118,24 @@ public class TypeMappingTest {
       // equivalent to the standard type named "NVARCHAR"
       verifyTypeMapping(connection, "नमस्कार, Oracle", "NVARCHAR2(100)");
 
-      // Expect CLOB and String to map for bind values, but not for row values.
-      // For row values, expect Oracle CLOB to be mapped to io.r2dbc.spi.Clob
-      verifyTypeMapping(connection, "Hola, Oracle", "CLOB",
-        (expected, actual) -> assertEquals(expected, clobToString(actual)));
+      // Expect CLOB and String to map
+      verifyTypeMapping(connection, "Hola, Oracle", "CLOB");
 
       // Expect CLOB and io.r2dbc.spi.Clob to map
       verifyTypeMapping(connection,
         Clob.from(Mono.just("Hola, Oracle")), "CLOB",
+        row -> row.get(0, Clob.class),
         (expected, actual) ->
           assertEquals("Hola, Oracle", clobToString(actual)));
 
       // Expect NCLOB and String to map for bind values, but not for row values.
       // For row values, expect Oracle CLOB to be mapped to io.r2dbc.spi.Clob
-      verifyTypeMapping(connection, "こんにちは, Oracle", "NCLOB",
-        (expected, actual) -> assertEquals(expected, clobToString(actual)));
+      verifyTypeMapping(connection, "こんにちは, Oracle", "NCLOB");
 
       // Expect NCLOB and io.r2dbc.spi.Clob to map
       verifyTypeMapping(connection,
         Clob.from(Mono.just("こんにちは, Oracle")), "NCLOB",
+        row -> row.get(0, Clob.class),
         (expected, actual) ->
           assertEquals("こんにちは, Oracle", clobToString(actual)));
 
@@ -164,13 +162,8 @@ public class TypeMappingTest {
    * </a>
    * </p><p>
    * The Oracle Database does not support a fixed length binary type, like
-   * BINARY, so the Oracle R2DBC Driver is not expected to  support this
+   * BINARY, so the Oracle R2DBC Driver is not expected to support this
    * mapping.
-   * </p><p>
-   * Oracle Database BLOB values may exceed the maximum size of a Java
-   * Language {@link ByteBuffer}, so the Oracle R2DBC Driver is not expected to
-   * support the mapping of BLOB data to {@code ByteBuffer}, however it is
-   * expected to support the mapping {@code ByteBuffer} to BLOB.
    *</p>
    */
   @Test
@@ -199,12 +192,12 @@ public class TypeMappingTest {
       // Expect BLOB and ByteBuffer to map for bind values, but not for row
       // values. For row values, expect Oracle BLOB to be mapped to
       // io.r2dbc.spi.Blob
-      verifyTypeMapping(connection, byteBuffer, "BLOB",
-        (expected, actual) -> assertEquals(expected, blobToByteBuffer(actual)));
+      verifyTypeMapping(connection, byteBuffer, "BLOB");
 
       // Expect BLOB and io.r2dbc.spi.Blob to map
       verifyTypeMapping(connection,
         Blob.from(Mono.just(byteBuffer)), "BLOB",
+        row -> row.get(0, Blob.class),
         (expected, actual) ->
           assertEquals(byteBuffer, blobToByteBuffer(actual)));
 
@@ -393,6 +386,83 @@ public class TypeMappingTest {
 
   /**
    * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * where the Java type is {@link Boolean} and the SQL type is a numeric type.
+   * The R2DBC 0.9.0 Specification only requires that Java {@code Boolean} be
+   * mapped to the SQL BOOLEAN type, however Oracle Database does not support a
+   * BOOLEAN column type. To allow the use of the {@code Boolean} bind
+   * values, Oracle JDBC supports binding the Boolean as a NUMBER. Oracle
+   * R2DBC is expected to expose this functionality as well.
+   *</p>
+   */
+  @Test
+  public void testBooleanNumericMapping() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Expect NUMBER and Boolean to map, with Row.get(...) mapping the
+      // NUMBER column value to BigDecimal
+      verifyTypeMapping(connection, true, "NUMBER",
+        (expected, actual) -> assertEquals(BigDecimal.ONE, actual));
+      verifyTypeMapping(connection, false, "NUMBER",
+        (expected, actual) -> assertEquals(BigDecimal.ZERO, actual));
+
+      // Expect NUMBER and Boolean to map, with Row.get(..., Boolean.class)
+      // mapping the NUMBER column value to Boolean
+      verifyTypeMapping(connection, true, "NUMBER",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertTrue(actual));
+      verifyTypeMapping(connection, false, "NUMBER",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertFalse(actual));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * where the Java type is a {@code byte} array and the SQL type is RAW or
+   * BLOB. The R2DBC 0.9.0 Specification does not require drivers to
+   * support byte array mapping, however this mapping is required by
+   * the JDBC 4.3 specification. Oracle R2DBC is expected to expose mappings
+   * supported by Oracle JDBC.
+   *</p>
+   */
+  @Test
+  public void testByteArrayMapping() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      byte[] byteArray = new byte[100];
+
+      for (int i = 0; i < byteArray.length; i++)
+        byteArray[i] = (byte) i;
+
+      // Expect RAW and byte[] to map, with Row.get(...) mapping the
+      // RAW column value to ByteBuffer
+      verifyTypeMapping(connection, byteArray, "RAW(100)",
+        (expected, actual) -> assertEquals(ByteBuffer.wrap(byteArray), actual));
+
+      // Expect RAW and byte[] to map, with Row.get(..., byte[].class)
+      // mapping the RAW column value to byte[]
+      verifyTypeMapping(connection, byteArray, "RAW(100)",
+        row -> row.get(0, byte[].class),
+        (expected, actual) -> assertArrayEquals(byteArray, actual));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  // TODO: More tests for JDBC 4.3 mappings like BigInteger to BIGINT,
+  //  java.sql.Date to DATE, java.sql.Blob to BLOB? Oracle R2DBC exposes all
+  //  type mappings supported by Oracle JDBC.
+
+  /**
+   * <p>
    * Verifies the conversion between a Java Language type and a SQL Language
    * type. The Java Language {@code javaValue} is converted to a SQL Language
    * value of a type specified by {@code sqlTypeDdl}. The SQL Language value is
@@ -422,9 +492,7 @@ public class TypeMappingTest {
    * from the {@code javaValue's} type, the {@code verifyEquals} function is
    * specified to convert the {@code Row's} expected mapping into the same type
    * as {@code javaValue}. This function is used when a bind type mapping
-   * isn't supported as a row type mapping, such as String type binds for CLOB
-   * type columns. The expected row mapping for CLOB is {@link Clob}, not
-   * String.
+   * isn't supported as a row type mapping.
    * </p><p>
    * This method will also INSERT a Java {@code null} bind value, and expect
    * to get a Java {@code null} value from a SELECT of the SQL NULL value.
@@ -439,6 +507,34 @@ public class TypeMappingTest {
   private static <T> void verifyTypeMapping(
     Connection connection, T javaValue, String sqlTypeDdl,
     BiConsumer<T, Object> verifyEquals) {
+    verifyTypeMapping(connection, javaValue, sqlTypeDdl,
+      row -> row.get("javaValue"), verifyEquals);
+  }
+  
+  /**
+   * <p>
+   * Verifies the conversion between a Java Language type and a SQL Language
+   * type. The Java Language {@code javaValue} is converted to a SQL Language
+   * value of a type specified by {@code sqlTypeDdl}, and inserted into a table.
+   * </p><p>
+   * The inserted value is then queried back and the resulting {@code Row} is
+   * input to each function the {@code rowVerifiers} array. These functions
+   * should verify that the row returns an expected value.
+   * </p><p>
+   * This method will also INSERT a Java {@code null} bind value, and expect
+   * to get a Java {@code null} value from a SELECT of the SQL NULL value.
+   * </p>
+   * @param connection Connection to a database
+   * @param javaValue Value to insert. Maybe null.
+   * @param sqlTypeDdl SQL Language DDL for a column type, such as
+   *                   "NUMBER" or "VARCHAR(100)". Not null.
+   * @param rowMapper Outputs a Java value for an input Row
+   * @param verifyEquals Verifies the {@code rowMapper} output is equal to
+   * {@code javaValue}.
+   */
+  private static <T, U> void verifyTypeMapping(
+    Connection connection, T javaValue, String sqlTypeDdl,
+    Function<Row, U> rowMapper, BiConsumer<T, U> verifyEquals) {
     String table = "verify_" + sqlTypeDdl.replaceAll("[^\\p{Alnum}]", "_");
     try {
       awaitExecution(connection.createStatement(String.format(
@@ -449,12 +545,12 @@ public class TypeMappingTest {
         .bind("javaValue", javaValue).add()
         .bindNull("javaValue", javaValue.getClass()).add());
 
-      verifyEquals.accept(javaValue, awaitOne(
-        Flux.from(connection.createStatement(
+      verifyEquals.accept(javaValue,
+        awaitOne(Flux.from(connection.createStatement(
           "SELECT javaValue FROM "+table+" WHERE javaValue IS NOT NULL")
           .execute())
           .flatMap(result ->
-            result.map((row, metadata) -> row.get("javaValue"))
+            result.map((row, metadata) -> rowMapper.apply(row))
           )));
 
       awaitOne(true,

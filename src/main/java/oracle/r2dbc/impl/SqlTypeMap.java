@@ -27,6 +27,7 @@ import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.sql.json.OracleJsonObject;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.sql.JDBCType;
 import java.sql.RowId;
@@ -57,10 +58,25 @@ final class SqlTypeMap {
       entry(JDBCType.BINARY, R2dbcType.BINARY),
       entry(OracleType.BINARY_DOUBLE, OracleR2dbcTypes.BINARY_DOUBLE),
       entry(OracleType.BINARY_FLOAT, OracleR2dbcTypes.BINARY_FLOAT),
-      entry(JDBCType.BLOB, OracleR2dbcTypes.BLOB),
+      entry(JDBCType.BLOB, R2dbcType.BLOB),
       entry(JDBCType.BOOLEAN, R2dbcType.BOOLEAN),
       entry(JDBCType.CHAR, R2dbcType.CHAR),
-      entry(JDBCType.CLOB, OracleR2dbcTypes.CLOB),
+      entry(
+        JDBCType.CLOB,
+        // TODO: This is a placeholder. Replace with:
+        // R2dbcType.CLOB), when fix is released:
+        // https://github.com/r2dbc/r2dbc-spi/pull/222
+        new Type() {
+          @Override
+          public Class<?> getJavaType() {
+            return String.class;
+          }
+
+          @Override
+          public String getName() {
+            return "CLOB";
+          }
+        }),
       entry(JDBCType.ARRAY, R2dbcType.COLLECTION),
       entry(JDBCType.DATE, R2dbcType.DATE),
       entry(JDBCType.DECIMAL, R2dbcType.DECIMAL),
@@ -76,7 +92,21 @@ final class SqlTypeMap {
       entry(JDBCType.LONGVARBINARY, OracleR2dbcTypes.LONG_RAW),
       entry(JDBCType.LONGVARCHAR, OracleR2dbcTypes.LONG),
       entry(JDBCType.NCHAR, R2dbcType.NCHAR),
-      entry(JDBCType.NCLOB, OracleR2dbcTypes.NCLOB),
+      entry(JDBCType.NCLOB,
+        // TODO: This is a placeholder. Replace with:
+        // R2dbcType.CLOB), when fix is released:
+        // https://github.com/r2dbc/r2dbc-spi/pull/222
+        new Type() {
+          @Override
+          public Class<?> getJavaType() {
+            return String.class;
+          }
+
+          @Override
+          public String getName() {
+            return "NCLOB";
+          }
+        }),
       entry(JDBCType.NUMERIC, R2dbcType.NUMERIC),
       entry(JDBCType.NVARCHAR, R2dbcType.NVARCHAR),
       entry(JDBCType.REAL, R2dbcType.REAL),
@@ -142,10 +172,32 @@ final class SqlTypeMap {
       entry(io.r2dbc.spi.Blob.class, JDBCType.BLOB),
       entry(io.r2dbc.spi.Clob.class, JDBCType.CLOB),
 
+      // JDBC 4.3 mappings not included in R2DBC Specification. Types like
+      // java.sql.Blob/Clob/NClob/Array can be accessed from Row.get(...)
+      // and then used as bind values, so these types are included.
+      // TODO: JDBC 4.3 lists a "Java class" to JAVA_OBJECT mapping. It's not
+      //  clear what that is for, or if Oracle JDBC supports it. That mapping
+      //  is not included here.
+      entry(byte[].class, JDBCType.VARBINARY),
+      entry(BigInteger.class, JDBCType.BIGINT),
+      entry(java.sql.Date.class, JDBCType.DATE),
+      entry(java.sql.Time.class, JDBCType.TIME),
+      entry(java.sql.Timestamp.class, JDBCType.TIMESTAMP),
+      entry(java.sql.Array.class, JDBCType.ARRAY),
+      entry(java.sql.Blob.class, JDBCType.BLOB),
+      entry(java.sql.Clob.class, JDBCType.CLOB),
+      entry(java.sql.Struct.class, JDBCType.STRUCT),
+      entry(java.sql.Ref.class, JDBCType.REF),
+      entry(java.net.URL.class, JDBCType.DATALINK),
+      entry(java.sql.RowId.class, JDBCType.ROWID),
+      entry(java.sql.NClob.class, JDBCType.NCLOB),
+      entry(java.sql.SQLXML.class, JDBCType.SQLXML),
+      entry(java.util.Calendar.class, JDBCType.TIMESTAMP),
+      entry(java.util.Date.class, JDBCType.TIMESTAMP),
+
       // Extended mappings supported by Oracle
       entry(Duration.class, OracleType.INTERVAL_DAY_TO_SECOND),
       entry(Period.class, OracleType.INTERVAL_YEAR_TO_MONTH),
-      entry(RowId.class, OracleType.ROWID),
       entry(OracleJsonObject.class, OracleType.JSON)
 
     );
@@ -186,16 +238,16 @@ final class SqlTypeMap {
    * that SQL type. Where the specification defines a Java type that maps to
    * multiple SQL types, the return value of this method is as follows:
    * <ul>
-   *   <li>String -> VARCHAR</li>
-   *   <li>ByteBuffer -> VARBINARY</li>
+   *   <li>{@link String} -> VARCHAR</li>
+   *   <li>{@link ByteBuffer} -> VARBINARY</li>
    * </ul>
    * This method returns non-standard SQL types supported by Oracle
    * Database for the following Java types:
    * <ul>
-   *   <li>Double -> BINARY_DOUBLE</li>
-   *   <li>Float -> BINARY_FLOAT</li>
-   *   <li>Duration -> INTERVAL DAY TO SECOND</li>
-   *   <li>Period -> INTERVAL YEAR TO MONTH</li>
+   *   <li>{@link Double} -> BINARY_DOUBLE</li>
+   *   <li>{@link Float} -> BINARY_FLOAT</li>
+   *   <li>{@link Duration} -> INTERVAL DAY TO SECOND</li>
+   *   <li>{@link Period} -> INTERVAL YEAR TO MONTH</li>
    *   <li>{@link RowId} -> ROWID</li>
    *   <li>{@link OracleJsonObject} -> JSON</li>
    * </ul>

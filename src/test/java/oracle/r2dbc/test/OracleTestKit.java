@@ -31,17 +31,11 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.support.AbstractLobCreatingPreparedStatementCallback;
-import org.springframework.jdbc.support.lob.DefaultLobHandler;
-import org.springframework.jdbc.support.lob.LobCreator;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Collection;
@@ -64,7 +58,7 @@ import static oracle.r2dbc.test.DatabaseConfig.user;
  * Subclass implementation of the R2DBC {@link TestKit} for Oracle Database.
  * This test kit implementation overrides super class test methods that are
  * fundamentally incompatible with Oracle Database. The javadoc of each
- * overridden test method describes why it must be overriden when interacting
+ * overridden test method describes why it must be overridden when interacting
  * with an Oracle Database.
  * </p><p>
  * The developers of the Oracle R2DBC Driver are mindful of the fact that
