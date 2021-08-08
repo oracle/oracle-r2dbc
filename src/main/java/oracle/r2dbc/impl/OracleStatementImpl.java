@@ -38,6 +38,7 @@ import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLType;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
@@ -163,6 +164,11 @@ final class OracleStatementImpl implements Statement {
   private final String sql;
 
   /**
+   * Timeout applied to the execution of this {@code Statement}
+   */
+  private final Duration timeout;
+
+  /**
    * Parameter names recognized in this statement's SQL. This list contains
    * {@code null} entries at the indexes of unnamed parameters.
    */
@@ -206,16 +212,19 @@ final class OracleStatementImpl implements Statement {
    * The SQL string may be parameterized as described in the javadoc of
    * {@link SqlParameterParser}.
    * </p>
-   * @param adapter Adapts JDBC calls into reactive streams.
-   * @param jdbcConnection JDBC connection to an Oracle Database.
    * @param sql SQL Language statement that may include parameter markers.
+   * @param timeout
+   * @param jdbcConnection JDBC connection to an Oracle Database.
+   * @param adapter Adapts JDBC calls into reactive streams.
    */
-  OracleStatementImpl(ReactiveJdbcAdapter adapter,
-    Connection jdbcConnection,
-    String sql) {
-    this.adapter = adapter;
-    this.jdbcConnection = jdbcConnection;
+  OracleStatementImpl(String sql, Duration timeout, Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
     this.sql = sql;
+    this.timeout = timeout;
+    this.jdbcConnection = jdbcConnection;
+    this.adapter = adapter;
+
+    // The SQL string is parsed to identify parameter markers and allocate the
+    // bindValues array accordingly
     this.parameterNames = SqlParameterParser.parse(sql);
     this.bindValues = new Object[parameterNames.size()];
   }
@@ -787,6 +796,13 @@ final class OracleStatementImpl implements Statement {
     PreparedStatement preparedStatement, int fetchSize) {
 
     runJdbc(() -> preparedStatement.setFetchSize(fetchSize));
+
+    // Round the timeout up to the nearest whole second. JDBC supports
+    // an int valued timeout of seconds.
+    runJdbc(() ->
+      preparedStatement.setQueryTimeout((int)Math.min(
+        Integer.MAX_VALUE,
+        timeout.toSeconds() + (timeout.getNano() == 0 ? 0 : 1))));
 
     return Mono.from(adapter.publishSQLExecution(preparedStatement))
       .flatMapMany(isResultSet -> {

@@ -85,16 +85,26 @@ final class OracleConnectionImpl implements Connection {
   private final java.sql.Connection jdbcConnection;
 
   /**
+   * Timeout applied to the execution of {@link Statement} and {@link Batch}
+   * objects that this {@code Connection} creates. The value is never
+   * null. The value is never a negative duration. A value of
+   * {@link Duration#ZERO} represents no timeout.
+   */
+  private Duration statementTimeout;
+
+  /**
    * Constructs a new connection that uses the specified {@code adapter} to
    * perform database operations with the specified {@code jdbcConnection}.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null. Retained.
+   * @param statementTimeout
    * @param jdbcConnection JDBC connection to an Oracle Database. Not null.
-   *                       Retained.
+   * @param adapter Adapts JDBC calls into reactive streams. Not null. Retained.
    */
   OracleConnectionImpl(
-    ReactiveJdbcAdapter adapter, java.sql.Connection jdbcConnection) {
+    Duration statementTimeout, java.sql.Connection jdbcConnection,
+    ReactiveJdbcAdapter adapter) {
     this.adapter = adapter;
     this.jdbcConnection = jdbcConnection;
+    this.statementTimeout = requirePositiveDuration(statementTimeout);
   }
 
   /**
@@ -194,13 +204,8 @@ final class OracleConnectionImpl implements Connection {
    * behavior of this method.
    * </p>
    *
-   *
    * @implNote Supporting SERIALIZABLE isolation level requires a way to
    * disable Oracle JDBC's result set caching feature.
-   *
-   * @implNote Supporting {@code LOCK_WAIT_TIMEOUT} could be emulated by
-   * executing {@code ALTER SESSION SET ddl_lock_wait=...}, and then resetting
-   * the value once the transaction ends.
    *
    * @throws IllegalArgumentException If the {@code definition} specifies an
    * unsupported isolation level.
@@ -208,7 +213,7 @@ final class OracleConnectionImpl implements Connection {
    * an isolation level and read only.
    * @throws IllegalArgumentException If the {@code definition} does not
    * specify an isolation level, read only, or name.
-   * @throws IllegalArgumentException If the {@code definition} specifies a
+   * @throws UnsupportedOperationException If the {@code definition} specifies a
    * lock wait timeout.
    * @throws IllegalStateException If this {@code Connection} is closed
    */
@@ -318,9 +323,9 @@ final class OracleConnectionImpl implements Connection {
     }
 
     if (definition.getAttribute(LOCK_WAIT_TIMEOUT) != null) {
-      // TODO: ALTER SESSION SET ddl_lock_wait = ...
-      throw new IllegalArgumentException(
-        "LOCK_WAIT_TIMEOUT is not supported in this release");
+      throw new UnsupportedOperationException(
+        "Oracle Database does not support a lock wait timeout transaction" +
+         " parameter");
     }
   }
 
@@ -394,7 +399,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Batch createBatch() {
     requireOpenConnection(jdbcConnection);
-    return new OracleBatchImpl(adapter, jdbcConnection);
+    return new OracleBatchImpl(statementTimeout, jdbcConnection, adapter);
   }
 
   /**
@@ -418,7 +423,8 @@ final class OracleConnectionImpl implements Connection {
   public Statement createStatement(String sql) {
     requireNonNull(sql, "sql is null");
     requireOpenConnection(jdbcConnection);
-    return new OracleStatementImpl(adapter, jdbcConnection, sql);
+    return new OracleStatementImpl(
+      sql, statementTimeout, jdbcConnection, adapter);
   }
 
   /**
@@ -531,8 +537,8 @@ final class OracleConnectionImpl implements Connection {
   /**
    * {@inheritDoc}
    * <p>
-   * This SPI method implementation sets the auto-commit mode of the JDBC
-   * connection.
+   * Implements the R2DBC SPI method by setting the auto-commit mode of the
+   * JDBC connection.
    * </p><p>
    * The returned publisher sets the JDBC connection's auto-commit mode
    * <i>after</i> a subscriber subscribes, <i>before</i> the subscriber
@@ -567,14 +573,47 @@ final class OracleConnectionImpl implements Connection {
     .cache();
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by throwing an
+   * {@link UnsupportedOperationException} indicating that Oracle Database does
+   * not support configuring a database session with a lock wait timeout.
+   * </p>
+   * @implNote The DDL_LOCK_TIMEOUT parameter would only apply to DDL
+   * statements, and not effect DML or SELECT FOR UPDATE statements.
+   * @implNote Implementing this method by configuring a general statement
+   * timeout would not be correct. A correct implementation would have the
+   * timeout apply only when waiting to acquire a lock. The lock wait timeout
+   * should not apply when a statement execution exceeds it due to other
+   * factors, such as network latency.
+   */
   @Override
   public Publisher<Void> setLockWaitTimeout(Duration timeout) {
-    return null;//TODO
+    throw new UnsupportedOperationException(
+      "Oracle Database does not support a lock wait timeout session parameter");
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by setting the {@link #statementTimeout}.
+   * The timeout will only apply to {@link Statement} and {@link Batch} objects
+   * that this {@code Connection} creates <i>after</i> the {@code Publisher}
+   * returned by this method emits {@code onComplete}.
+   * </p><p>
+   * A {@code Batch} object created by this {@code Connection} applies the
+   * provided {@code timeout} individually to each statement it executes.
+   * </p>
+   * @throws IllegalArgumentException {@inheritDoc}
+   * @throws IllegalArgumentException If the {@code timeout} is a negative
+   * {@code Duration}
+   */
   @Override
   public Publisher<Void> setStatementTimeout(Duration timeout) {
-    return null;//TODO
+    requireNonNull(timeout, "timeout is null");
+    this.statementTimeout = requirePositiveDuration(timeout);
+    return Mono.empty();
   }
 
   /**
@@ -684,6 +723,22 @@ final class OracleConnectionImpl implements Connection {
       }
     }))
     .cache();
+  }
+
+  /**
+   * Checks that a {@code duration} is zero or positive and throws an
+   * {@link IllegalArgumentException} if it is not, or otherwise returns it.
+   * @param duration Duration to check
+   * @return {@code duration} if it is zero or positive
+   */
+  private static Duration requirePositiveDuration(Duration duration) {
+    if (duration.isNegative()) {
+      throw new IllegalArgumentException(
+        "timeout is a negative Duration: " + duration);
+    }
+    else {
+      return duration;
+    }
   }
 
 }

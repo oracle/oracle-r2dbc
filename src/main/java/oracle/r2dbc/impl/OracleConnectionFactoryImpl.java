@@ -27,11 +27,13 @@ import io.r2dbc.spi.ConnectionFactoryMetadata;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.Statement;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import javax.sql.DataSource;
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * <p>
@@ -104,6 +106,12 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
   private final DataSource dataSource;
 
   /**
+   * Timeout applied to the execution of {@link Statement}s created by
+   * {@link Connection}s created by this {@code ConnectionFactory}.
+   */
+  private final Duration statementTimeout;
+
+  /**
    * <p>
    * Constructs a new factory that applies the values specified by the {@code
    * options} parameter when opening a database connection. This constructor
@@ -155,6 +163,12 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
     OracleR2dbcExceptions.requireNonNull(options, "options is null.");
     adapter = ReactiveJdbcAdapter.getOracleAdapter();
     dataSource = adapter.createDataSource(options);
+    statementTimeout = Optional.ofNullable(
+      options.getValue(ConnectionFactoryOptions.STATEMENT_TIMEOUT))
+      .map(timeout -> (timeout instanceof Duration)
+        ? (Duration)timeout
+        : Duration.parse(timeout.toString()))
+      .orElse(Duration.ZERO);
   }
 
   /**
@@ -183,7 +197,7 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
   public Publisher<Connection> create() {
     return Mono.defer(() ->
         Mono.fromDirect(adapter.publishConnection(dataSource)))
-      .map(conn -> new OracleConnectionImpl(adapter, conn));
+      .map(conn -> new OracleConnectionImpl(statementTimeout, conn, adapter));
   }
 
   /**

@@ -83,9 +83,6 @@ public class SharedConnectionFactory implements ConnectionFactory {
    * Constructs a new connection factory that caches the connection emitted
    * by the {@code connectionPublisher}. The shared connection is emitted by the
    * publisher returned from {@link #create()}.
-   *
-   * @param connectionPublisher
-   * @param metadata
    */
   public SharedConnectionFactory(
     Publisher<? extends Connection> connectionPublisher,
@@ -432,21 +429,22 @@ public class SharedConnectionFactory implements ConnectionFactory {
      * resetting the connection.
      */
     private Publisher<Void> resetConnection() {
-      Publisher<Void> isolationLevelReset =
-        connection.setTransactionIsolationLevel(initialIsolationLevel);
 
-      return Mono.defer(()-> {
-        // Assuming the auto commit was originally enabled
-        if (connection.isAutoCommit()) {
-          return Mono.from(isolationLevelReset);
-        }
-        else {
-          // Clean up any transaction state
-          return Mono.from(connection.rollbackTransaction())
-            .then(Mono.from(connection.setAutoCommit(true)))
-            .then(Mono.from(isolationLevelReset));
-        }
-      });
+      return Flux.concat(
+        // Reset the statement timeout, which is initially zero (no timeout)
+        connection.setStatementTimeout(Duration.ZERO),
+
+        // Reset the isolation level the original value
+        connection.setTransactionIsolationLevel(initialIsolationLevel),
+
+        // Reset auto-commit, which is initially enabled. Clean up any
+        // transaction state if it has been disabled.
+        Mono.defer(() ->
+          connection.isAutoCommit()
+            ? Mono.empty()
+            : Mono.from(connection.rollbackTransaction())
+                .then(Mono.from(connection.setAutoCommit(true)))));
     }
   }
+
 }

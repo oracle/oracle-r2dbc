@@ -624,6 +624,14 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
       "1048576");
 
+    // Disable out-of-band breaks. JDBC sends one of these when a statement
+    // timeout expires. When enabled, the database doesn't seem to respond by
+    // cancelling the statement execution. Disable this so that statement
+    // timeouts will work correctly.
+    setPropertyIfAbsent(oracleDataSource,
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK,
+      "true");
+
     // TODO: Disable the result set cache? This is needed to support the
     //  SERIALIZABLE isolation level, which requires result set caching to be
     //  disabled.

@@ -22,6 +22,7 @@
 package oracle.r2dbc.impl;
 
 import java.sql.Connection;
+import java.time.Duration;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicReference;
@@ -63,6 +64,11 @@ final class OracleBatchImpl implements Batch {
   private final Connection jdbcConnection;
 
   /**
+   * Timeout applied to each statement this {@code Batch} executes;
+   */
+  private final Duration timeout;
+
+  /**
    * Ordered sequence of SQL commands that have been added to this batch. May
    * be empty.
    */
@@ -71,14 +77,17 @@ final class OracleBatchImpl implements Batch {
   /**
    * Constructs a new batch that uses the specified {@code adapter} to execute
    * SQL statements with a {@code jdbcConnection}.
-   * @param adapter Adapts JDBC calls into reactive streams.
-   * @param jdbcConnection JDBC connection to an Oracle Database.
+   * @param timeout Timeout applied to each statement this batch executes.
+   * Not null. Not negative.
+   * @param jdbcConnection JDBC connection to an Oracle Database. Not null.
+   * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   OracleBatchImpl(
-    ReactiveJdbcAdapter adapter, java.sql.Connection jdbcConnection) {
-    this.adapter = requireNonNull(adapter, "adapter is null");
+    Duration timeout, Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
+    this.timeout = timeout;
     this.jdbcConnection =
       requireNonNull(jdbcConnection, "jdbcConnection is null");
+    this.adapter = requireNonNull(adapter, "adapter is null");
   }
 
   /**
@@ -92,7 +101,8 @@ final class OracleBatchImpl implements Batch {
   public Batch add(String sql) {
     requireOpenConnection(jdbcConnection);
     requireNonNull(sql, "sql is null");
-    statements.add(new OracleStatementImpl(adapter, jdbcConnection, sql));
+    statements.add(
+      new OracleStatementImpl(sql, timeout, jdbcConnection, adapter));
     return this;
   }
 
