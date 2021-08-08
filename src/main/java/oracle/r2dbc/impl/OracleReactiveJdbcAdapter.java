@@ -68,10 +68,8 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.SSL;
 
-import static java.sql.Statement.RETURN_GENERATED_KEYS;
-
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 import static org.reactivestreams.FlowAdapters.toFlowPublisher;
 import static org.reactivestreams.FlowAdapters.toFlowSubscriber;
@@ -389,9 +387,9 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   public DataSource createDataSource(ConnectionFactoryOptions options) {
 
     OracleDataSource oracleDataSource =
-      getOrHandleSQLException(oracle.jdbc.pool.OracleDataSource::new);
+      fromJdbc(oracle.jdbc.pool.OracleDataSource::new);
 
-    runOrHandleSQLException(() ->
+    runJdbc(() ->
       oracleDataSource.setURL(composeJdbcUrl(options)));
     configureStandardOptions(oracleDataSource, options);
     configureExtendedOptions(oracleDataSource, options);
@@ -476,18 +474,18 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
     Object user = options.getValue(USER);
     if (user != null)
-      runOrHandleSQLException(() -> oracleDataSource.setUser(user.toString()));
+      runJdbc(() -> oracleDataSource.setUser(user.toString()));
 
     Object password = options.getValue(PASSWORD);
     if (password != null) {
-      runOrHandleSQLException(() ->
+      runJdbc(() ->
         oracleDataSource.setPassword(password.toString()));
     }
 
     Duration timeout = parseOptionValue(
       CONNECT_TIMEOUT, options, Duration.class, Duration::parse);
     if (timeout != null) {
-      runOrHandleSQLException(() ->
+      runJdbc(() ->
         oracleDataSource.setLoginTimeout(
           Math.toIntExact(timeout.getSeconds())
             // Round up to nearest whole second
@@ -513,7 +511,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     Object tnsAdmin = options.getValue(Option.valueOf("TNS_ADMIN"));
     if (tnsAdmin != null) {
       // Configure using the long form: oracle.net.tns_admin
-      runOrHandleSQLException(() ->
+      runJdbc(() ->
         oracleDataSource.setConnectionProperty(
           OracleConnection.CONNECTION_PROPERTY_TNS_ADMIN, tnsAdmin.toString()));
     }
@@ -525,7 +523,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       // connection property values, such as statement cache size, or enable x.
       Object value = options.getValue(option);
       if (value != null) {
-        runOrHandleSQLException(() ->
+        runJdbc(() ->
           oracleDataSource.setConnectionProperty(
             option.name(), value.toString()));
       }
@@ -604,7 +602,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     @SuppressWarnings("deprecation")
     String enableJdbcSpecCompliance =
       OracleConnection.CONNECTION_PROPERTY_J2EE13_COMPLIANT;
-    runOrHandleSQLException(() ->
+    runJdbc(() ->
       oracleDataSource.setConnectionProperty(enableJdbcSpecCompliance, "true"));
 
     // Cache PreparedStatements by default. The default value of the
@@ -644,7 +642,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static void setPropertyIfAbsent(
     OracleDataSource oracleDataSource, String property, String value) {
 
-    runOrHandleSQLException(() -> {
+    runJdbc(() -> {
       String userValue = oracleDataSource.getConnectionProperty(property);
 
       // Don't override a value set by user code
@@ -724,12 +722,12 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   @Override
   public <T> Publisher<T> publishRows(
-    ResultSet resultSet, Function<JdbcRow, T> rowMappingFunction) {
+    ResultSet resultSet, Function<JdbcReadable, T> rowMappingFunction) {
     OracleResultSet oracleResultSet = unwrapOracleResultSet(resultSet);
 
     return adaptFlowPublisher(() ->
       oracleResultSet.publisherOracle(oracleRow ->
-        rowMappingFunction.apply(new OracleJdbcRow(oracleRow))));
+        rowMappingFunction.apply(new OracleJdbcReadable(oracleRow))));
   }
 
   /**
@@ -853,7 +851,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     // This processor emits a terminal signal when all blob writing database
     // calls have completed
     DirectProcessor<Long> writeOutcomeProcessor = DirectProcessor.create();
-    Flow.Subscriber<byte[]> blobSubscriber = getOrHandleSQLException(() ->
+    Flow.Subscriber<byte[]> blobSubscriber = fromJdbc(() ->
       oracleBlob.subscriberOracle(1L,
         toFlowSubscriber(writeOutcomeProcessor)));
 
@@ -897,7 +895,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     // This processor emits a terminal signal when all clob writing database
     // calls have completed
     DirectProcessor<Long> writeOutcomeProcessor = DirectProcessor.create();
-    Flow.Subscriber<String> clobSubscriber = getOrHandleSQLException(() ->
+    Flow.Subscriber<String> clobSubscriber = fromJdbc(() ->
       oracleClob.subscriberOracle(1L,
         toFlowSubscriber(writeOutcomeProcessor)));
 
@@ -1030,7 +1028,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       if (isSubscribed.compareAndSet(false, true)) {
         Publisher<T> publisher;
         try {
-          publisher = toPublisher(getOrHandleSQLException(publisherSupplier));
+          publisher = toPublisher(fromJdbc(publisherSupplier));
         }
         catch (R2dbcException r2dbcException) {
           publisher = Mono.error(r2dbcException);
@@ -1056,7 +1054,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * @throws R2dbcException If an Oracle JDBC data source is not wrapped.
    */
   private OracleDataSource unwrapOracleDataSource(DataSource dataSource) {
-    return getOrHandleSQLException(() ->
+    return fromJdbc(() ->
       dataSource.unwrap(OracleDataSource.class));
   }
 
@@ -1070,7 +1068,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * @throws R2dbcException If an Oracle JDBC connection is not wrapped.
    */
   private OracleConnection unwrapOracleConnection(Connection connection) {
-    return getOrHandleSQLException(() ->
+    return fromJdbc(() ->
       connection.unwrap(OracleConnection.class));
   }
 
@@ -1085,7 +1083,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   private OraclePreparedStatement unwrapOraclePreparedStatement(
     PreparedStatement preparedStatement) {
-    return getOrHandleSQLException(() ->
+    return fromJdbc(() ->
       preparedStatement.unwrap(OraclePreparedStatement.class));
   }
 
@@ -1099,7 +1097,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * @throws R2dbcException If an Oracle JDBC result set is not wrapped.
    */
   private OracleResultSet unwrapOracleResultSet(ResultSet resultSet) {
-    return getOrHandleSQLException(() ->
+    return fromJdbc(() ->
       resultSet.unwrap(OracleResultSet.class));
   }
 
@@ -1145,13 +1143,13 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * this class adapts the behavior of {@code OracleRow} to conform with
    * R2DBC standards.
    */
-  private static final class OracleJdbcRow implements JdbcRow {
+  private static final class OracleJdbcReadable implements JdbcReadable {
 
     /** OracleRow wrapped by this JdbcRow */
     private final OracleRow oracleRow;
 
     /** Constructs a new row that delegates to {@code oracleRow} */
-    private OracleJdbcRow(OracleRow oracleRow) {
+    private OracleJdbcReadable(OracleRow oracleRow) {
       this.oracleRow = oracleRow;
     }
 
@@ -1178,22 +1176,6 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         else
           throw toR2dbcException(sqlException);
       }
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Implements the {@code JdbcRow} API by delegating to
-     * {@link OracleRow#clone()}.
-     * </p>
-     * @implNote This implementation will fail if the {@code OracleRow} is
-     * emitted by a {@link OracleResultSet} that does not support
-     * {@link java.sql.ResultSetMetaData}, such as one returned by
-     * {@link OraclePreparedStatement#getReturnResultSet()}.
-     */
-    @Override
-    public JdbcRow copy() {
-      return new OracleJdbcRow(oracleRow.clone());
     }
   }
 

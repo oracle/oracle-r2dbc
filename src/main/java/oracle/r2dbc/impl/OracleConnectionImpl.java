@@ -44,9 +44,9 @@ import static io.r2dbc.spi.TransactionDefinition.READ_ONLY;
 import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
 import static java.sql.Connection.TRANSACTION_SERIALIZABLE;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 
 /**
@@ -126,7 +126,7 @@ final class OracleConnectionImpl implements Connection {
 
     final IsolationLevel isolationLevel;
     int jdbcIsolationLevel =
-      getOrHandleSQLException(jdbcConnection::getTransactionIsolation);
+      fromJdbc(jdbcConnection::getTransactionIsolation);
 
     // Map JDBC's isolation level to an R2DBC IsolationLevel
     switch (jdbcIsolationLevel) {
@@ -432,7 +432,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public boolean isAutoCommit() {
     requireOpenConnection(jdbcConnection);
-    return getOrHandleSQLException(jdbcConnection::getAutoCommit);
+    return fromJdbc(jdbcConnection::getAutoCommit);
   }
 
   /**
@@ -447,7 +447,7 @@ final class OracleConnectionImpl implements Connection {
   public ConnectionMetadata getMetadata() {
     requireOpenConnection(jdbcConnection);
     return new OracleConnectionMetadataImpl(
-      getOrHandleSQLException(jdbcConnection::getMetaData));
+      fromJdbc(jdbcConnection::getMetaData));
   }
 
   /**
@@ -546,7 +546,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Void> setAutoCommit(boolean autoCommit) {
     requireOpenConnection(jdbcConnection);
-    return Mono.defer(() -> getOrHandleSQLException(() -> {
+    return Mono.defer(() -> fromJdbc(() -> {
       if (autoCommit == jdbcConnection.getAutoCommit()) {
         return Mono.empty(); // No change
       }
@@ -560,7 +560,7 @@ final class OracleConnectionImpl implements Connection {
         // Changing auto-commit from disabled to enabled. Commit in case
         // there is an active transaction.
         return Mono.from(commitTransaction())
-          .doOnSuccess(nil -> runOrHandleSQLException(() ->
+          .doOnSuccess(nil -> runJdbc(() ->
             jdbcConnection.setAutoCommit(true)));
       }
     }))
@@ -665,7 +665,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Boolean> validate(ValidationDepth depth) {
     requireNonNull(depth, "depth is null");
-    return Mono.defer(() -> getOrHandleSQLException(() -> {
+    return Mono.defer(() -> fromJdbc(() -> {
       if (jdbcConnection.isClosed()) {
         return Mono.just(false);
       }

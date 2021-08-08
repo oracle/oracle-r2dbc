@@ -21,6 +21,8 @@
 
 package oracle.r2dbc.impl;
 
+import io.r2dbc.spi.OutParameterMetadata;
+import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
@@ -49,10 +51,10 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
@@ -209,8 +211,8 @@ final class OracleStatementImpl implements Statement {
    * @param sql SQL Language statement that may include parameter markers.
    */
   OracleStatementImpl(ReactiveJdbcAdapter adapter,
-                      Connection jdbcConnection,
-                      String sql) {
+    Connection jdbcConnection,
+    String sql) {
     this.adapter = adapter;
     this.jdbcConnection = jdbcConnection;
     this.sql = sql;
@@ -784,7 +786,7 @@ final class OracleStatementImpl implements Statement {
   private Publisher<OracleResultImpl> publishSqlResult(
     PreparedStatement preparedStatement, int fetchSize) {
 
-    runOrHandleSQLException(() -> preparedStatement.setFetchSize(fetchSize));
+    runJdbc(() -> preparedStatement.setFetchSize(fetchSize));
 
     return Mono.from(adapter.publishSQLExecution(preparedStatement))
       .flatMapMany(isResultSet -> {
@@ -828,7 +830,7 @@ final class OracleStatementImpl implements Statement {
     return Flux.defer(() -> {
       OracleResultImpl next =
         getSqlResult(adapter, preparedStatement,
-          getOrHandleSQLException(preparedStatement::getMoreResults));
+          fromJdbc(preparedStatement::getMoreResults));
 
       if (next == null) {
         return Mono.empty();
@@ -856,13 +858,13 @@ final class OracleStatementImpl implements Statement {
   private static OracleResultImpl getSqlResult(
     ReactiveJdbcAdapter adapter, PreparedStatement preparedStatement,
     boolean isResultSet) {
-    return getOrHandleSQLException(() -> {
+    return fromJdbc(() -> {
       if (isResultSet) {
         return OracleResultImpl.createQueryResult(
-          adapter, preparedStatement.getResultSet());
+          preparedStatement.getResultSet(), adapter);
       }
       else {
-        int updateCount = preparedStatement.getUpdateCount();
+        long updateCount = preparedStatement.getLargeUpdateCount();
         if (updateCount >= 0) {
           return OracleResultImpl.createUpdateCountResult(updateCount);
         }
@@ -884,8 +886,8 @@ final class OracleStatementImpl implements Statement {
     CallableStatement callableStatement, Object[] bindValues,
     int fetchSize) {
     return Flux.from(publishSqlResult(callableStatement, fetchSize))
-      .concatWith(Mono.just(createCallResult(createOutParameterRow(
-        callableStatement, bindValues))));
+      .concatWith(Mono.just(createCallResult(
+        createOutParameterRow(callableStatement, bindValues))));
   }
 
   /**
@@ -933,33 +935,29 @@ final class OracleStatementImpl implements Statement {
    * {@link java.sql.ParameterMetaData}, so it can not be used to implement
    * {@code RowMetaData}.
    */
-  private OracleRowImpl createOutParameterRow(
+  private OutParameters createOutParameterRow(
     CallableStatement callableStatement, Object[] bindValues) {
 
     int[] outBindIndexes = IntStream.range(0, bindValues.length)
       .filter(i -> bindValues[i] instanceof Parameter.Out)
       .toArray();
 
-    return new OracleRowImpl(
-      new ReactiveJdbcAdapter.JdbcRow() {
+    return OracleReadableImpl.createOutParameters(
+      new ReactiveJdbcAdapter.JdbcReadable() {
 
         @Override
         public <T> T getObject(int index, Class<T> type) {
-          return getOrHandleSQLException(() ->
+          return fromJdbc(() ->
             callableStatement.getObject(1 + outBindIndexes[index], type));
         }
-
-        @Override
-        public ReactiveJdbcAdapter.JdbcRow copy() {
-          throw new UnsupportedOperationException();
-        }
       },
-      new OracleRowMetadataImpl(IntStream.range(0, outBindIndexes.length)
-        .mapToObj(i -> OracleColumnMetadataImpl.createParameterMetadata(
-          Objects.requireNonNullElse(
-            parameterNames.get(outBindIndexes[i]), String.valueOf(i)),
-          ((Parameter)bindValues[outBindIndexes[i]]).getType()))
-        .toArray(OracleColumnMetadataImpl[]::new)),
+      ReadablesMetadata.createOutParametersMetadata(
+        IntStream.range(0, outBindIndexes.length)
+          .mapToObj(i -> OracleReadableMetadataImpl.createParameterMetadata(
+            Objects.requireNonNullElse(
+              parameterNames.get(outBindIndexes[i]), String.valueOf(i)),
+            ((Parameter)bindValues[outBindIndexes[i]]).getType()))
+          .toArray(OutParameterMetadata[]::new)),
       adapter);
   }
 
@@ -1002,17 +1000,22 @@ final class OracleStatementImpl implements Statement {
       (preparedStatement, discardQueue) ->
         setBindValues(preparedStatement, currentBindValues, discardQueue),
       preparedStatement -> {
-        runOrHandleSQLException(() ->
+        runJdbc(() ->
           preparedStatement.setFetchSize(currentFetchSize));
         return Mono.from(adapter.publishSQLExecution(preparedStatement))
-          .flatMap(isResultSet -> getOrHandleSQLException(() ->
-            isResultSet
-              ? Mono.error(new IllegalStateException(
-              "Statement configured to return values generated by DML" +
-                " has executed a query that returns row data"))
-              : Mono.from(createGeneratedValuesResult(
-              adapter, preparedStatement.getUpdateCount(),
-              preparedStatement.getGeneratedKeys()))));
+          .map(isResultSet -> {
+            if (isResultSet) {
+              throw new IllegalStateException(
+                "Statement configured to return values generated by DML" +
+                  " has executed a query that returns row data");
+            }
+            else {
+              return createGeneratedValuesResult(
+                fromJdbc(preparedStatement::getUpdateCount),
+                fromJdbc(preparedStatement::getGeneratedKeys),
+                adapter);
+            }
+          });
       });
   }
 
@@ -1064,7 +1067,6 @@ final class OracleStatementImpl implements Statement {
         setBatchBindValues(preparedStatement, currentBatch, discardQueue),
       preparedStatement ->
         Flux.from(adapter.publishBatchUpdate(preparedStatement))
-          .map(updateCount -> (int) Math.min(Integer.MAX_VALUE, updateCount))
           .map(OracleResultImpl::createUpdateCountResult));
   }
 
@@ -1121,7 +1123,7 @@ final class OracleStatementImpl implements Statement {
       .concatMap(parameters ->
         Mono.from(setBindValues(preparedStatement, parameters, discardQueue))
           .doOnSuccess(nil ->
-            runOrHandleSQLException(preparedStatement::addBatch)));
+            runJdbc(preparedStatement::addBatch)));
   }
 
   /**
@@ -1225,7 +1227,7 @@ final class OracleStatementImpl implements Statement {
   /**
    * Converts an R2DBC Blob to a JDBC Blob. The returned {@code Publisher}
    * asynchronously writes the {@code r2dbcBlob's} content to a JDBC Blob and
-   * then emits the JDBC Blob after all content has been written. The JDBC 
+   * then emits the JDBC Blob after all content has been written. The JDBC
    * Blob allocates a temporary database BLOB that is freed by a {@code
    * Publisher} added to the {@code discardQueue}.
    * @param r2dbcBlob An R2DBC Blob. Not null. Retained.
@@ -1235,7 +1237,7 @@ final class OracleStatementImpl implements Statement {
     io.r2dbc.spi.Blob r2dbcBlob, Queue<Publisher<Void>> discardQueue) {
 
     return Mono.using(() ->
-        getOrHandleSQLException(jdbcConnection::createBlob),
+        fromJdbc(jdbcConnection::createBlob),
       jdbcBlob -> {
         discardQueue.add(adapter.publishBlobFree(jdbcBlob));
         return Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
@@ -1243,11 +1245,11 @@ final class OracleStatementImpl implements Statement {
       },
       jdbcBlob -> r2dbcBlob.discard());
   }
-  
+
   /**
    * Converts an R2DBC Clob to a JDBC Clob. The returned {@code Publisher}
    * asynchronously writes the {@code r2dbcClob} content to a JDBC Clob and
-   * then emits the JDBC Clob after all content has been written. The JDBC 
+   * then emits the JDBC Clob after all content has been written. The JDBC
    * Clob allocates a temporary database Clob that is freed by a {@code
    * Publisher} added to the {@code discardQueue}.
    * @param r2dbcClob An R2DBC Clob. Not null. Retained.
@@ -1258,7 +1260,7 @@ final class OracleStatementImpl implements Statement {
 
     return Mono.using(() ->
         // Always use NClob to support unicode characters
-        getOrHandleSQLException(jdbcConnection::createNClob),
+        fromJdbc(jdbcConnection::createNClob),
       jdbcClob -> {
         discardQueue.add(adapter.publishClobFree(jdbcClob));
         return Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
@@ -1296,7 +1298,7 @@ final class OracleStatementImpl implements Statement {
   private void setJdbcBindValue(
     PreparedStatement preparedStatement, int index, Object value,
     SQLType type) {
-    runOrHandleSQLException(() -> {
+    runJdbc(() -> {
       if (type != null)
         preparedStatement.setObject(index, value, type);
       else
@@ -1316,7 +1318,7 @@ final class OracleStatementImpl implements Statement {
       if (bindValues[i] instanceof Parameter.Out) {
         int jdbcIndex = i + 1;
         SQLType jdbcType = toJdbcType(((Parameter)bindValues[i]).getType());
-        runOrHandleSQLException(() ->
+        runJdbc(() ->
           callableStatement.registerOutParameter(jdbcIndex, jdbcType));
       }
     }
@@ -1396,7 +1398,7 @@ final class OracleStatementImpl implements Statement {
           discardQueue ->
             Flux.from(bindFunction.apply(preparedStatement, discardQueue))
               .thenMany(resultFunction.apply(preparedStatement))
-              .defaultIfEmpty(createUpdateCountResult(-1))
+              .defaultIfEmpty(createUpdateCountResult(-1L))
               .doOnNext(lastResultRef::set),
           discardQueue ->
             Flux.fromIterable(discardQueue)

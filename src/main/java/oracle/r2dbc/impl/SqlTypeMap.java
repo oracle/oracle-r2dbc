@@ -31,6 +31,7 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.sql.JDBCType;
 import java.sql.RowId;
+import java.sql.SQLException;
 import java.sql.SQLType;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -61,22 +62,7 @@ final class SqlTypeMap {
       entry(JDBCType.BLOB, R2dbcType.BLOB),
       entry(JDBCType.BOOLEAN, R2dbcType.BOOLEAN),
       entry(JDBCType.CHAR, R2dbcType.CHAR),
-      entry(
-        JDBCType.CLOB,
-        // TODO: This is a placeholder. Replace with:
-        // R2dbcType.CLOB), when fix is released:
-        // https://github.com/r2dbc/r2dbc-spi/pull/222
-        new Type() {
-          @Override
-          public Class<?> getJavaType() {
-            return String.class;
-          }
-
-          @Override
-          public String getName() {
-            return "CLOB";
-          }
-        }),
+      entry(JDBCType.CLOB, R2dbcType.CLOB),
       entry(JDBCType.ARRAY, R2dbcType.COLLECTION),
       entry(JDBCType.DATE, R2dbcType.DATE),
       entry(JDBCType.DECIMAL, R2dbcType.DECIMAL),
@@ -92,21 +78,7 @@ final class SqlTypeMap {
       entry(JDBCType.LONGVARBINARY, OracleR2dbcTypes.LONG_RAW),
       entry(JDBCType.LONGVARCHAR, OracleR2dbcTypes.LONG),
       entry(JDBCType.NCHAR, R2dbcType.NCHAR),
-      entry(JDBCType.NCLOB,
-        // TODO: This is a placeholder. Replace with:
-        // R2dbcType.CLOB), when fix is released:
-        // https://github.com/r2dbc/r2dbc-spi/pull/222
-        new Type() {
-          @Override
-          public Class<?> getJavaType() {
-            return String.class;
-          }
-
-          @Override
-          public String getName() {
-            return "NCLOB";
-          }
-        }),
+      entry(JDBCType.NCLOB, R2dbcType.NCLOB),
       entry(JDBCType.NUMERIC, R2dbcType.NUMERIC),
       entry(JDBCType.NVARCHAR, R2dbcType.NVARCHAR),
       entry(JDBCType.REAL, R2dbcType.REAL),
@@ -119,22 +91,8 @@ final class SqlTypeMap {
         OracleType.TIMESTAMP_WITH_LOCAL_TIME_ZONE,
         OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE),
       entry(
-        JDBCType.TIMESTAMP_WITH_TIMEZONE,
-        // TODO: This is a placeholder. Replace with:
-        // R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
-        // When fix is released:
-        // https://github.com/r2dbc/r2dbc-spi/commit/a86562421a312df2d8a3ae187553bf6c2b291aad
-        new Type() {
-          @Override
-          public Class<?> getJavaType() {
-            return OffsetDateTime.class;
-          }
-
-          @Override
-          public String getName() {
-            return "TIMESTAMP_WITH_TIME_ZONE";
-          }
-        }),
+        OracleType.TIMESTAMP_WITH_TIME_ZONE,
+        R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),
       entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
       entry(JDBCType.VARCHAR, R2dbcType.VARCHAR)
@@ -207,10 +165,43 @@ final class SqlTypeMap {
    * {@code SQLType}, or {@code null} if no R2DBC {@code Type} is known to
    * identify same SQL type as the {@code jdbcType}.
    * @param jdbcType A JDBC SQL type
-   * @return An R2DBC SQL type
+   * @return An R2DBC SQL type. May be null.
    */
   static Type toR2dbcType(SQLType jdbcType) {
     return JDBC_TO_R2DBC_TYPE_MAP.get(jdbcType);
+  }
+
+  /**
+   * Returns the R2DBC {@code Type} identifying the same SQL type as a JDBC
+   * type number, or {@code null} if no R2DBC {@code Type} is known to
+   * identify same SQL type as the {@code jdbcTypeNumber}.
+   * @param jdbcTypeNumber A JDBC type number
+   * @return An R2DBC SQL type. May be null.
+   */
+  static Type toR2dbcType(int jdbcTypeNumber) {
+
+    // Search for a JDBCType with a matching type number
+    for (JDBCType jdbcType : JDBCType.values()) {
+      Integer vendorTypeNumber = jdbcType.getVendorTypeNumber();
+
+      if (vendorTypeNumber != null && vendorTypeNumber == jdbcTypeNumber)
+        return toR2dbcType(jdbcType);
+    }
+
+    // If no JDBCType matches, search for a matching OracleType
+    try {
+      OracleType oracleType =
+        oracle.jdbc.OracleType.toOracleType(jdbcTypeNumber);
+
+      if (oracleType != null)
+        return toR2dbcType(oracleType);
+      else
+        return null;
+    }
+    catch (SQLException typeNotFound) {
+      // toOracleType is specified to throw SQLException if no match is found
+      return null;
+    }
   }
 
   /**

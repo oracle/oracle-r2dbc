@@ -67,7 +67,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Verifies that
- * {@link OracleColumnMetadataImpl} implements behavior that is specified in
+ * {@link OracleReadableMetadataImpl} implements behavior that is specified in
  * it's class and method level javadocs.
  */
 public class OracleReactiveJdbcAdapterTest {

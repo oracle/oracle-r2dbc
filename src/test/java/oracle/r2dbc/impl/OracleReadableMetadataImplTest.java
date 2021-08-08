@@ -58,13 +58,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Verifies that
- * {@link OracleColumnMetadataImpl} implements behavior that is specified in
+ * {@link OracleReadableMetadataImpl} implements behavior that is specified in
  * it's class and method level javadocs.
  */
-public class OracleColumnMetadataImplTest {
+public class OracleReadableMetadataImplTest {
   
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * character type columns.
    */
   @Test
@@ -116,7 +116,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * binary type columns.
    */
   @Test
@@ -147,7 +147,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * numeric type columns.
    */
   @Test
@@ -183,7 +183,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * datetime type columns.
    */
   @Test
@@ -257,7 +257,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * row ID type columns.
    */
   @Test
@@ -294,7 +294,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * JSON type columns. When the test database older than version 21c, this test
    * is expected to fail with an ORA-00902 error indicating that JSON is not
    * a valid data type. The JSON type was added in 21c.
