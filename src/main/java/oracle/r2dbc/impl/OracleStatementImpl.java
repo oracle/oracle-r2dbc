@@ -21,7 +21,6 @@
 
 package oracle.r2dbc.impl;
 
-import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameter;
@@ -798,16 +797,7 @@ final class OracleStatementImpl implements Statement {
   private Publisher<OracleResultImpl> publishSqlResult(
     PreparedStatement preparedStatement, int fetchSize) {
 
-    runJdbc(() -> preparedStatement.setFetchSize(fetchSize));
-
-    // Round the timeout up to the nearest whole second. JDBC supports
-    // an int valued timeout of seconds.
-    runJdbc(() ->
-      preparedStatement.setQueryTimeout((int)Math.min(
-        Integer.MAX_VALUE,
-        timeout.toSeconds() + (timeout.getNano() == 0 ? 0 : 1))));
-
-    return Mono.from(adapter.publishSQLExecution(preparedStatement))
+    return Mono.from(publishSqlExecution(preparedStatement, fetchSize))
       .flatMapMany(isResultSet -> {
 
         OracleResultImpl firstResult =
@@ -822,6 +812,22 @@ final class OracleStatementImpl implements Statement {
           return publishMoreResults(adapter, preparedStatement);
         }
       });
+  }
+
+  private Publisher<Boolean> publishSqlExecution(
+    PreparedStatement preparedStatement, int fetchSize) {
+    runJdbc(() -> preparedStatement.setFetchSize(fetchSize));
+    setQueryTimeout(preparedStatement);
+    return adapter.publishSQLExecution(preparedStatement);
+  }
+
+  private void setQueryTimeout(PreparedStatement preparedStatement) {
+    // Round the timeout up to the nearest whole second. JDBC supports
+    // an int valued timeout of seconds.
+    runJdbc(() ->
+      preparedStatement.setQueryTimeout((int)Math.min(
+        Integer.MAX_VALUE,
+        timeout.toSeconds() + (timeout.getNano() == 0 ? 0 : 1))));
   }
 
   /**
@@ -1018,10 +1024,8 @@ final class OracleStatementImpl implements Statement {
         : jdbcConnection.prepareStatement(sql, currentGeneratedColumns),
       (preparedStatement, discardQueue) ->
         setBindValues(preparedStatement, currentBindValues, discardQueue),
-      preparedStatement -> {
-        runJdbc(() ->
-          preparedStatement.setFetchSize(currentFetchSize));
-        return Mono.from(adapter.publishSQLExecution(preparedStatement))
+      preparedStatement ->
+        Mono.from(publishSqlExecution(preparedStatement, currentFetchSize))
           .map(isResultSet -> {
             if (isResultSet) {
               throw new IllegalStateException(
@@ -1034,8 +1038,7 @@ final class OracleStatementImpl implements Statement {
                 fromJdbc(preparedStatement::getGeneratedKeys),
                 adapter);
             }
-          });
-      });
+          }));
   }
 
   /**
@@ -1084,14 +1087,16 @@ final class OracleStatementImpl implements Statement {
       () -> jdbcConnection.prepareStatement(sql),
       (preparedStatement, discardQueue) ->
         setBatchBindValues(preparedStatement, currentBatch, discardQueue),
-      preparedStatement ->
-        Flux.from(adapter.publishBatchUpdate(preparedStatement))
+      preparedStatement -> {
+        setQueryTimeout(preparedStatement);
+        return Flux.from(adapter.publishBatchUpdate(preparedStatement))
           .map(OracleResultImpl::createUpdateCountResult)
           .onErrorResume(error ->
             error.getCause() instanceof BatchUpdateException
               ? Mono.just(OracleResultImpl.createBatchUpdateErrorResult(
-                  (BatchUpdateException)error.getCause()))
-              : Mono.error(error)));
+              (BatchUpdateException) error.getCause()))
+              : Mono.error(error));
+      });
   }
 
   /**
@@ -1422,6 +1427,8 @@ final class OracleStatementImpl implements Statement {
           discardQueue ->
             Flux.from(bindFunction.apply(preparedStatement, discardQueue))
               .thenMany(resultFunction.apply(preparedStatement))
+              .onErrorResume(R2dbcException.class, r2dbcException ->
+                Mono.just(OracleResultImpl.createErrorResult(r2dbcException)))
               .defaultIfEmpty(createUpdateCountResult(-1L))
               .doOnNext(lastResultRef::set),
           discardQueue ->

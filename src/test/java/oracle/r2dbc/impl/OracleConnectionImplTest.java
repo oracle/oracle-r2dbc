@@ -1144,9 +1144,11 @@ public class OracleConnectionImplTest {
         // account for testing on slow systems).
         awaitNone(connection.setStatementTimeout(Duration.ofSeconds(2)));
         Duration start = Duration.ofNanos(System.nanoTime());
-        awaitError(R2dbcTimeoutException.class, connection.createStatement(
-          "UPDATE testSetStatementTimeout SET value = 1 WHERE value = 0")
-          .execute());
+        awaitError(R2dbcTimeoutException.class,
+          Mono.from(connection.createStatement(
+            "UPDATE testSetStatementTimeout SET value = 1 WHERE value = 0")
+          .execute())
+          .flatMapMany(Result::getRowsUpdated));
         Duration actual = Duration.ofNanos(System.nanoTime()).minus(start);
         assertTrue(actual.toSeconds() >= 2,
           "Timeout triggered too soon: " + actual);

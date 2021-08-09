@@ -198,6 +198,11 @@ abstract class OracleResultImpl implements Result {
     return new BatchUpdateErrorResult(batchUpdateException);
   }
 
+  static OracleResultImpl createErrorResult(
+    R2dbcException r2dbcException) {
+    return new ErrorResult(r2dbcException);
+  }
+
   private static final class UpdateCountResult extends OracleResultImpl {
 
     private final long updateCount;
@@ -297,23 +302,36 @@ abstract class OracleResultImpl implements Result {
   private static final class BatchUpdateErrorResult extends OracleResultImpl {
 
     private final BatchUpdateResult batchUpdateResult;
-    private final Message message;
+    private final ErrorResult errorResult;
 
     private BatchUpdateErrorResult(BatchUpdateException batchUpdateException) {
       batchUpdateResult =
         new BatchUpdateResult(batchUpdateException.getLargeUpdateCounts());
-      message = new MessageImpl(toR2dbcException(batchUpdateException));
+      errorResult = new ErrorResult(toR2dbcException(batchUpdateException));
     }
 
     @Override
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
       return Flux.concat(
         batchUpdateResult.publishSegments(mappingFunction),
-        Mono.just(message)
-          .map(mappingFunction));
+        errorResult.publishSegments(mappingFunction));
     }
   }
 
+  private static final class ErrorResult extends OracleResultImpl {
+
+    private final R2dbcException r2dbcException;
+
+    private ErrorResult(R2dbcException r2dbcException) {
+      this.r2dbcException = r2dbcException;
+    }
+
+    @Override
+    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
+      return Mono.just(new MessageImpl(r2dbcException))
+        .map(mappingFunction);
+    }
+  }
 
   private static final Object FILTERED = new Object();
 

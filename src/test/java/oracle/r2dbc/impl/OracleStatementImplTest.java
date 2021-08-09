@@ -757,11 +757,12 @@ public class OracleStatementImplTest {
       // Expect R2dbcException when executing a non-DML batch
       awaitError(
         R2dbcException.class,
-        connection.createStatement("SELECT ? FROM dual")
+        Mono.from(connection.createStatement("SELECT ? FROM dual")
           .bind(0, 1).add()
           .bind(0, 2).add()
           .bind(0, 3).add()
-          .execute());
+          .execute())
+          .flatMapMany(Result::getRowsUpdated));
 
       // Expect IllegalStateException if not all parameters are set
       assertThrows(

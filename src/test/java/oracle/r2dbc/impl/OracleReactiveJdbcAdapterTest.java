@@ -382,9 +382,10 @@ public class OracleReactiveJdbcAdapterTest {
         // systems.
         Duration start = Duration.ofNanos(System.nanoTime());
         awaitError(R2dbcTimeoutException.class,
-          connection0.createStatement(
+          Mono.from(connection0.createStatement(
             "UPDATE testStatementTimeout SET v=1 WHERE v=0")
-            .execute());
+            .execute())
+            .flatMapMany(Result::getRowsUpdated));
         Duration actual = Duration.ofNanos(System.nanoTime()).minus(start);
         assertTrue(actual.toSeconds() >= 2,
           "Timeout triggered too soon: " + actual);
