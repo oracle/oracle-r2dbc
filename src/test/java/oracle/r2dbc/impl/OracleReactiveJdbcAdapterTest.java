@@ -64,6 +64,7 @@ import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Verifies that
@@ -316,7 +317,19 @@ public class OracleReactiveJdbcAdapterTest {
         .option(HOST, "localhost")
         .option(PORT, listeningChannel.socket().getLocalPort())
         .option(DATABASE, serviceName())
-        .option(CONNECT_TIMEOUT, Duration.ofMillis(500L))
+        .option(CONNECT_TIMEOUT, Duration.ofSeconds(2))
+        .build());
+
+      verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.parse(
+        "r2dbc:oracle://localhost:" + listeningChannel.socket().getLocalPort()
+          + "?connectTimeout=PT2S")); // The value is parsed as a Duration
+
+      verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.builder()
+        .option(DRIVER, "oracle")
+        .option(HOST, "localhost")
+        .option(PORT, listeningChannel.socket().getLocalPort())
+        .option(DATABASE, serviceName())
+        .option(CONNECT_TIMEOUT, Duration.ofMillis(500))
         .build());
 
       verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.parse(
@@ -349,8 +362,27 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Try to connect
     try {
+      long start = System.currentTimeMillis();
       awaitError(R2dbcTimeoutException.class,
         ConnectionFactories.get(options).create());
+
+      // Compare the actual duration to the configured timeout
+      Duration timeoutDelta =
+        Duration.ofMillis(System.currentTimeMillis() - start)
+          .minus(Duration.parse(
+            options.getValue(Option.valueOf("connectTimeout")).toString()));
+
+      // Expect the actual duration to be at least as much as the configured
+      // timeout
+      if (timeoutDelta.isNegative())
+        fail("Timeout triggered too soon: " + timeoutDelta);
+
+      // Expect the actual duration to be no more than two seconds longer
+      // than the configured timeout. This should be a generous enough offset
+      // to allow for testing on slow systems
+      if (timeoutDelta.toSeconds() > 2)
+        fail("Timeout triggered too late: " + timeoutDelta);
+
     }
     catch (Throwable unexpected) {
       unexpected.printStackTrace();
