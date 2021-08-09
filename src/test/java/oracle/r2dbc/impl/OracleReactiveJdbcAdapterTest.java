@@ -29,10 +29,7 @@ import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.Result;
 import oracle.jdbc.OracleConnection;
 import oracle.jdbc.datasource.OracleDataSource;
-import oracle.jdbc.driver.DatabaseError;
-import oracle.r2dbc.test.DatabaseConfig;
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
@@ -58,7 +55,6 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.STATEMENT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
-
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.password;
@@ -67,7 +63,6 @@ import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.user;
-
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitNone;
@@ -78,6 +73,7 @@ import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Verifies that
@@ -333,7 +329,19 @@ public class OracleReactiveJdbcAdapterTest {
         .option(HOST, "localhost")
         .option(PORT, listeningChannel.socket().getLocalPort())
         .option(DATABASE, serviceName())
-        .option(CONNECT_TIMEOUT, Duration.ofMillis(500L))
+        .option(CONNECT_TIMEOUT, Duration.ofSeconds(2))
+        .build());
+
+      verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.parse(
+        "r2dbc:oracle://localhost:" + listeningChannel.socket().getLocalPort()
+          + "?connectTimeout=PT2S")); // The value is parsed as a Duration
+
+      verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.builder()
+        .option(DRIVER, "oracle")
+        .option(HOST, "localhost")
+        .option(PORT, listeningChannel.socket().getLocalPort())
+        .option(DATABASE, serviceName())
+        .option(CONNECT_TIMEOUT, Duration.ofMillis(500))
         .build());
 
       verifyConnectTimeout(listeningChannel, ConnectionFactoryOptions.parse(
@@ -430,8 +438,27 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Try to connect
     try {
+      long start = System.currentTimeMillis();
       awaitError(R2dbcTimeoutException.class,
         ConnectionFactories.get(options).create());
+
+      // Compare the actual duration to the configured timeout
+      Duration timeoutDelta =
+        Duration.ofMillis(System.currentTimeMillis() - start)
+          .minus(Duration.parse(
+            options.getValue(Option.valueOf("connectTimeout")).toString()));
+
+      // Expect the actual duration to be at least as much as the configured
+      // timeout
+      if (timeoutDelta.isNegative())
+        fail("Timeout triggered too soon: " + timeoutDelta);
+
+      // Expect the actual duration to be no more than two seconds longer
+      // than the configured timeout. This should be a generous enough offset
+      // to allow for testing on slow systems
+      if (timeoutDelta.toSeconds() > 2)
+        fail("Timeout triggered too late: " + timeoutDelta);
+
     }
     catch (Throwable unexpected) {
       unexpected.printStackTrace();

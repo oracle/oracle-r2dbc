@@ -21,6 +21,7 @@
 
 package oracle.r2dbc.test;
 
+import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
@@ -189,8 +190,9 @@ public final class DatabaseConfig {
         .execute())
         .flatMap(result ->
           result.map((row, metadata) ->
-            metadata.getColumnNames()
+            metadata.getColumnMetadatas()
               .stream()
+              .map(ColumnMetadata::getName)
               .map(name -> name + ": " + row.get(name))
               .collect(Collectors.joining("\n"))))
       .toStream()

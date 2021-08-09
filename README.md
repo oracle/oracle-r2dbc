@@ -197,7 +197,7 @@ behavior of that Publisher in regards to deferred execution and multiple Subscri
 subscribes, supports multiple Subscribers, and caches the result of a database call
 (the same result of the same call is emitted to each Subscriber).
 - Typically, a Publisher of multiple items defers execution until a Subscriber 
-signals demand, and does not support mulitple subscribers.
+signals demand, and does not support multiple subscribers.
 
 ### Errors
 - The error code of an R2dbcException is an [Oracle Database 
@@ -224,7 +224,7 @@ of each row affected by an INSERT or UPDATE.
   - This behavior may change in a later release.
   - Programmers are advised not to use the ROWID as if it were a primary key.
     - The ROWID of a row may change.
-    - After a row is deleted, it's ROWID may be reassigned to a new row.
+    - After a row is deleted, its ROWID may be reassigned to a new row.
     - Further Reading: https://asktom.oracle.com/pls/apex/asktom.search?tag=is-it-safe-to-use-rowid-to-locate-a-row
 - A **blocking database call** is executed by a Statement returning generated 
 values for a non-empty set of column names.
@@ -324,7 +324,7 @@ The following security guidelines should be followed when programming with the O
   - Option.sensitiveValueOf(OracleConnection.CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_KEYSTOREPASSWORD)
   - Option.sensitiveValueOf(OracleConnection.CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_TRUSTSTOREPASSWORD)
 ### Defend Against Denial-of-Service Attacks
-- Use a connection pool and configure a maximum size to limit the amount of database sessions created by ConnectionFactory.create()
+- Use a connection pool and configure a maximum size to limit the number of database sessions created by ConnectionFactory.create()
 - Enforce a maximum batch size to limit invocations of Statement.add() or Batch.add(String).
 - Enforce a maximum fetch size to limit values supplied to Statement.fetchSize(int).
 - Enforce a maximum buffer size to limit memory usage when reading Blob and Clob objects.

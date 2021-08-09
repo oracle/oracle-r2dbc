@@ -489,7 +489,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         oracleDataSource.setLoginTimeout(
           Math.toIntExact(timeout.getSeconds())
             // Round up to nearest whole second
-            + timeout.getNano() == 0 ? 0 : 1));
+            + (timeout.getNano() == 0 ? 0 : 1)));
     }
 
   }
