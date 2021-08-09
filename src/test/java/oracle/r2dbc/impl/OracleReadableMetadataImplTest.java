@@ -211,18 +211,14 @@ public class OracleReadableMetadataImplTest {
       // Expect TIMESTAMP WITH TIME ZONE and OffsetDateTime to map. Expect
       // precision to be the maximum String length returned by
       // OffsetDateTime.toString(). Expect scale to be the number of decimal
-      // digits in the fractional seconds component.
-      System.out.println("SKIPPING TIMESTAMP WITH TIME ZONE TEST");
-      /*
-      TODO: Uncomment when this fix is released:
-      https://github.com/r2dbc/r2dbc-spi/commit/a86562421a312df2d8a3ae187553bf6c2b291aad
+      // digits in the fractional seconds component. Expect the
+      // OracleType.TIMESTAMP_WITH_TIME_ZONE which has a different type code
+      // than JDBCType.TIMESTAMP_WITH_TIMEZONE
       verifyColumnMetadata(
         connection, "TIMESTAMP(3) WITH TIME ZONE",
-        JDBCType.TIMESTAMP_WITH_TIMEZONE, R2dbcType.TIMESTAMP_WITH_TIME_ZONE,
+        OracleType.TIMESTAMP_WITH_TIME_ZONE, R2dbcType.TIMESTAMP_WITH_TIME_ZONE,
         35, 3, OffsetDateTime.class,
         OffsetDateTime.parse("1977-06-16T09:00:00.123+01:23"));
-        *
-       */
 
       // Expect TIMESTAMP WITH LOCAL TIME ZONE and LocalDateTime to map.
       verifyColumnMetadata(
