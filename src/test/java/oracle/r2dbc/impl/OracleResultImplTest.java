@@ -22,6 +22,7 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Result.Message;
 import io.r2dbc.spi.Result.UpdateCount;
@@ -37,8 +38,10 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
@@ -436,4 +439,148 @@ public class OracleResultImplTest {
       tryAwaitNone(connection.close());
     }
   }
+
+  /**
+   * Verifies the implementation of
+   * {@link OracleResultImpl#filter(Predicate)}
+   */
+  @Test
+  public void testFilter() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testFilter (value NUMBER)"));
+
+      // Execute an INSERT and filter UpdateCount Segments. Expect a single
+      // UpdateCount to be input to the filter Predicate. Expect no UpdateCount
+      // to be published by getRowsUpdated
+      AtomicReference<UpdateCount> filteredUpdateCount =
+        new AtomicReference<>(null);
+      awaitNone(Flux.from(connection.createStatement(
+        "INSERT INTO testFilter VALUES (0)")
+        .execute())
+        .map(result ->
+          result.filter(segment -> {
+            assertTrue(segment instanceof UpdateCount,
+              "Unexpected Segment: " + segment);
+            assertTrue(
+              filteredUpdateCount.compareAndSet(null, (UpdateCount)segment),
+              "Unexpected Segment: " + segment);
+            return false;
+          }))
+        .flatMap(Result::getRowsUpdated));
+      assertEquals(1, filteredUpdateCount.get().value());
+
+      // Execute an INSERT and don't filter UpdateCount Segments. Expect a
+      // single UpdateCount to be input to the filter Predicate. Expect a single
+      // UpdateCount segment to be published by getRowsUpdated
+      AtomicReference<UpdateCount> unfilteredUpdateCount =
+        new AtomicReference<>(null);
+      awaitOne(1, Flux.from(connection.createStatement(
+        "INSERT INTO testFilter VALUES (1)")
+        .execute())
+        .map(result ->
+          result.filter(segment -> {
+            assertTrue(segment instanceof UpdateCount,
+              "Unexpected Segment: " + segment);
+            assertTrue(
+              unfilteredUpdateCount.compareAndSet(null, (UpdateCount)segment),
+              "Unexpected Segment: " + segment);
+            return true;
+          }))
+        .flatMap(Result::getRowsUpdated));
+      assertEquals(1, filteredUpdateCount.get().value());
+
+      // Execute an INSERT and chain invocations of Result.filter(Predicate).
+      // Expect filtering to be applied in the order of the chained
+      // invocations.
+      AtomicReference<UpdateCount> filteredUpdateCount0 =
+        new AtomicReference<>(null);
+      AtomicReference<UpdateCount> filteredUpdateCount1 =
+        new AtomicReference<>(null);
+      awaitNone(Flux.from(connection.createStatement(
+        "INSERT INTO testFilter VALUES (2)")
+        .execute())
+        .map(result ->
+          result.filter(segment -> {
+            assertTrue(segment instanceof UpdateCount,
+              "Unexpected Segment: " + segment);
+            assertTrue(
+              filteredUpdateCount0.compareAndSet(null, (UpdateCount)segment),
+              "Unexpected Segment: " + segment);
+            return true;
+          }))
+        .map(result ->
+          result.filter(segment -> {
+            assertTrue(segment instanceof UpdateCount,
+              "Unexpected Segment: " + segment);
+            assertEquals(filteredUpdateCount0.get(), segment);
+            assertTrue(
+              filteredUpdateCount1.compareAndSet(null, (UpdateCount)segment),
+              "Unexpected Segment: " + segment);
+            return false;
+          }))
+        .flatMap(Result::getRowsUpdated));
+      assertEquals(1, filteredUpdateCount0.get().value());
+      assertEquals(1, filteredUpdateCount1.get().value());
+
+      // Execute an INSERT, invoke filter on the Result, and then consume the
+      // filtered result. Expect both the original filtered Result objects to
+      // reject multiple consumptions.
+      Result unfilteredResult = Mono.from(connection.createStatement(
+        "INSERT INTO testFilter VALUES (3)")
+        .execute())
+        .block(sqlTimeout());
+      Result filteredResult = unfilteredResult.filter(segment -> false);
+      Publisher<Integer> filteredUpdateCounts = filteredResult.getRowsUpdated();
+      assertThrows(
+        IllegalStateException.class, unfilteredResult::getRowsUpdated);
+      assertThrows(
+        IllegalStateException.class, filteredResult::getRowsUpdated);
+      awaitNone(filteredUpdateCounts);
+
+      // Execute an INSERT, invoke filter on the Result, and then consume the
+      // original result. Expect both the original filtered Result objects to
+      // reject multiple consumptions.
+      Result unfilteredResult2 = Mono.from(connection.createStatement(
+        "INSERT INTO testFilter VALUES (3)")
+        .execute())
+        .block(sqlTimeout());
+      Result filteredResult2 = unfilteredResult2.filter(segment ->
+        fail("Unexpected invocation"));
+      Publisher<Integer> unfilteredUpdateCounts =
+        unfilteredResult2.getRowsUpdated();
+      assertThrows(
+        IllegalStateException.class, filteredResult2::getRowsUpdated);
+      assertThrows(
+        IllegalStateException.class, unfilteredResult2::getRowsUpdated);
+      awaitOne(1, unfilteredUpdateCounts);
+
+      // Execute an INSERT that fails, and filter Message type segments.
+      // Expect the Result to not emit {@code onError} when consumed.
+      AtomicReference<Message> filteredMessage =
+        new AtomicReference<>(null);
+      awaitNone(Mono.from(connection.createStatement(
+        "INSERT INTO testFilter VALUES ('cinco')")
+        .execute())
+        .map(result ->
+          result.filter(segment -> {
+            assertTrue(segment instanceof Message,
+              "Unexpected Segment: " + segment);
+            assertTrue(filteredMessage.compareAndSet(null, ((Message)segment)));
+            return false;
+          }))
+        .flatMapMany(Result::getRowsUpdated));
+      // Expect ORA-01722 for an invalid number
+      assertEquals(1722, filteredMessage.get().errorCode());
+
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement("DROP TABLE testFilter"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
 }

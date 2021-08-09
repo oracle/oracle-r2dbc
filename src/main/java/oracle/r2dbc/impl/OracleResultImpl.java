@@ -253,6 +253,11 @@ abstract class OracleResultImpl implements Result {
   @Override
   @SuppressWarnings("unchecked")
   public OracleResultImpl filter(Predicate<Segment> filter) {
+    requireNonNull(filter, "filter is null");
+
+    if (isPublished)
+      throw multipleConsumptionException();
+
     return new OracleResultImpl() {
       @Override
       <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
@@ -284,13 +289,22 @@ abstract class OracleResultImpl implements Result {
    * @throws IllegalStateException If this result has already been consumed.
    */
   private void setPublished() {
-    if (isPublished) {
-      throw new IllegalStateException(
-        "A result can not be consumed more than once");
-    }
-    else {
+    if (! isPublished)
       isPublished = true;
-    }
+    else
+      throw multipleConsumptionException();
+  }
+
+  /**
+   * Returns an {@code IllegalStateException} to be thrown when user code
+   * attempts to consume a {@code Result} more than once with invocations of
+   * {@link #map(BiFunction)}, {@link #map(Function)},
+   * {@link #flatMap(Function)}, or {@link #getRowsUpdated()}.
+   * @return {@code IllegalStateException} indicating multiple consumptions
+   */
+  private static IllegalStateException multipleConsumptionException() {
+    return new IllegalStateException(
+      "A result can not be consumed more than once");
   }
 
   /**
