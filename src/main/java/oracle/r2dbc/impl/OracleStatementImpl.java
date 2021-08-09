@@ -215,7 +215,8 @@ final class OracleStatementImpl implements Statement {
    * {@link SqlParameterParser}.
    * </p>
    * @param sql SQL Language statement that may include parameter markers.
-   * @param timeout
+   * @param timeout Timeout applied to the execution of the constructed
+   * {@code Statement}. Not null. Not negative.
    * @param jdbcConnection JDBC connection to an Oracle Database.
    * @param adapter Adapts JDBC calls into reactive streams.
    */

@@ -91,6 +91,8 @@ final class SqlTypeMap {
         OracleType.TIMESTAMP_WITH_LOCAL_TIME_ZONE,
         OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE),
       entry(
+        // Map the OracleType value, which has a different type code than the
+        // JDBCType value.
         OracleType.TIMESTAMP_WITH_TIME_ZONE,
         R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),

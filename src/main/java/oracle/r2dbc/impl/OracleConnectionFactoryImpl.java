@@ -106,8 +106,16 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
   private final DataSource dataSource;
 
   /**
+   * <p>
    * Timeout applied to the execution of {@link Statement}s created by
    * {@link Connection}s created by this {@code ConnectionFactory}.
+   * </p><p>
+   * The {@link #dataSource} is not configured with this value because Oracle
+   * JDBC does not have a connection property to set a statement execution
+   * timeout. This value is retained by an instance of
+   * {@code OracleConnectionFactoryImpl} so that it may be applied to each
+   * {@code Connection} it creates.
+   * </p>
    */
   private final Duration statementTimeout;
 
@@ -158,6 +166,10 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have
    * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
+   *
+   * @throws IllegalArgumentException If the
+   * {@link ConnectionFactoryOptions#STATEMENT_TIMEOUT} {@code Option} specifies
+   * a negative {@code Duration}
    */
   OracleConnectionFactoryImpl(ConnectionFactoryOptions options) {
     OracleR2dbcExceptions.requireNonNull(options, "options is null.");
@@ -197,7 +209,13 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
   public Publisher<Connection> create() {
     return Mono.defer(() ->
         Mono.fromDirect(adapter.publishConnection(dataSource)))
-      .map(conn -> new OracleConnectionImpl(statementTimeout, conn, adapter));
+      .flatMap(conn -> {
+        OracleConnectionImpl connection =
+          new OracleConnectionImpl(conn, adapter);
+
+        return Mono.from(connection.setStatementTimeout(statementTimeout))
+          .thenReturn(connection);
+      });
   }
 
   /**

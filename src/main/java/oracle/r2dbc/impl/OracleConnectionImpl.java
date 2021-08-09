@@ -91,21 +91,19 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * null. The value is never a negative duration. A value of
    * {@link Duration#ZERO} represents no timeout.
    */
-  private Duration statementTimeout;
+  private Duration statementTimeout = Duration.ZERO;
 
   /**
    * Constructs a new connection that uses the specified {@code adapter} to
    * perform database operations with the specified {@code jdbcConnection}.
-   * @param statementTimeout
    * @param jdbcConnection JDBC connection to an Oracle Database. Not null.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null. Retained.
+   * @param adapter Adapts JDBC calls into reactive streams. Not null.
+   * @throws IllegalArgumentException If {@code timeout} is negative
    */
   OracleConnectionImpl(
-    Duration statementTimeout, java.sql.Connection jdbcConnection,
-    ReactiveJdbcAdapter adapter) {
+    java.sql.Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
     this.adapter = adapter;
     this.jdbcConnection = jdbcConnection;
-    this.statementTimeout = requirePositiveDuration(statementTimeout);
   }
 
   /**
@@ -613,7 +611,13 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Publisher<Void> setStatementTimeout(Duration timeout) {
     requireNonNull(timeout, "timeout is null");
-    this.statementTimeout = requirePositiveDuration(timeout);
+
+    if (timeout.isNegative()) {
+      throw new IllegalArgumentException(
+        "timeout is a negative Duration: " + timeout);
+    }
+
+    this.statementTimeout = timeout;
     return Mono.empty();
   }
 
@@ -727,21 +731,14 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   }
 
   /**
-   * Checks that a {@code duration} is zero or positive and throws an
-   * {@link IllegalArgumentException} if it is not, or otherwise returns it.
-   * @param duration Duration to check
-   * @return {@code duration} if it is zero or positive
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by invoking the
+   * {@link java.sql.Connection#beginRequest()} method of the JDBC
+   * {@code Connection}. The {@code beginRequest} method is JDBC's
+   * equivalent to R2DBC's {@code postAllocate} method.
+   * </p>
    */
-  private static Duration requirePositiveDuration(Duration duration) {
-    if (duration.isNegative()) {
-      throw new IllegalArgumentException(
-        "timeout is a negative Duration: " + duration);
-    }
-    else {
-      return duration;
-    }
-  }
-
   @Override
   public Publisher<Void> postAllocate() {
     return Mono.fromSupplier(() -> {
@@ -750,6 +747,16 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
     });
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by invoking the
+   * {@link java.sql.Connection#endRequest()} method of the JDBC
+   * {@code Connection}. The {@code endRequest} method is JDBC's equivalent
+   * to R2DBC's {@code preRelease} method.
+   * </p>
+   */
+
   @Override
   public Publisher<Void> preRelease() {
     return Mono.fromSupplier(() -> {
@@ -757,4 +764,5 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
       return null;
     });
   }
+
 }

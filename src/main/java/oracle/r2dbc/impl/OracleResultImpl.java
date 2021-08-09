@@ -1,3 +1,24 @@
+/*
+  Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+
+  This software is dual-licensed to you under the Universal Permissive License
+  (UPL) 1.0 as shown at https://oss.oracle.com/licenses/upl or Apache License
+  2.0 as shown at http://www.apache.org/licenses/LICENSE-2.0. You may choose
+  either license.
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     https://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+*/
+
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.OutParameters;
@@ -27,27 +48,27 @@ import static oracle.r2dbc.impl.OracleReadableImpl.createRow;
 import static oracle.r2dbc.impl.ReadablesMetadata.createRowMetadata;
 
 /**
- * Base class with an abstract method that creates a {@link Publisher} from
- * a {@link Segment} mapping function and {@link Segment} filtering function.
- *
- * The {@code Segment} {@code Publisher} may be consumed by
- * {@link #flatMap(Function)}. The {@code Publisher} rejects multiple
- * {@code Subscribers}, as the {@code Segments} may be instances of
- * {@link RowSegment} which must deallocate memory that retains row data
- * after the {@code RowSegment} has been mapped by a mapping function.
- *
- * The {@code Segment} {@code Publisher} may be filtered by
- * {@link #filter(Predicate)}. A call to {@code filter} returns new
- * {@code Result} that retains a reference to the {@code Segment}
- * {@code Publisher} with an additional filtering operator applied to emitted
- * values.
- *
- * The {@code Segment} {@code Publisher} may be filtered
- * and then consumed in a single call by {@link #map(BiFunction)},
- * {@link #map(Function)}, or {@link #getRowsUpdated()}.
- *
+ * <p>
+ * Abstract class providing a base implementation of the R2DBC SPI
+ * {@link Result} interface. Concrete subclasses implement
+ * {@link #publishSegments(Function)} to return a {@link Publisher} that emits
+ * the output of a {@link Segment} mapping function for each {@code Segment} of
+ * the {@code Result}. Implementations of R2DBC SPI methods in the base
+ * class invoke {@code publishSegments} with a mapping function that
+ * filters the emitted {@code Segment}s according to the specification of the
+ * SPI method.
+ * </p>
  */
 abstract class OracleResultImpl implements Result {
+
+  /**
+   * Object output by mapping functions provided to
+   * {@link #publishSegments(Function)} for {@code Segment}s that do not
+   * satisfy a filter. Downstream operators of
+   * {@link #publishSegments(Function)} filter this object so that it is not
+   * emitted to user code.
+   */
+  private static final Object FILTERED = new Object();
 
   /**
    * Indicates if a method call on this {@code Result} has already returned a
@@ -66,16 +87,60 @@ abstract class OracleResultImpl implements Result {
   private final CompletableFuture<Void> consumedFuture =
     new CompletableFuture<>();
 
+  /** Private constructor invoked by inner subclasses */
   private OracleResultImpl() { }
 
+  /**
+   * Publishes the output of a {@code mappingFunction} for each {@code Segment}
+   * of this {@code Result}.
+   * @param mappingFunction {@code Segment} mapping function.
+   * @param <T> Output type of the {@code mappingFunction}
+   * @return {@code Publisher} of values output by the {@code mappingFunction}
+   */
   abstract <T> Publisher<T> publishSegments(
     Function<Segment, T> mappingFunction);
 
+  /**
+   * <p>
+   * Publishes the output of a {@code mappingFunction} for each {@code Segment}
+   * of this {@code Result}, where the {@code Segment} is an instance of the
+   * specified {@code type}.
+   * </p><p>
+   * This method updates the state of this {@code Result} to prevent multiple
+   * consumptions and to complete the {@link #consumedFuture} after the
+   * returned {@code Publisher} terminates. For this state to be updated
+   * correctly, any {@code Publisher} returned to user code must one that is
+   * returned by this method.
+   * </p><p>
+   * The returned {@code Publisher} emits {@code onError} with an
+   * {@link R2dbcException} if this {@code Result} has a {@link Message} segment
+   * and the {@code type} is not a super-type of {@code Message}. This
+   * corresponds to the specified behavior of R2DBC SPI methods
+   * {@link #map(BiFunction)}, {@link #map(BiFunction)}, and
+   * {@link #getRowsUpdated()}
+   * </p>
+   * @param type {@code Segment} type to be mapped
+   * @param mappingFunction {@code Segment} mapping function
+   * @param <T> {@code Segment} type to be mapped
+   * @param <U> Output type of the {@code mappingFunction}
+   * @return {@code Publisher} of mapped {@code Segment}s
+   */
+  @SuppressWarnings("unchecked")
   private <T extends Segment, U> Publisher<U> publishSegments(
     Class<T> type, Function<? super T, U> mappingFunction) {
 
     setPublished();
 
+    // In the case of Row publishing, the mapping function must be passed down
+    // to the JDBC driver, as it will deallocate row data storage once the
+    // mapping function returns a value. The mapping function provided to JDBC
+    // must be one that invokes the user-defined mapping function before row
+    // data is deallocated.
+    // Instances of the desired Segment type are input to the user-defined
+    // mapping function. If Message Segments are not a desired type, then
+    // they are thrown and emitted as onError signals. Any other Segment type
+    // is mapped to the FILTERED object, which is then filtered by a downstream
+    // operator.
     return Flux.from(publishSegments(segment -> {
         if (type.isInstance(segment))
           return mappingFunction.apply(type.cast(segment));
@@ -89,6 +154,20 @@ abstract class OracleResultImpl implements Result {
       .doOnCancel(() -> consumedFuture.complete(null));
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method to return a {@code Publisher} emitting the
+   * flat-mapped output of {@code Publisher}s output by a
+   * {@code mappingFunction} for all {@code Segments} this {@code Result}.
+   * {@code Publisher}s output by the {@code mappingFunction} are subscribed to
+   * serially with the completion of the {@code Publisher} output for any
+   * previous {@code Segment}.
+   * </p><p>
+   * The returned {@code Publisher} does not support multiple
+   * {@code Subscriber}s
+   * </p>
+   */
   @Override
   public <T> Publisher<T> flatMap(
     Function<Segment, ? extends Publisher<? extends T>> mappingFunction) {
@@ -97,12 +176,35 @@ abstract class OracleResultImpl implements Result {
       publishSegments(Segment.class, mappingFunction)));
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method to return a {@code Publisher} emitting the
+   * update counts of this {@code Result} as {@link Integer} values. An
+   * {@code onError} signal with {@link ArithmeticException} is emitted if a
+   * update count of this {@code Result} is larger than
+   * {@link Integer#MAX_VALUE}.
+   * </p><p>
+   * The returned {@code Publisher} supports multiple {@code Subscriber}s.
+   * </p>
+   */
   @Override
   public Publisher<Integer> getRowsUpdated() {
     return publishSegments(UpdateCount.class,
       updateCount -> Math.toIntExact(updateCount.value()));
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method to return a {@code Publisher} emitting the
+   * output of a {@code mappingFunction} for each {@link Row} of this
+   * {@code Result}.
+   * </p><p>
+   * The returned {@code Publisher} does not support multiple
+   * {@code Subscriber}s.
+   * </p>
+   */
   @Override
   public <T> Publisher<T> map(
     BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
@@ -114,6 +216,17 @@ abstract class OracleResultImpl implements Result {
       }));
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method to return a {@code Publisher} emitting the
+   * output of a {@code mappingFunction} for each {@link Row} of this
+   * {@code Result}.
+   * </p><p>
+   * The returned {@code Publisher} does not support multiple
+   * {@code Subscriber}s.
+   * </p>
+   */
   @Override
   public <T> Publisher<T> map(
     Function<? super Readable, ? extends T> mappingFunction) {
@@ -123,9 +236,32 @@ abstract class OracleResultImpl implements Result {
         mappingFunction.apply(readableSegment.getReadable())));
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method to return a new instance of
+   * {@code OracleResultImpl} that implements
+   * {@link OracleResultImpl#publishSegments(Function)} to call
+   * {@link OracleResultImpl#publishSegments(Class, Function)} on this instance
+   * of {@code OracleResultImpl}. The invocation of {@code publishSegments}
+   * on this instance ensures that its consumption state is updated correctly.
+   * The invocation of {@code publishSegments} is provided with a mapping
+   * function that outputs the {@link #FILTERED} object for {@code Segment}s
+   * rejected by the {@code filter}.
+   * </p>
+   */
   @Override
+  @SuppressWarnings("unchecked")
   public OracleResultImpl filter(Predicate<Segment> filter) {
-    return new FilteredResult(requireNonNull(filter, "filter is null"));
+    return new OracleResultImpl() {
+      @Override
+      <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
+        return OracleResultImpl.this.publishSegments(Segment.class, segment ->
+          filter.test(segment)
+            ? mappingFunction.apply(segment)
+            : (T)FILTERED);
+      }
+    };
   }
 
   /**
@@ -157,52 +293,80 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
-  private final class FilteredResult extends OracleResultImpl {
-
-    private final Predicate<Segment> filter;
-
-    private FilteredResult(Predicate<Segment> filter) {
-      this.filter = filter;
-    }
-
-    @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return Flux.from(OracleResultImpl.this.publishSegments(segment ->
-        filter.test(segment)
-          ? mappingFunction.apply(segment)
-          : (T)FILTERED))
-        .filter(object -> object != FILTERED);
-    }
-  }
-
+  /**
+   * Creates a {@code Result} that publishes a JDBC {@code resultSet} as
+   * {@link RowSegment}s
+   * @param resultSet {@code ResultSet} to publish
+   * @param adapter Adapts JDBC calls into reactive streams.
+   * @return A {@code Result} for a ResultSet
+   */
   public static OracleResultImpl createQueryResult(
      ResultSet resultSet, ReactiveJdbcAdapter adapter) {
     return new ResultSetResult(resultSet, adapter);
   }
 
+  /**
+   * Creates a {@code Result} that publishes {@code outParameters} as
+   * {@link OutSegment}s
+   * @param outParameters {@code OutParameters} to publish
+   * @return A {@code Result} for {@code OutParameters}
+   */
   static OracleResultImpl createCallResult(OutParameters outParameters) {
     return new CallResult(outParameters);
   }
 
+  /**
+   * Creates a {@code Result} that publishes an {@code updateCount} as an
+   * {@link UpdateCount} segment, followed by a {@code generatedKeys}
+   * {@code ResultSet} as {@link RowSegment}s
+   * @return A {@code Result} for values generated by DML
+   * @param updateCount Update count to publish
+   * @param generatedKeys Generated values to publish
+   * @param adapter Adapts JDBC calls into reactive streams.
+   */
   static OracleResultImpl createGeneratedValuesResult(
     long updateCount, ResultSet generatedKeys, ReactiveJdbcAdapter adapter) {
     return new GeneratedKeysResult(updateCount, generatedKeys, adapter);
   }
 
-  static OracleResultImpl createUpdateCountResult(Long updateCount) {
+  /**
+   * Creates a {@code Result} that publishes an {@code updateCount} as an
+   * {@link UpdateCount} segment
+   * @return A {@code Result} for a DML update
+   * @param updateCount Update count to publish
+   */
+  static OracleResultImpl createUpdateCountResult(long updateCount) {
     return new UpdateCountResult(updateCount);
   }
 
+  /**
+   * Creates a {@code Result} that publishes update counts of a
+   * {@code batchUpdateException} as {@link UpdateCount} segments, followed a
+   * {@link Message} segment with the {@code batchUpdateException} mapped to
+   * an {@link R2dbcException}
+   * @param batchUpdateException BatchUpdateException to publish
+   * @return A {@code Result} for a failed DML batch update
+   */
   static OracleResultImpl createBatchUpdateErrorResult(
     BatchUpdateException batchUpdateException) {
     return new BatchUpdateErrorResult(batchUpdateException);
   }
 
-  static OracleResultImpl createErrorResult(
-    R2dbcException r2dbcException) {
+  /**
+   * Creates a {@code Result} that publishes an {@code r2dbcException} as a
+   * {@link Message} segment
+   * @param r2dbcException Error to publish
+   * @return A {@code Result} for failed {@code Statement} execution
+   */
+  static OracleResultImpl createErrorResult(R2dbcException r2dbcException) {
     return new ErrorResult(r2dbcException);
   }
 
+  /**
+   * {@link OracleResultImpl} subclass that publishes a single update count. An
+   * instance of this class constructed with negative valued update count
+   * will publish no {@code Segment}s
+   */
   private static final class UpdateCountResult extends OracleResultImpl {
 
     private final long updateCount;
@@ -219,6 +383,12 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
+  /**
+   * {@link OracleResultImpl} subclass that publishes JDBC {@link ResultSet} as
+   * {@link RowSegment}s. {@link RowMetadata} of published {@code Rows} is
+   * derived from the {@link java.sql.ResultSetMetaData} of the
+   * {@link ResultSet}.
+   */
   private static final class ResultSetResult extends OracleResultImpl {
 
     private final ResultSet resultSet;
@@ -240,6 +410,12 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
+  /**
+   * {@link OracleResultImpl} subclass that publishes an update count as an
+   * {@link UpdateCount} segment, followed by a JDBC {@link ResultSet} as
+   * {@link RowSegment}s. This class is a composite of a
+   * {@link UpdateCountResult} and {@link ResultSetResult}.
+   */
   private static final class GeneratedKeysResult extends OracleResultImpl {
 
     private final OracleResultImpl updateCountResult;
@@ -258,6 +434,10 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
+  /**
+   * {@link OracleResultImpl} subclass that publishes an single instance of
+   * {@link OutParameters} as an {@link OutSegment}.
+   */
   private static final class CallResult extends OracleResultImpl {
 
     private final OutParameters outParameters;
@@ -273,6 +453,10 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
+  /**
+   * {@link OracleResultImpl} subclass that publishes an array of update
+   * counts as {@link UpdateCount} segments.
+   */
   private static final class BatchUpdateResult extends OracleResultImpl {
 
     private final long[] updateCounts;
@@ -290,14 +474,11 @@ abstract class OracleResultImpl implements Result {
   }
 
   /**
-   * A {@code Result} of a batch DML update statement that failed. An
-   * instance of {@code BatchUpdateErrorResult} retains a JDBC
-   * {@link java.sql.BatchUpdateException}. The updates counts of the
-   * {@code BatchUpdateException} are emitted as
-   * {@link io.r2dbc.spi.Result.UpdateCount} segments. Following the update
-   * counts, a {@link io.r2dbc.spi.Result.Message} segment is emitted with the
-   * {@code BatchUpdateException} mapped to an
-   * {@link io.r2dbc.spi.R2dbcException}.
+   * {@link OracleResultImpl} subclass that publishes an array of update
+   * counts from a {@link BatchUpdateException} as {@link UpdateCount} segments
+   * followed by a {@link Message} segment with the {@link BatchUpdateException}
+   * mapped to an {@link R2dbcException}. This class is a composite of
+   * {@link BatchUpdateResult} and {@link ErrorResult}.
    */
   private static final class BatchUpdateErrorResult extends OracleResultImpl {
 
@@ -318,6 +499,10 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
+  /**
+   * {@link OracleResultImpl} subclass that publishes an {@link R2dbcException}
+   * as a {@link Message} segment.
+   */
   private static final class ErrorResult extends OracleResultImpl {
 
     private final R2dbcException r2dbcException;
@@ -333,8 +518,23 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
-  private static final Object FILTERED = new Object();
 
+  /**
+   * Common interface for instances of {@link Segment} with a {@link Readable}
+   * value. The {@link #map(Function)} filters for this segment type, and uses
+   * the common {@link #getReadable()} method to obtain a {@link Readable} from
+   * the segment.
+   */
+  private interface ReadableSegment extends Segment {
+    /** Returns the {@link Readable} value of this {@code Segment} */
+    Readable getReadable();
+  }
+
+  /**
+   * Implementation of {@link RowSegment}. An instance of this class
+   * implements the {@link ReadableSegment} interface that satisfies the filter
+   * of {@link #map(Function)}.
+   */
   private static final class RowSegmentImpl
     implements RowSegment, ReadableSegment {
 
@@ -355,20 +555,11 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
-  private static final class UpdateCountImpl implements UpdateCount {
-
-    private final long value;
-
-    private UpdateCountImpl(long value) {
-      this.value = value;
-    }
-
-    @Override
-    public long value() {
-      return value;
-    }
-  }
-
+  /**
+   * Implementation of {@link OutSegment}. An instance of this class
+   * implements the {@link ReadableSegment} interface that satisfies the filter
+   * of {@link #map(Function)}.
+   */
   private static final class OutSegmentImpl
     implements OutSegment, ReadableSegment {
 
@@ -390,15 +581,25 @@ abstract class OracleResultImpl implements Result {
   }
 
   /**
-   * Common interface for instances of {@link Segment} with a {@link Readable}
-   * value. The {@link #map(Function)} filters for this segment type, and uses
-   * the common {@link #getReadable()} method to obtain a {@link Readable} from
-   * the segment.
+   * Implementation of {@link UpdateCount}.
    */
-  private interface ReadableSegment extends Segment {
-    Readable getReadable();
+  private static final class UpdateCountImpl implements UpdateCount {
+
+    private final long value;
+
+    private UpdateCountImpl(long value) {
+      this.value = value;
+    }
+
+    @Override
+    public long value() {
+      return value;
+    }
   }
 
+  /**
+   * Implementation of {@link Message}.
+   */
   private static final class MessageImpl implements Message {
 
     private final R2dbcException exception;

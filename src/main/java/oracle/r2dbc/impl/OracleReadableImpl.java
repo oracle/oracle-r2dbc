@@ -50,7 +50,6 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
  * {@code JdbcReadable} may represent a single row of data, or a set of out
  * parameter values.
  * </p>
- *
  * @author  harayuanwang, michael-a-mcmahon
  * @since   0.1.0
  */
@@ -85,24 +84,33 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
 
   /**
    * <p>
-   * Creates a new row that supplies column values and metadata from the
-   * provided {@code jdbcReadable} and {@code rowMetadata}. The metadata
+   * Creates a new {@code Row} that supplies column values and metadata from the
+   * provided {@code jdbcReadable} and {@code metadata}. The metadata
    * object is used to determine the default type mapping of column values.
    * </p>
    * @param adapter Adapts JDBC calls into reactive streams.
    * @param jdbcReadable Row data from the Oracle JDBC Driver.
-   * @param rowMetadata Meta-data for the specified row.
+   * @param metadata Meta-data for the specified row.
    */
   static Row createRow(
-    JdbcReadable jdbcReadable, RowMetadataImpl rowMetadata,
+    JdbcReadable jdbcReadable, RowMetadataImpl metadata,
     ReactiveJdbcAdapter adapter) {
-    return new RowImpl(jdbcReadable, rowMetadata, adapter);
+    return new RowImpl(jdbcReadable, metadata, adapter);
   }
-
+  /**
+   * <p>
+   * Creates a new {@code OutParameters} that supplies values and metadata from
+   * the provided {@code jdbcReadable} and {@code rowMetadata}. The metadata
+   * object is used to determine the default type mapping of column values.
+   * </p>
+   * @param adapter Adapts JDBC calls into reactive streams.
+   * @param jdbcReadable Row data from the Oracle JDBC Driver.
+   * @param metadata Meta-data for the specified row.
+   */
   static OutParameters createOutParameters(
-    JdbcReadable jdbcReadable, OutParametersMetadataImpl metatdata,
+    JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata,
     ReactiveJdbcAdapter adapter) {
-    return new OutParametersImpl(jdbcReadable, metatdata, adapter);
+    return new OutParametersImpl(jdbcReadable, metadata, adapter);
   }
 
   /**

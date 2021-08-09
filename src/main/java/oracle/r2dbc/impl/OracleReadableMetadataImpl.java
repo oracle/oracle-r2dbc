@@ -397,6 +397,68 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
   }
 
   /**
+   * Implementation of the {@link ColumnMetadata} interface of the
+   * R2DBC SPI. This class inherits the implementation of
+   * {@link ReadableMetadata} from {@link OracleReadableMetadataImpl}. This
+   * class does not currently declare any additional methods, but it might do
+   * so if a future SPI update defines any for the {@code ColumnMetadata}
+   * interface.
+   */
+  private static final class OracleColumnMetadataImpl
+    extends OracleReadableMetadataImpl implements ColumnMetadata {
+
+    /**
+     * Constructs a new instance that supplies metadata of a column.
+     *
+     * @param type The column's SQL type. Not null.
+     * @param name The column's name, as specified in the SQL statement that
+     *   returned the column. Not null.
+     * @param nullability The column's nullability. Not the Java Language {@code
+     *   null} value. May be any value of {@link Nullability}.
+     * @param precision The column's precision, or null if precision is not
+     *   applicable to the column's type.
+     * @param scale The column's scale, or null if scale is not applicable to the
+     *   column's type.
+     * @throws IllegalStateException If the {@code jdbcType} is not recognized
+     */
+    private OracleColumnMetadataImpl(
+      Type type, String name, Nullability nullability, Integer precision,
+      Integer scale) {
+      super(type, name, nullability, precision, scale);
+    }
+  }
+
+  /**
+   * Implementation of the {@link OutParameterMetadata} interface of the
+   * R2DBC SPI. This class inherits the implementation of
+   * {@link ReadableMetadata} from {@link OracleReadableMetadataImpl}. This
+   * class does not currently declare any additional methods, but it might do
+   * so if a future SPI update defines any for the {@code OutParameterMetadata}
+   * interface.
+   */
+  private static final class OracleOutParameterMetadataImpl
+    extends OracleReadableMetadataImpl implements OutParameterMetadata {
+
+    /**
+     * Constructs a new instance that supplies metadata of an out parameter.
+     *
+     * @param type The out parameter's SQL type. Not null.
+     * @param name The out parameter's name, as specified in the SQL statement
+     * that returned the out parameter. Not null.
+     * @param nullability The out parameter's nullability. Not the Java Language
+     * {@code null} value. May be any value of {@link Nullability}.
+     * @param precision The out parameter's precision, or null if precision is
+     * not applicable to the out parameter's type.
+     * @param scale The out parameter's scale, or null if scale is not applicable to
+     */
+    private OracleOutParameterMetadataImpl(
+      Type type, String name, Nullability nullability, Integer precision,
+      Integer scale) {
+      super(type, name, nullability, precision, scale);
+    }
+  }
+
+  /**
    * Implementation of the R2DBC {@link Type} interface. Instances of this class
    * are constructed when the metadata of a {@code Readable} value identifies a
    * SQL type not recognized by {@link SqlTypeMap}. The instance is
@@ -459,68 +521,6 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
     @Override
     public int hashCode() {
       return Objects.hash(name, javaType);
-    }
-  }
-
-  /**
-   * Implementation of the {@link ColumnMetadata} interface of the
-   * R2DBC SPI. This class inherits the implementation of
-   * {@link ReadableMetadata} from {@link OracleReadableMetadataImpl}. This
-   * class does not currently declare any additional methods, but it might do
-   * so if a future SPI update defines any for the {@code ColumnMetadata}
-   * interface.
-   */
-  private static final class OracleColumnMetadataImpl
-    extends OracleReadableMetadataImpl implements ColumnMetadata {
-
-    /**
-     * Constructs a new instance that supplies metadata of a column.
-     *
-     * @param type The column's SQL type. Not null.
-     * @param name The column's name, as specified in the SQL statement that
-     *   returned the column. Not null.
-     * @param nullability The column's nullability. Not the Java Language {@code
-     *   null} value. May be any value of {@link Nullability}.
-     * @param precision The column's precision, or null if precision is not
-     *   applicable to the column's type.
-     * @param scale The column's scale, or null if scale is not applicable to the
-     *   column's type.
-     * @throws IllegalStateException If the {@code jdbcType} is not recognized
-     */
-    private OracleColumnMetadataImpl(
-      Type type, String name, Nullability nullability, Integer precision,
-      Integer scale) {
-      super(type, name, nullability, precision, scale);
-    }
-  }
-
-  /**
-   * Implementation of the {@link OutParameterMetadata} interface of the
-   * R2DBC SPI. This class inherits the implementation of
-   * {@link ReadableMetadata} from {@link OracleReadableMetadataImpl}. This
-   * class does not currently declare any additional methods, but it might do
-   * so if a future SPI update defines any for the {@code OutParameterMetadata}
-   * interface.
-   */
-  private static final class OracleOutParameterMetadataImpl
-    extends OracleReadableMetadataImpl implements OutParameterMetadata {
-
-    /**
-     * Constructs a new instance that supplies metadata of an out parameter.
-     *
-     * @param type The out parameter's SQL type. Not null.
-     * @param name The out parameter's name, as specified in the SQL statement
-     * that returned the out parameter. Not null.
-     * @param nullability The out parameter's nullability. Not the Java Language
-     * {@code null} value. May be any value of {@link Nullability}.
-     * @param precision The out parameter's precision, or null if precision is
-     * not applicable to the out parameter's type.
-     * @param scale The out parameter's scale, or null if scale is not applicable to
-     */
-    private OracleOutParameterMetadataImpl(
-      Type type, String name, Nullability nullability, Integer precision,
-      Integer scale) {
-      super(type, name, nullability, precision, scale);
     }
   }
 
