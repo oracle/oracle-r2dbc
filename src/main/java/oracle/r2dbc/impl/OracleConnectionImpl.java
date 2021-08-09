@@ -25,6 +25,7 @@ import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionMetadata;
 import io.r2dbc.spi.IsolationLevel;
+import io.r2dbc.spi.Lifecycle;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.TransactionDefinition;
@@ -73,7 +74,7 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
  * @author  harayuanwang, michael-a-mcmahon
  * @since   0.1.0
  */
-final class OracleConnectionImpl implements Connection {
+final class OracleConnectionImpl implements Connection, Lifecycle {
 
   /** Adapts JDBC Driver APIs into Reactive Streams APIs */
   private final ReactiveJdbcAdapter adapter;
@@ -741,4 +742,19 @@ final class OracleConnectionImpl implements Connection {
     }
   }
 
+  @Override
+  public Publisher<Void> postAllocate() {
+    return Mono.fromSupplier(() -> {
+      runJdbc(jdbcConnection::beginRequest);
+      return null;
+    });
+  }
+
+  @Override
+  public Publisher<Void> preRelease() {
+    return Mono.fromSupplier(() -> {
+      runJdbc(jdbcConnection::endRequest);
+      return null;
+    });
+  }
 }
