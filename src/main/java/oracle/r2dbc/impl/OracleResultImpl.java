@@ -1,6 +1,7 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.OutParameters;
+import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Readable;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
@@ -10,15 +11,18 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.sql.BatchUpdateException;
 import java.sql.ResultSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.LongStream;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 import static oracle.r2dbc.impl.OracleReadableImpl.createRow;
 import static oracle.r2dbc.impl.ReadablesMetadata.createRowMetadata;
 
@@ -67,14 +71,20 @@ abstract class OracleResultImpl implements Result {
   abstract <T> Publisher<T> publishSegments(
     Function<Segment, T> mappingFunction);
 
-  private <T> Publisher<T> publishSegments(
-    Predicate<Segment> filter, Function<Segment, T> mappingFunction) {
+  private <T extends Segment, U> Publisher<U> publishSegments(
+    Class<T> type, Function<? super T, U> mappingFunction) {
 
     setPublished();
 
-    return Flux.from(publishSegments(
-      new FilteredMappingFunction<>(filter, mappingFunction)))
-      .filter(output -> output != FILTERED)
+    return Flux.from(publishSegments(segment -> {
+        if (type.isInstance(segment))
+          return mappingFunction.apply(type.cast(segment));
+        else if (segment instanceof Message)
+          throw ((Message)segment).exception();
+        else
+          return (U)FILTERED;
+      }))
+      .filter(object -> object != FILTERED)
       .doOnTerminate(() -> consumedFuture.complete(null))
       .doOnCancel(() -> consumedFuture.complete(null));
   }
@@ -84,24 +94,22 @@ abstract class OracleResultImpl implements Result {
     Function<Segment, ? extends Publisher<? extends T>> mappingFunction) {
     requireNonNull(mappingFunction, "mappingFunction is null");
     return singleSubscriber(Flux.concat(
-      publishSegments(segment -> true, mappingFunction)));
+      publishSegments(Segment.class, mappingFunction)));
   }
 
   @Override
   public Publisher<Integer> getRowsUpdated() {
-    return publishSegments(
-      segment -> segment instanceof UpdateCount,
-      segment -> Math.toIntExact(((UpdateCount)segment).value()));
+    return publishSegments(UpdateCount.class,
+      updateCount -> Math.toIntExact(updateCount.value()));
   }
 
   @Override
   public <T> Publisher<T> map(
     BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
     requireNonNull(mappingFunction, "mappingFunction is null");
-    return singleSubscriber(publishSegments(
-      segment -> segment instanceof RowSegment,
-      segment -> {
-        Row row = ((RowSegment)segment).row();
+    return singleSubscriber(publishSegments(RowSegment.class,
+      rowSegment -> {
+        Row row = rowSegment.row();
         return mappingFunction.apply(row, row.getMetadata());
       }));
   }
@@ -110,10 +118,9 @@ abstract class OracleResultImpl implements Result {
   public <T> Publisher<T> map(
     Function<? super Readable, ? extends T> mappingFunction) {
     requireNonNull(mappingFunction, "mappingFunction is null");
-    return singleSubscriber(publishSegments(
-      segment -> segment instanceof ReadableSegment,
-      segment ->
-        mappingFunction.apply(((ReadableSegment)segment).getReadable())));
+    return singleSubscriber(publishSegments(ReadableSegment.class,
+      readableSegment ->
+        mappingFunction.apply(readableSegment.getReadable())));
   }
 
   @Override
@@ -151,6 +158,7 @@ abstract class OracleResultImpl implements Result {
   }
 
   private final class FilteredResult extends OracleResultImpl {
+
     private final Predicate<Segment> filter;
 
     private FilteredResult(Predicate<Segment> filter) {
@@ -159,8 +167,11 @@ abstract class OracleResultImpl implements Result {
 
     @Override
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return OracleResultImpl.this.publishSegments(
-        new FilteredMappingFunction<>(filter, mappingFunction));
+      return Flux.from(OracleResultImpl.this.publishSegments(segment ->
+        filter.test(segment)
+          ? mappingFunction.apply(segment)
+          : (T)FILTERED))
+        .filter(object -> object != FILTERED);
     }
   }
 
@@ -180,6 +191,11 @@ abstract class OracleResultImpl implements Result {
 
   static OracleResultImpl createUpdateCountResult(Long updateCount) {
     return new UpdateCountResult(updateCount);
+  }
+
+  static OracleResultImpl createBatchUpdateErrorResult(
+    BatchUpdateException batchUpdateException) {
+    return new BatchUpdateErrorResult(batchUpdateException);
   }
 
   private static final class UpdateCountResult extends OracleResultImpl {
@@ -252,30 +268,54 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
-  private static final Object FILTERED = new Object();
+  private static final class BatchUpdateResult extends OracleResultImpl {
 
-  private static final class FilteredMappingFunction<T>
-    implements Function<Segment,T> {
+    private final long[] updateCounts;
 
-    private final Predicate<Segment> filter;
-
-    private final Function<Segment, T> mappingFunction;
-
-    private FilteredMappingFunction(
-      Predicate<Segment> filter, Function<Segment, T> mappingFunction) {
-      this.filter = filter;
-      this.mappingFunction = mappingFunction;
+    private BatchUpdateResult(long[] updateCounts) {
+      this.updateCounts = updateCounts;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public T apply(Segment segment) {
-      return filter.test(segment)
-        ? mappingFunction.apply(segment)
-        : (T)FILTERED;
+    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
+      return Flux.fromStream(LongStream.of(updateCounts)
+        .mapToObj(UpdateCountImpl::new)
+        .map(mappingFunction));
+    }
+  }
+
+  /**
+   * A {@code Result} of a batch DML update statement that failed. An
+   * instance of {@code BatchUpdateErrorResult} retains a JDBC
+   * {@link java.sql.BatchUpdateException}. The updates counts of the
+   * {@code BatchUpdateException} are emitted as
+   * {@link io.r2dbc.spi.Result.UpdateCount} segments. Following the update
+   * counts, a {@link io.r2dbc.spi.Result.Message} segment is emitted with the
+   * {@code BatchUpdateException} mapped to an
+   * {@link io.r2dbc.spi.R2dbcException}.
+   */
+  private static final class BatchUpdateErrorResult extends OracleResultImpl {
+
+    private final BatchUpdateResult batchUpdateResult;
+    private final Message message;
+
+    private BatchUpdateErrorResult(BatchUpdateException batchUpdateException) {
+      batchUpdateResult =
+        new BatchUpdateResult(batchUpdateException.getLargeUpdateCounts());
+      message = new MessageImpl(toR2dbcException(batchUpdateException));
     }
 
+    @Override
+    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
+      return Flux.concat(
+        batchUpdateResult.publishSegments(mappingFunction),
+        Mono.just(message)
+          .map(mappingFunction));
+    }
   }
+
+
+  private static final Object FILTERED = new Object();
 
   private static final class RowSegmentImpl
     implements RowSegment, ReadableSegment {
@@ -337,10 +377,48 @@ abstract class OracleResultImpl implements Result {
    * the common {@link #getReadable()} method to obtain a {@link Readable} from
    * the segment.
    */
-  private interface ReadableSegment {
+  private interface ReadableSegment extends Segment {
     Readable getReadable();
   }
 
+  private static final class MessageImpl implements Message {
+
+    private final R2dbcException exception;
+
+    private MessageImpl(R2dbcException exception) {
+      this.exception = exception;
+    }
+
+    @Override
+    public R2dbcException exception() {
+      return exception;
+    }
+
+    @Override
+    public int errorCode() {
+      return exception.getErrorCode();
+    }
+
+    @Override
+    public String sqlState() {
+      return exception.getSqlState();
+    }
+
+    @Override
+    public String message() {
+      return exception.getMessage();
+    }
+  }
+
+  /**
+   * Returns a {@code Publisher} that emits the signals of a {@code publisher}
+   * to a single {@link org.reactivestreams.Subscriber}, and rejects additional
+   * {@code Subscriber}s by emitting {@code onError} with
+   * {@link IllegalStateException}.
+   * @param publisher Publisher that emits signals
+   * @param <T> Value type of {@code onNext} signals
+   * @return A {@code Publisher} that allows a single subscriber
+   */
   private static <T> Publisher<T> singleSubscriber(Publisher<T> publisher) {
     AtomicBoolean isSubscribed = new AtomicBoolean(false);
     return Flux.defer(() ->

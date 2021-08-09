@@ -21,9 +21,11 @@
 
 package oracle.r2dbc.impl;
 
+import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameter;
+import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
@@ -34,6 +36,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.ByteBuffer;
+import java.sql.BatchUpdateException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -1083,7 +1086,12 @@ final class OracleStatementImpl implements Statement {
         setBatchBindValues(preparedStatement, currentBatch, discardQueue),
       preparedStatement ->
         Flux.from(adapter.publishBatchUpdate(preparedStatement))
-          .map(OracleResultImpl::createUpdateCountResult));
+          .map(OracleResultImpl::createUpdateCountResult)
+          .onErrorResume(error ->
+            error.getCause() instanceof BatchUpdateException
+              ? Mono.just(OracleResultImpl.createBatchUpdateErrorResult(
+                  (BatchUpdateException)error.getCause()))
+              : Mono.error(error)));
   }
 
   /**

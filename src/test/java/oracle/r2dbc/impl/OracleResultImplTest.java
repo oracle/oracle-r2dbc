@@ -23,6 +23,8 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Result;
+import io.r2dbc.spi.Result.Message;
+import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
 import org.junit.jupiter.api.Test;
@@ -33,11 +35,15 @@ import reactor.core.publisher.Signal;
 
 import java.util.Iterator;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
@@ -378,6 +384,55 @@ public class OracleResultImplTest {
     }
     finally {
       tryAwaitExecution(connection.createStatement("DROP TABLE testMap"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies {@link Result#flatMap(Function)} for a batch DML statement that
+   * updates some rows and then fails. Expect the {@code Result} to emit
+   * counts for updates that succeeded, and then emit an {@link Message}
+   * segment with the failure
+   */
+  @Test
+  public void testBatchUpdateError() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Batch insert two rows with the same ID number. Expect the result to
+      // emit an update count of 1, and then emit a primary key violation
+      // message
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testBatchUpdateError (id NUMBER PRIMARY KEY)"));
+      AtomicInteger segmentIndex = new AtomicInteger(0);
+      awaitNone(Mono.from(connection.createStatement(
+        "INSERT INTO testBatchUpdateError VALUES (?)")
+        .bind(0, 0).add()
+        .bind(0, 0).add()
+        .execute())
+        .flatMapMany(result ->
+          result.flatMap(segment -> {
+            int current = segmentIndex.getAndIncrement();
+            if (current == 0) {
+              assertTrue(segment instanceof UpdateCount,
+                "Unexpected Segment: " + segment);
+              assertEquals(1, ((UpdateCount)segment).value());
+            }
+            else if (current == 1) {
+              assertTrue(segment instanceof Message,
+                "Unexpected Segment: " + segment);
+              // Expect ORA-00001 for primary key constraint violation
+              assertEquals(1, ((Message)segment).errorCode());
+            }
+            else {
+              fail("Unexpected Segment: " + segment + " count: " + current);
+            }
+            return Mono.empty();
+          })));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testBatchUpdateError"));
       tryAwaitNone(connection.close());
     }
   }
