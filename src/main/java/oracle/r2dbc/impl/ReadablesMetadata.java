@@ -71,20 +71,20 @@ class ReadablesMetadata<T extends ReadableMetadata> {
 
   /**
    * Constructs a new instance which supplies metadata from an array of
-   * {@code columnMetadata}.
-   * @param columnMetadata Metadata from each column in a row. Not null.
+   * {@code metadatas}.
+   * @param metadatas Metadata from each value in a readable. Not null.
    * Retained. Not modified.
    */
-  private ReadablesMetadata(T[] columnMetadata) {
+  private ReadablesMetadata(T[] metadatas) {
 
-    // Map column names to their index. Use TreeMap for case insensitive name
-    // look ups. If multiple columns have the same case insensitive name, map
-    // the name to the lowest index of those columns.
+    // Map value names to their index. Use TreeMap for case insensitive name
+    // look ups. If multiple values have the same case insensitive name, map
+    // the name to the lowest index of those values.
     nameIndexes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-    for (int i = 0; i < columnMetadata.length; i++)
-      nameIndexes.putIfAbsent(columnMetadata[i].getName(), i);
+    for (int i = 0; i < metadatas.length; i++)
+      nameIndexes.putIfAbsent(metadatas[i].getName(), i);
 
-    metadataList = List.of(columnMetadata);
+    metadataList = List.of(metadatas);
   }
 
   /**
@@ -106,6 +106,12 @@ class ReadablesMetadata<T extends ReadableMetadata> {
     return new RowMetadataImpl(columnMetadataArray);
   }
 
+  /**
+   * Creates {@code OutParametersMetadata} from an array of {@code metadata}.
+   * @param metadata Metadata of out parameter values. Not null. Retained.
+   * @return {@code OutParametersMetadata} backed by the provided
+   * {@code metadata}
+   */
   static OutParametersMetadataImpl createOutParametersMetadata(
     OutParameterMetadata[] metadata) {
     return new OutParametersMetadataImpl(metadata);
