@@ -228,8 +228,7 @@ public class OracleResultImplTest {
         () -> insertResult0.map((row, metadata) -> "unexpected"));
 
       // Expect row data publisher to reject multiple subscribers
-      // TODO: Is it necessary to verify this for an empty publisher?
-      // awaitError(IllegalStateException.class, insertRowPublisher0);
+      awaitError(IllegalStateException.class, insertRowPublisher0);
 
       Result insertResult1 = insertResults.next();
       Publisher<Object> insertRowPublisher1 =
@@ -243,8 +242,7 @@ public class OracleResultImplTest {
         () -> insertResult1.map((row, metadata) -> "unexpected"));
 
       // Expect row data publisher to reject multiple subscribers
-      // TODO: Is it necessary to verify this for an empty publisher?
-      //awaitError(IllegalStateException.class, insertRowPublisher1);
+      awaitError(IllegalStateException.class, insertRowPublisher1);
 
       // Expect no rows from UPDATE
       consumeOne(connection.createStatement(
@@ -262,8 +260,7 @@ public class OracleResultImplTest {
           assertThrows(IllegalStateException.class, updateResult::getRowsUpdated);
 
           // Expect row data publisher to reject multiple subscribers
-          // TODO: Is it necessary to verify this for an empty publisher?
-          // awaitError(IllegalStateException.class, updateRowPublisher);
+          awaitError(IllegalStateException.class, updateRowPublisher);
         });
 
       // Expect no rows from SELECT of zero rows
@@ -376,14 +373,10 @@ public class OracleResultImplTest {
             () -> deleteResult.map((row, metadata) -> "unexpected"));
           assertThrows(IllegalStateException.class, deleteResult::getRowsUpdated);
 
-          return Mono.from(deleteRowPublisher);
-            // TODO: Is it necessary to verify this for an empty publisher?
-          /*
+          return Mono.from(deleteRowPublisher)
             .doOnTerminate(() ->
               // Expect row data publisher to reject multiple subscribers
               awaitError(IllegalStateException.class, deleteRowPublisher));
-
-           */
         }));
     }
     finally {

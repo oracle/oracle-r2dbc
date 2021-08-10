@@ -94,14 +94,12 @@ public class OracleReadableMetadataImplTest {
 
       // Expect CLOB and String to map.
       verifyColumnMetadata(
-        connection, "CLOB", JDBCType.CLOB,
-        SqlTypeMap.toR2dbcType(JDBCType.CLOB),/* TODO: R2dbcType.CLOB,*/
+        connection, "CLOB", JDBCType.CLOB, R2dbcType.CLOB,
         null, null, String.class, "test");
 
       // Expect NCLOB and String to map
       verifyColumnMetadata(
-        connection, "NCLOB", JDBCType.NCLOB,
-        SqlTypeMap.toR2dbcType(JDBCType.NCLOB),/* TODO: R2dbcType.NCLOB,*/
+        connection, "NCLOB", JDBCType.NCLOB, R2dbcType.NCLOB,
         null, null, String.class, "test");
 
       // Expect LONG and String to map.
