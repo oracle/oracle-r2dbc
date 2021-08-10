@@ -27,6 +27,8 @@ import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
+import io.r2dbc.spi.Result.Message;
+import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,7 @@ import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 import java.sql.RowId;
+import java.sql.SQLWarning;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -57,7 +60,10 @@ import static oracle.r2dbc.util.Awaits.consumeOne;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Verifies that
@@ -1955,6 +1961,59 @@ public class OracleStatementImplTest {
       tryAwaitExecution(connection.createStatement("DROP PROCEDURE countDown"));
       tryAwaitExecution(connection.createStatement(
         "DROP TABLE testOutAndImplicitResult"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that {@link OracleStatementImpl#execute()} emits a {@link Result}
+   * with a {@link Message} segment when the execution results in a
+   * warning.
+   */
+  @Test
+  public void testWarningMessage() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+
+      // Create a procedure using invalid syntax and expect the Result to
+      // have a Message with an R2dbcException having a SQLWarning as it's
+      // initial cause. Expect the Result to have an update count of zero as
+      // well, indicating that the statement completed after the warning.
+      AtomicInteger segmentCount = new AtomicInteger(0);
+      R2dbcException r2dbcException =
+        awaitOne(Flux.from(connection.createStatement(
+          "CREATE OR REPLACE PROCEDURE testWarningMessage" +
+            " IS BEGIN;")
+          .execute())
+          .concatMap(result ->
+            result.flatMap(segment -> {
+              int index = segmentCount.getAndIncrement();
+              if (index == 0) {
+                assertTrue(segment instanceof Message,
+                  "Unexpected Segment: " + segment);
+                return Mono.just(((Message)segment).exception());
+              }
+              else if (index == 1) {
+                assertTrue(segment instanceof UpdateCount,
+                  "Unexpected Segment: " + segment);
+                assertEquals(0, ((UpdateCount)segment).value());
+                return Mono.empty();
+              }
+              else {
+                fail("Unexpected Segment: " + segment);
+                return Mono.error(new AssertionError("Should not reach here"));
+              }
+            })));
+
+      // Expect ORA-17110 for an execution that completed with a warning
+      assertEquals(17110, r2dbcException.getErrorCode());
+      Throwable cause = r2dbcException.getCause();
+      assertTrue(cause instanceof SQLWarning, "Unexpected cause: " + cause);
+      assertEquals(17110, ((SQLWarning)cause).getErrorCode());
+      assertNull(cause.getCause());
+    }
+    finally {
       tryAwaitNone(connection.close());
     }
   }

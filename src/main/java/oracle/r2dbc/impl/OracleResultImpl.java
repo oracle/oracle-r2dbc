@@ -34,12 +34,15 @@ import reactor.core.publisher.Mono;
 
 import java.sql.BatchUpdateException;
 import java.sql.ResultSet;
+import java.sql.SQLWarning;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.LongStream;
+import java.util.stream.Stream;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
@@ -377,6 +380,20 @@ abstract class OracleResultImpl implements Result {
   }
 
   /**
+   * Creates a {@code Result} that publishes a {@code warning} as a
+   * {@link Message} segment, followed by any {@code Segment}s of a
+   * {@code result}.
+   * @param warning Warning to publish
+   * @param result Result to publisher
+   * @return A {@code Result} for a {@code Statement} execution that
+   * completed with a warning.
+   */
+  static OracleResultImpl createWarningResult(
+    SQLWarning warning, OracleResultImpl result) {
+    return new WarningResult(warning, result);
+  }
+
+  /**
    * {@link OracleResultImpl} subclass that publishes a single update count. An
    * instance of this class constructed with negative valued update count
    * will publish no {@code Segment}s
@@ -392,16 +409,37 @@ abstract class OracleResultImpl implements Result {
     @Override
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
       return updateCount >= 0
-        ? Mono.just(mappingFunction.apply(new UpdateCountImpl(updateCount)))
+        ? Mono.just(new UpdateCountImpl(updateCount))
+            .map(mappingFunction)
         : Mono.empty();
     }
   }
 
   /**
+   * <p>
    * {@link OracleResultImpl} subclass that publishes JDBC {@link ResultSet} as
    * {@link RowSegment}s. {@link RowMetadata} of published {@code Rows} is
    * derived from the {@link java.sql.ResultSetMetaData} of the
    * {@link ResultSet}.
+   * </p><p>
+   * This {@code Result} is <i>not</i> implemented to publish
+   * {@link SQLWarning} chains returned by {@link ResultSet#getWarnings()} as
+   * {@link Message} segments. This implementation is correct for the 21.1
+   * Oracle JDBC Driver which is known to implement {@code getWarnings()} by
+   * returning {@code null} for forward-only insensitive {@code ResultSets}
+   * when no invocation of {@link java.sql.Statement#setMaxRows(int)}
+   * or {@link java.sql.Statement#setLargeMaxRows(long)} has occurred.
+   * </p><p>
+   * It is a known limitation of the 21.1 Oracle JDBC Driver that
+   * {@link ResultSet#getWarnings()} can not be invoked after row publishing
+   * has been initiated; The {@code ResultSet} is logically closed once row
+   * publishing has been initiated, and so {@code getWarnings} would throw a
+   * {@link java.sql.SQLException} to indicate a closed {@code ResultSet}. If
+   * a later release of Oracle JDBC removes this limitation, then this
+   * {@code Result} should be implemented to invoke {@code getWarnings} to
+   * ensure correctness if a later release of Oracle JDBC also returns non-null
+   * values from that method.
+   * </p>
    */
   private static final class ResultSetResult extends OracleResultImpl {
 
@@ -482,8 +520,8 @@ abstract class OracleResultImpl implements Result {
     @Override
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
       return Flux.fromStream(LongStream.of(updateCounts)
-        .mapToObj(UpdateCountImpl::new)
-        .map(mappingFunction));
+        .mapToObj(UpdateCountImpl::new))
+        .map(mappingFunction);
     }
   }
 
@@ -529,6 +567,35 @@ abstract class OracleResultImpl implements Result {
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
       return Mono.just(new MessageImpl(r2dbcException))
         .map(mappingFunction);
+    }
+  }
+
+  /**
+   * {@link OracleResultImpl} subclass that publishes a {@link SQLWarning}
+   * chain as {@link Message} segments, followed by the segments of another
+   * {@link OracleResultImpl}.
+   */
+  private static final class WarningResult extends OracleResultImpl {
+
+    private final SQLWarning warning;
+    private final OracleResultImpl result;
+
+    private WarningResult(SQLWarning warning, OracleResultImpl result) {
+      this.warning = warning;
+      this.result = result;
+    }
+
+    @Override
+    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
+      return Flux.fromStream(Stream.iterate(
+        warning, Objects::nonNull, SQLWarning::getNextWarning)
+        .map(OracleR2dbcExceptions::toR2dbcException)
+        .map(MessageImpl::new))
+        .map(mappingFunction)
+        // Invoke publishSegments(Class, Function) rather than
+        // publishSegments(Function) to update the state of the result; Namely,
+        // the state that has the onConsumed Publisher emit a terminal signal.
+        .concatWith(result.publishSegments(Segment.class, mappingFunction));
     }
   }
 

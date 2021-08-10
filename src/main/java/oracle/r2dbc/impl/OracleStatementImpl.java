@@ -40,6 +40,7 @@ import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLType;
+import java.sql.SQLWarning;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -819,7 +820,21 @@ final class OracleStatementImpl implements Statement {
     PreparedStatement preparedStatement, int fetchSize) {
     runJdbc(() -> preparedStatement.setFetchSize(fetchSize));
     setQueryTimeout(preparedStatement);
-    return adapter.publishSQLExecution(preparedStatement);
+    return Mono.from(adapter.publishSQLExecution(preparedStatement))
+      // Work around a bug in 21.1 Oracle JDBC that has the
+      // OraclePreparedStatement.executeAsyncOracle Publisher emit onError
+      // with a SQLException when the database returns a warning. In 21.3 it's
+      // fixed so that the Publisher emits onComplete and the SQLWarning is
+      // obtained from the usual call to PreparedStatement.getWarnings()
+      // TODO: Remove this when 21.1 Oracle JDBC is no longer supported
+      .onErrorResume(error ->
+        // ORA-17110 is the error code for warnings. If the R2dbcException has
+        // this code, then ignore it and return the normal boolean value
+        // indicating if the result is a ResultSet or not
+        error instanceof R2dbcException
+          && ((R2dbcException) error).getErrorCode() == 17110
+          ? Mono.just(null != fromJdbc(preparedStatement::getResultSet))
+          : Mono.error(error));
   }
 
   private void setQueryTimeout(PreparedStatement preparedStatement) {
@@ -1431,6 +1446,7 @@ final class OracleStatementImpl implements Statement {
               .onErrorResume(R2dbcException.class, r2dbcException ->
                 Mono.just(OracleResultImpl.createErrorResult(r2dbcException)))
               .defaultIfEmpty(createUpdateCountResult(-1L))
+              .map(result -> getWarnings(preparedStatement, result))
               .doOnNext(lastResultRef::set),
           discardQueue ->
             Flux.fromIterable(discardQueue)
@@ -1441,6 +1457,25 @@ final class OracleStatementImpl implements Statement {
           .flatMap(result -> Mono.from(result.onConsumed()))
           .doOnTerminate((ThrowingRunnable)preparedStatement::close)
           .doOnCancel((ThrowingRunnable)preparedStatement::close));
+  }
+
+  /**
+   * Returns a {@code Result} that publishes any {@link SQLWarning}s of a
+   * {@code preparedStatement} as {@link io.r2dbc.spi.Result.Message}
+   * segments followed by any {@code Segments} of a {@code result}. This method
+   * returns the provided {@code result} if the {@code preparedStatement} has
+   * no warnings.
+   * @param preparedStatement Statement that may have warnings
+   * @param result Result of executing the {@code preparedStatement}
+   * @return A {@code Result} having any warning messages of the
+   * {@code preparedStatement} along with its execution {@code result}.
+   */
+  private static OracleResultImpl getWarnings(
+    PreparedStatement preparedStatement, OracleResultImpl result) {
+    SQLWarning warning = fromJdbc(preparedStatement::getWarnings);
+    return warning == null
+      ? result
+      : OracleResultImpl.createWarningResult(warning, result);
   }
 
   /**
