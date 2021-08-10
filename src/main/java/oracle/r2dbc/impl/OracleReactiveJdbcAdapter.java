@@ -197,7 +197,17 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       // LOB values. A non-default size may be configured when LOB values are
       // too large to be prefetched and must be streamed from Blob/Clob objects.
       Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
+        OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE),
+
+      // Allow out-of-band (OOB) breaks to be enabled. Oracle JDBC uses OOB
+      // breaks to interrupt a SQL call after a timeout expires. OOB is
+      // disabled by default to support databases older than 19.x which are
+      // running on systems that don't support OOB. Starting in 19.x, the
+      // database automatically checks if it is running on a system that
+      // supports OOB, and will disable OOB if it's not supported. This option
+      // can be set to "true" when connecting to database versions 19.x or newer.
+      Option.valueOf(
+        OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK)
 
     );
 
@@ -389,8 +399,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     OracleDataSource oracleDataSource =
       fromJdbc(oracle.jdbc.pool.OracleDataSource::new);
 
-    runJdbc(() ->
-      oracleDataSource.setURL(composeJdbcUrl(options)));
+    runJdbc(() -> oracleDataSource.setURL(composeJdbcUrl(options)));
     configureStandardOptions(oracleDataSource, options);
     configureExtendedOptions(oracleDataSource, options);
     configureJdbcDefaults(oracleDataSource);
@@ -585,8 +594,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
   /**
    * Configures an {@code oracleDataSource} with any connection properties that
-   * this adapter requires by default.
-   * @param oracleDataSource An data source to configure
+   * this adapter requires by default. This method will not set a default
+   * value for any connection property that has already been configured on the
+   * {@code oracleDataSource}.
+   * @param oracleDataSource A data source to configure
    */
   private static void configureJdbcDefaults(OracleDataSource oracleDataSource) {
 
@@ -624,10 +635,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
       "1048576");
 
-    // Disable out-of-band breaks. JDBC sends one of these when a statement
-    // timeout expires. When enabled, the database doesn't seem to respond by
-    // cancelling the statement execution. Disable this so that statement
-    // timeouts will work correctly.
+    // Disable out-of-band breaks by default in case the database version is
+    // 18.x. See the comment above, in the set of
+    // SUPPORTED_CONNECTION_PROPERTY_OPTIONS, for details. The default setting
+    // can be "false" once the 18.x database is no longer supported.
     setPropertyIfAbsent(oracleDataSource,
       OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK,
       "true");
