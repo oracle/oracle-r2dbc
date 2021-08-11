@@ -104,9 +104,6 @@ public class OracleReactiveJdbcAdapterTest {
     defaultProperties.setProperty(
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
       "1048576");
-    defaultProperties.setProperty(
-      OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK,
-      "true");
 
     // Expect only default connection properties when no extended
     // options are supplied
@@ -367,6 +364,10 @@ public class OracleReactiveJdbcAdapterTest {
         .option(USER, user())
         .option(PASSWORD, password())
         .option(STATEMENT_TIMEOUT, Duration.ofSeconds(2))
+        // Disable OOB to support testing with an 18.x database
+        .option(Option.valueOf(
+          OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
+          "true")
         .build())
         .create())
         .block(connectTimeout());

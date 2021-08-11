@@ -199,13 +199,12 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       Option.valueOf(
         OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE),
 
-      // Allow out-of-band (OOB) breaks to be enabled. Oracle JDBC uses OOB
-      // breaks to interrupt a SQL call after a timeout expires. OOB is
-      // disabled by default to support databases older than 19.x which are
-      // running on systems that don't support OOB. Starting in 19.x, the
-      // database automatically checks if it is running on a system that
-      // supports OOB, and will disable OOB if it's not supported. This option
-      // can be set to "true" when connecting to database versions 19.x or newer.
+      // Allow out-of-band (OOB) breaks to be disabled. Oracle JDBC uses OOB
+      // breaks to interrupt a SQL call after a timeout expires. This option 
+      // may need to be disabled when connecting to an 18.x database. Starting
+      // in 19.x, the database can detect when it's running on a system where
+      // OOB is not supported and automatically disable OOB. This automated 
+      // detection is not impleneted in 18.x.
       Option.valueOf(
         OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK)
 
@@ -634,14 +633,6 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     setPropertyIfAbsent(oracleDataSource,
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
       "1048576");
-
-    // Disable out-of-band breaks by default in case the database version is
-    // 18.x. See the comment above, in the set of
-    // SUPPORTED_CONNECTION_PROPERTY_OPTIONS, for details. The default setting
-    // can be "false" once the 18.x database is no longer supported.
-    setPropertyIfAbsent(oracleDataSource,
-      OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK,
-      "true");
 
     // TODO: Disable the result set cache? This is needed to support the
     //  SERIALIZABLE isolation level, which requires result set caching to be

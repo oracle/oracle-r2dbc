@@ -248,6 +248,14 @@ public final class DatabaseConfig {
           .option(Option.valueOf(
             OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE),
             0)
+          // Disable out-of-band breaks to support testing with the 18.x
+          // database. The 19.x database will automatically detect when it's
+          // running on a system where OOB is not supported, but the 18.x
+          // database does not do this and so statement timeout tests will
+          // hang if the database system does not support OOB
+          .option(Option.valueOf(
+            OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
+            "true")
           .build());
 
       SHARED_CONNECTION_FACTORY = new SharedConnectionFactory(
