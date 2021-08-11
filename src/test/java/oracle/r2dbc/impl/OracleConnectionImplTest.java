@@ -26,6 +26,7 @@ import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.Option;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.TransactionDefinition;
@@ -46,6 +47,7 @@ import static java.util.Collections.emptyMap;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.user;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
@@ -62,6 +64,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -1100,6 +1103,65 @@ public class OracleConnectionImplTest {
       awaitOne(true, validateRemotePublisher);
     }
     finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies the implementation of
+   * {@link Connection#setStatementTimeout(Duration)}
+   */
+  @Test
+  public void testSetStatementTimeout() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+
+      // Create a table is locked by one session, and updated by another
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testSetStatementTimeout(value NUMBER)"));
+
+      // Expect IllegalArgumentException for a null or negative timeout
+      assertThrows(IllegalArgumentException.class, () ->
+        connection.setStatementTimeout(null));
+      assertThrows(IllegalArgumentException.class, () ->
+        connection.setStatementTimeout(Duration.ofSeconds(-1)));
+
+      // Create another session that locks a table
+      Connection sessionB = Mono.from(newConnection()).block(connectTimeout());
+      try {
+        awaitUpdate(1, sessionB.createStatement(
+          "INSERT INTO testSetStatementTimeout VALUES (0)"));
+        Result lockingResult = Mono.from(sessionB.createStatement(
+          "SELECT * FROM testSetStatementTimeout FOR UPDATE")
+          .execute())
+          .block(sqlTimeout());
+
+        // Configure the connection with a 2 second timeout and create a
+        // statement that updates the locked table. Expect the statement's
+        // execution to result in an R2dbcTimeoutException no sooner than 2
+        // seconds, and no later than 12 seconds (allow 10 seconds of leeway to
+        // account for testing on slow systems).
+        awaitNone(connection.setStatementTimeout(Duration.ofSeconds(2)));
+        Duration start = Duration.ofNanos(System.nanoTime());
+        awaitError(R2dbcTimeoutException.class,
+          Mono.from(connection.createStatement(
+            "UPDATE testSetStatementTimeout SET value = 1 WHERE value = 0")
+          .execute())
+          .flatMapMany(Result::getRowsUpdated));
+        Duration actual = Duration.ofNanos(System.nanoTime()).minus(start);
+        assertTrue(actual.toSeconds() >= 2,
+          "Timeout triggered too soon: " + actual);
+        assertTrue(actual.toSeconds() < 12,
+          "Timeout triggered too late: " + actual);
+      }
+      finally {
+        tryAwaitNone(sessionB.close());
+      }
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testSetStatementTimeout"));
       tryAwaitNone(connection.close());
     }
   }

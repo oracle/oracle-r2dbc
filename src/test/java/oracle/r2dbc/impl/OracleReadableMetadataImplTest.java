@@ -58,13 +58,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Verifies that
- * {@link OracleColumnMetadataImpl} implements behavior that is specified in
+ * {@link OracleReadableMetadataImpl} implements behavior that is specified in
  * it's class and method level javadocs.
  */
-public class OracleColumnMetadataImplTest {
+public class OracleReadableMetadataImplTest {
   
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * character type columns.
    */
   @Test
@@ -94,14 +94,12 @@ public class OracleColumnMetadataImplTest {
 
       // Expect CLOB and String to map.
       verifyColumnMetadata(
-        connection, "CLOB", JDBCType.CLOB,
-        SqlTypeMap.toR2dbcType(JDBCType.CLOB),/* TODO: R2dbcType.CLOB,*/
+        connection, "CLOB", JDBCType.CLOB, R2dbcType.CLOB,
         null, null, String.class, "test");
 
       // Expect NCLOB and String to map
       verifyColumnMetadata(
-        connection, "NCLOB", JDBCType.NCLOB,
-        SqlTypeMap.toR2dbcType(JDBCType.NCLOB),/* TODO: R2dbcType.NCLOB,*/
+        connection, "NCLOB", JDBCType.NCLOB, R2dbcType.NCLOB,
         null, null, String.class, "test");
 
       // Expect LONG and String to map.
@@ -116,7 +114,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * binary type columns.
    */
   @Test
@@ -147,7 +145,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * numeric type columns.
    */
   @Test
@@ -183,7 +181,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * datetime type columns.
    */
   @Test
@@ -211,18 +209,14 @@ public class OracleColumnMetadataImplTest {
       // Expect TIMESTAMP WITH TIME ZONE and OffsetDateTime to map. Expect
       // precision to be the maximum String length returned by
       // OffsetDateTime.toString(). Expect scale to be the number of decimal
-      // digits in the fractional seconds component.
-      System.out.println("SKIPPING TIMESTAMP WITH TIME ZONE TEST");
-      /*
-      TODO: Uncomment when this fix is released:
-      https://github.com/r2dbc/r2dbc-spi/commit/a86562421a312df2d8a3ae187553bf6c2b291aad
+      // digits in the fractional seconds component. Expect the
+      // OracleType.TIMESTAMP_WITH_TIME_ZONE which has a different type code
+      // than JDBCType.TIMESTAMP_WITH_TIMEZONE
       verifyColumnMetadata(
         connection, "TIMESTAMP(3) WITH TIME ZONE",
-        JDBCType.TIMESTAMP_WITH_TIMEZONE, R2dbcType.TIMESTAMP_WITH_TIME_ZONE,
+        OracleType.TIMESTAMP_WITH_TIME_ZONE, R2dbcType.TIMESTAMP_WITH_TIME_ZONE,
         35, 3, OffsetDateTime.class,
         OffsetDateTime.parse("1977-06-16T09:00:00.123+01:23"));
-        *
-       */
 
       // Expect TIMESTAMP WITH LOCAL TIME ZONE and LocalDateTime to map.
       verifyColumnMetadata(
@@ -257,7 +251,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * row ID type columns.
    */
   @Test
@@ -294,7 +288,7 @@ public class OracleColumnMetadataImplTest {
   }
 
   /**
-   * Verifies the implementation of {@link OracleColumnMetadataImpl} for
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
    * JSON type columns. When the test database older than version 21c, this test
    * is expected to fail with an ORA-00902 error indicating that JSON is not
    * a valid data type. The JSON type was added in 21c.

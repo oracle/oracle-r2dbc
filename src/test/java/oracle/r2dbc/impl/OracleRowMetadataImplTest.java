@@ -53,14 +53,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies that
- * {@link OracleRowMetadataImpl} implements behavior that is specified in it's
+ * {@link ReadablesMetadata} implements behavior that is specified in it's
  * class and method level javadocs.
  */
 public class OracleRowMetadataImplTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleRowMetadataImpl#getColumnMetadata(int)}
+   * {@link ReadablesMetadata#getColumnMetadata(int)}
    */
   @Test
   public void testGetColumnMetadataByIndex() {
@@ -142,7 +142,7 @@ public class OracleRowMetadataImplTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleRowMetadataImpl#getColumnMetadata(String)}
+   * {@link ReadablesMetadata#getColumnMetadata(String)}
    */
   @Test
   public void testGetColumnMetadataByName() {
@@ -341,7 +341,7 @@ public class OracleRowMetadataImplTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleRowMetadataImpl#getColumnMetadatas()}
+   * {@link ReadablesMetadata#getColumnMetadatas()}
    */
   @Test
   public void testGetColumnMetadatas() {
@@ -425,221 +425,6 @@ public class OracleRowMetadataImplTest {
           awaitExecution(connection.createStatement(
             "DROP TABLE testGetColumnMetadatas"));
         }
-    }
-    finally {
-      awaitNone(connection.close());
-    }
-  }
-
-  /**
-   * Verifies the implementation of
-   * {@link OracleRowMetadataImpl#getColumnNames()}
-   */
-  @Test
-  public void testGetColumnNames() {
-    Connection connection =
-      Mono.from(sharedConnection()).block(connectTimeout());
-    try {
-      // INSERT and SELECT rows from this table.
-      awaitExecution(connection.createStatement(
-        "CREATE TABLE testGetColumnNames (x NUMBER, y NUMBER)"));
-      try {
-        awaitUpdate(1, connection.createStatement(
-          "INSERT INTO testGetColumnNames (x,y) VALUES (0,0)"));
-
-        Collection<String> namesCollection =
-          awaitOne(Flux.from(connection.createStatement(
-            "SELECT y, x, y AS x FROM testGetColumnNames")
-            .execute())
-            .flatMap(result ->
-              result.map((row, metadata) -> metadata))
-            .map(RowMetadata::getColumnNames));
-
-        // UnsupportedOperationException when attempting to modify the
-        // collection.
-        assertThrows(UnsupportedOperationException.class,
-          () -> namesCollection.add("X"));
-        assertThrows(UnsupportedOperationException.class,
-          () -> namesCollection.addAll(List.of("X")));
-        assertThrows(
-          UnsupportedOperationException.class, namesCollection::clear);
-        assertThrows(UnsupportedOperationException.class,
-          () -> namesCollection.remove("X"));
-        assertThrows(UnsupportedOperationException.class,
-          () -> namesCollection.removeAll(List.of("X")));
-        assertThrows(UnsupportedOperationException.class,
-          () -> namesCollection.removeIf("X"::equals));
-        assertThrows(UnsupportedOperationException.class,
-          () -> namesCollection.retainAll(List.of("Y")));
-
-        // Expect contains(..) to be case-insensitive, and otherwise implemented
-        // correctly
-        assertTrue(namesCollection.contains("X"));
-        assertTrue(namesCollection.contains("x"));
-        assertTrue(namesCollection.contains("Y"));
-        assertTrue(namesCollection.contains("y"));
-        assertFalse(namesCollection.contains("z"));
-        assertFalse(namesCollection.contains(""));
-        assertFalse(namesCollection.contains(" "));
-        assertFalse(namesCollection.contains("x "));
-        assertThrows(
-          NullPointerException.class, () -> namesCollection.contains(null));
-        assertThrows(
-          ClassCastException.class, () -> namesCollection.contains(3));
-
-        // Expect containsAll(..) to be case-insensitive, and otherwise
-        // implemented correctly
-        assertTrue(namesCollection.containsAll(asList("X", "Y")));
-        assertTrue(namesCollection.containsAll(asList("Y", "X")));
-        assertTrue(namesCollection.containsAll(asList("X")));
-        assertTrue(namesCollection.containsAll(asList("Y")));
-        assertTrue(namesCollection.containsAll(asList("Y", "X", "X")));
-        assertTrue(namesCollection.containsAll(asList("y", "x")));
-        assertFalse(namesCollection.containsAll(asList("x", "y", "z")));
-        assertFalse(namesCollection.containsAll(asList("z")));
-        assertFalse(namesCollection.containsAll(asList("x", "y", "")));
-        assertFalse(namesCollection.containsAll(asList("x", "y", " ")));
-        assertFalse(namesCollection.containsAll(asList("x", "y", "x ")));
-        assertTrue(namesCollection.containsAll(Collections.emptyList()));
-        assertThrows(
-          NullPointerException.class,
-          () -> namesCollection.containsAll(null));
-        assertThrows(
-          NullPointerException.class,
-          () -> namesCollection.containsAll(asList("x", null)));
-        assertThrows(
-          NullPointerException.class,
-          () -> namesCollection.containsAll(asList((Object)null)));
-        assertThrows(
-          ClassCastException.class,
-          () -> namesCollection.containsAll(asList("x", 3)));
-        assertThrows(
-          ClassCastException.class,
-          () -> namesCollection.containsAll(asList(3)));
-
-        // Expect equals to return true only for the same instance.
-        assertTrue(namesCollection.equals(namesCollection));
-        assertFalse(namesCollection == null);
-        List<String> copy = new ArrayList<>();
-        copy.addAll(namesCollection);
-        assertFalse(namesCollection.equals(copy));
-
-        // Expect size() to return the number of columns
-        assertEquals(3, namesCollection.size());
-
-        // Expect toArray() with correct order and not retained
-        Object[] objectsArray = namesCollection.toArray();
-        assertArrayEquals(new String[]{"Y","X","X"}, objectsArray);
-        assertFalse(objectsArray == namesCollection.toArray());
-        objectsArray[0] = "not retained";
-
-        // Expect toArray(IntFunction) to generate an array with the correct
-        // order of elements
-        assertArrayEquals(
-          new String[]{"Y","X","X"},
-          namesCollection.toArray(String[]::new));
-        assertArrayEquals(
-          new CharSequence[]{"Y","X","X"},
-          namesCollection.toArray(CharSequence[]::new));
-        assertArrayEquals(
-          new Object[]{"Y","X","X"},
-          namesCollection.toArray(Object[]::new));
-
-        // Expect ArrayStoreException if the collection's element types are not
-        // assignable to the array's component type
-        assertThrows(ArrayStoreException.class,
-          () -> namesCollection.toArray(Number[]::new));
-
-        // Expect NullPointerException if the array is null
-        IntFunction<String[]> nullFunction = null;
-        assertThrows(NullPointerException.class,
-          () -> namesCollection.toArray(nullFunction));
-
-        // Expect new array to be returned if the input array is not large
-        // enough
-        assertArrayEquals(
-          new String[]{"Y","X","X"}, namesCollection.toArray(new String[0]));
-        assertArrayEquals(
-          new String[]{"Y","X","X"}, namesCollection.toArray(new String[1]));
-
-        // Expect input array to be returned if it is large enough
-        String[] size3Array = new String[3];
-        assertTrue(size3Array == namesCollection.toArray(size3Array));
-        assertArrayEquals(new String[]{"Y","X","X"}, size3Array);
-
-        // Expect input array to be returned if it is large enough, with a null
-        // value at the position following the last element
-        String[] size5Array = new String[5];
-        Arrays.fill(size5Array, "z");
-        assertTrue(size5Array == namesCollection.toArray(size5Array));
-        assertArrayEquals(new String[]{"Y","X","X", null, "z"}, size5Array);
-
-        // Expect input array to be returned if the collection's element types
-        // are assignable to the array's component type
-        Object[] size3ObjectArray = new Object[3];
-        assertTrue(
-          size3ObjectArray == namesCollection.toArray(size3ObjectArray));
-        assertArrayEquals(new Object[]{"Y","X","X"}, size3ObjectArray);
-
-        // Expect ArrayStoreException if the collection's element types are not
-        // assignable to the array's component type
-        assertThrows(ArrayStoreException.class,
-          () -> namesCollection.toArray(new Number[3]));
-
-        // Expect NullPointerException if the array is null
-        String[] nullArray = null;
-        assertThrows(NullPointerException.class,
-          () -> namesCollection.toArray(nullArray));
-
-        // Expect forEach to consume each column's name, in order of the
-        // SELECT statement's column list
-        List<String> namesList = new ArrayList<>(3);
-        namesCollection.forEach(namesList::add);
-        assertEquals("Y", namesList.get(0));
-        assertEquals("X", namesList.get(1));
-        assertEquals("X", namesList.get(2));
-
-        // Expect for-each loops to iterate over each column's name, in
-        // order of the SELECT statement's column list. Expect the same
-        // names that were added by the forEach method.
-        for (String name : namesCollection)
-          assertEquals(namesList.remove(0), name);
-
-        // Expect for-each the loop to have iterated once for each column.
-        assertTrue(namesList.isEmpty());
-
-        Iterator<String> nameIterator = namesCollection.iterator();
-
-        // Expect the Iterator to not support remove()
-        assertThrows(
-          UnsupportedOperationException.class, nameIterator::remove);
-
-        // Expect forEachRemaining to consume each column's metadata, in
-        // order of the SELECT statement's column list
-        nameIterator.forEachRemaining(namesList::add);
-        assertEquals("Y", namesList.get(0));
-        assertEquals("X", namesList.get(1));
-        assertEquals("X", namesList.get(2));
-
-        // Expect forEachRemaining to reach the iterator's terminal state
-        assertFalse(nameIterator.hasNext());
-        assertThrows(NoSuchElementException.class, nameIterator::next);
-
-        // Expect the iterator to iterate over each column's metadata, in
-        // order of the SELECT statement's column list. Expect the same
-        // ColumnMetadata object instances that were added by the
-        // forEachRemaining  method.
-        nameIterator = namesCollection.iterator();
-        while (nameIterator.hasNext())
-          assertEquals(namesList.remove(0), nameIterator.next());
-
-        // TODO: Verify spliterator()
-        // TODO: Verify stream()
-      }
-      finally {
-        awaitExecution(connection.createStatement(
-          "DROP TABLE testGetColumnNames"));
-      }
     }
     finally {
       awaitNone(connection.close());

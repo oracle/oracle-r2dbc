@@ -61,6 +61,9 @@ public final class OracleR2dbcTypes {
   public static final Type INTERVAL_YEAR_TO_MONTH =
     new TypeImpl(Period.class, "INTERVAL YEAR TO MONTH");
 
+  /**
+   * Stores a JSON value.
+   */
   public static final Type JSON =
     new TypeImpl(OracleJsonObject.class, "JSON");
 

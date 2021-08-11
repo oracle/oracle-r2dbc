@@ -242,56 +242,6 @@ public class OracleTestKit implements TestKit<Integer> {
       .verifyComplete();
   }
 
-  /**
-   * {@inheritDoc}
-   * <p>
-   * Overrides the default implementation to expect ColumnMetadata.getName() to
-   * return the column's alias in all UPPERCASE letters. The default
-   * implementation of this test in
-   * {@link TestKit#columnMetadata()} expects getName() to return the alias
-   * as it appears in the SQL command, where it is all lower case.
-   * </p><p>
-   * This override is necessary because the Oracle Database describes aliased
-   * columns with the alias converted to all UPPERCASE characters. This
-   * description does not provide enough information for the Oracle R2DBC
-   * Driver to determine the case of characters as they appeared in the
-   * original SQL command.
-   * </p><p>
-   * This override does not prevent this test from verifying that
-   * ColumnMetadata.getName() returns the alias (except not in the original
-   * character case), or from verifying case insensitive name matching with
-   * RowMetadata.getColumnMetadata(String) and
-   * RowMMetadata.getColumnNames().contains(Object)
-   * </p>
-   */
-  @Test
-  @Override
-  public void columnMetadata() {
-    getJdbcOperations().execute("INSERT INTO test_two_column VALUES (100, 'hello')");
-
-    Mono.from(getConnectionFactory().create())
-      .flatMapMany(connection -> Flux.from(connection
-
-        .createStatement("SELECT col1 AS value, col2 AS value FROM test_two_column")
-        .execute())
-        .flatMap(result -> {
-          return result.map((row, rowMetadata) -> {
-            Collection<String> columnNames = rowMetadata.getColumnNames();
-            return Arrays.asList(rowMetadata.getColumnMetadata("value").getName(), rowMetadata.getColumnMetadata("VALUE").getName(), columnNames.contains("value"), columnNames.contains(
-              "VALUE"));
-          });
-        })
-        .flatMapIterable(Function.identity())
-        .concatWith(close(connection)))
-      .as(StepVerifier::create)
-      // Note the overridden behavior below: Expect alias "value" to be ALL CAPS
-      .expectNext("VALUE").as("Column label col1")
-      .expectNext("VALUE").as("Column label col1 (get by uppercase)")
-      .expectNext(true).as("getColumnNames.contains(value)")
-      .expectNext(true).as("getColumnNames.contains(VALUE)")
-      .verifyComplete();
-  }
-
   @Disabled("Compound statements are not supported by Oracle Database")
   @Test
   @Override

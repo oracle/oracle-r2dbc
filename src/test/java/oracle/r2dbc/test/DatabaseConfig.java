@@ -21,6 +21,7 @@
 
 package oracle.r2dbc.test;
 
+import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
@@ -189,8 +190,9 @@ public final class DatabaseConfig {
         .execute())
         .flatMap(result ->
           result.map((row, metadata) ->
-            metadata.getColumnNames()
+            metadata.getColumnMetadatas()
               .stream()
+              .map(ColumnMetadata::getName)
               .map(name -> name + ": " + row.get(name))
               .collect(Collectors.joining("\n"))))
       .toStream()
@@ -246,6 +248,14 @@ public final class DatabaseConfig {
           .option(Option.valueOf(
             OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE),
             0)
+          // Disable out-of-band breaks to support testing with the 18.x
+          // database. The 19.x database will automatically detect when it's
+          // running on a system where OOB is not supported, but the 18.x
+          // database does not do this and so statement timeout tests will
+          // hang if the database system does not support OOB
+          .option(Option.valueOf(
+            OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
+            "true")
           .build());
 
       SHARED_CONNECTION_FACTORY = new SharedConnectionFactory(

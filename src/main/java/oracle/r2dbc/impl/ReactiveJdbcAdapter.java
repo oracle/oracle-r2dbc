@@ -208,9 +208,9 @@ interface ReactiveJdbcAdapter {
    * to a single subscriber.
    * </p><p>
    * {@code T} type objects are output from the specified
-   * {@code rowMappingFunction} when a {@link JdbcRow} is applied as input.
+   * {@code rowMappingFunction} when a {@link JdbcReadable} is applied as input.
    * Each row in the table of data represented by the {@code resultSet} is
-   * applied as input in the form of a {@link JdbcRow}. If the function
+   * applied as input in the form of a {@link JdbcReadable}. If the function
    * returns a {@code null} value, then a {@link NullPointerException} is
    * emitted to the subscriber as an {@code onError} signal. If the function
    * throws an unchecked exception, then that exception is emitted to the
@@ -266,7 +266,7 @@ interface ReactiveJdbcAdapter {
    *
    */
   <T> Publisher<T> publishRows(
-    ResultSet resultSet, Function<JdbcRow, T> rowMappingFunction)
+    ResultSet resultSet, Function<JdbcReadable, T> rowMappingFunction)
     throws R2dbcException;
 
   /**
@@ -536,7 +536,7 @@ interface ReactiveJdbcAdapter {
    * only within the scope of a row mapping function's call. Usage outside of
    * a row mapping function's scope results in an {@code IllegalStateException}.
    */
-  interface JdbcRow {
+  interface JdbcReadable {
 
     /**
      * Returns the value of this row for the specified {@code index} as
@@ -554,15 +554,6 @@ interface ReactiveJdbcAdapter {
      * row mapping function.
      */
      <T> T getObject(int index, Class<T> type);
-
-    /**
-     * Returns a copy of this row. The copy returned by this method is not
-     * backed by the resources of the JDBC connection that created this row.
-     * The copy returned by this method allows the column values of this row
-     * to be accessed after closing the JDBC connection that created this row.
-     * @return A cached copy of this row.
-     */
-    JdbcRow copy();
   }
 
 }

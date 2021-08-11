@@ -174,6 +174,9 @@ Options. For Options having any of the following names, a CharSequence value may
   - [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
   - [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
   - [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
+  - [oracle.net.disableOob](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK)
+    - Out of band (oob) breaks effect statement timeouts. Set this to  "true"
+    if statement timeouts are not working correctly.
 - Oracle Net Descriptors of the form ```(DESCRIPTION=...)``` may be specified as an io.r2dbc.spi.Option having the name `oracleNetDescriptor`.
   - If `oracleNetDescriptor` is specified, then it is invalid to specify any other options that might conflict with information in the descriptor, such as: `HOST`, `PORT`, `DATABASE`, and `SSL`.
   - The `oracleNetDescriptor` option may appear in the query section of an R2DBC URL: `r2dbc:oracle://?oracleNetDescriptor=(DESCRIPTION=...)`

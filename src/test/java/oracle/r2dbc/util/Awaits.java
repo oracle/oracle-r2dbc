@@ -287,12 +287,12 @@ public final class Awaits {
    * @throws Throwable If the statement execution results in an error.
    */
   public static <T> void awaitQuery(
-    List<T> expectedRows, Function<Row, T> rowMapper, Statement statement) {
+    List<T> expectedRows, Function<io.r2dbc.spi.Readable, T> rowMapper,
+    Statement statement) {
     assertEquals(
       expectedRows,
       Flux.from(statement.execute())
-        .concatMap(result ->
-          Flux.from(result.map((row, metadata) -> rowMapper.apply(row))))
+        .concatMap(result -> Flux.from(result.map(rowMapper)))
         .collectList()
         .block(sqlTimeout()),
       "Unexpected row data");

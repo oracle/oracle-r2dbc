@@ -38,14 +38,14 @@ import static oracle.r2dbc.util.Awaits.awaitUpdate;
 
 /**
  * Verifies that
- * {@link OracleRowImpl} implements behavior that is specified in it's class
+ * {@link OracleReadableImpl} implements behavior that is specified in it's class
  * and method level javadocs.
  */
-public class OracleRowImplTest {
+public class OracleReableImplTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleRowImpl#get(int)}
+   * {@link OracleReadableImpl#get(int)}
    */
   @Test
   public void testGetByIndex() {
@@ -113,7 +113,7 @@ public class OracleRowImplTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleRowImpl#get(String)}
+   * {@link OracleReadableImpl#get(String)}
    */
   @Test
   public void testGetByName() {
@@ -269,7 +269,7 @@ public class OracleRowImplTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleRowImpl#get(int, Class)}
+   * {@link OracleReadableImpl#get(int, Class)}
    */
   @Test
   public void testGetByIndexAndType() {
@@ -358,7 +358,7 @@ public class OracleRowImplTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleRowImpl#get(String, Class)}
+   * {@link OracleReadableImpl#get(String, Class)}
    */
   @Test
   public void testGetByNameAndType() {

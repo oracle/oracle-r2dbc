@@ -25,6 +25,7 @@ import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionMetadata;
 import io.r2dbc.spi.IsolationLevel;
+import io.r2dbc.spi.Lifecycle;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.TransactionDefinition;
@@ -33,6 +34,7 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import java.sql.SQLException;
+import java.time.Duration;
 
 import static io.r2dbc.spi.IsolationLevel.READ_COMMITTED;
 import static io.r2dbc.spi.IsolationLevel.SERIALIZABLE;
@@ -43,9 +45,9 @@ import static io.r2dbc.spi.TransactionDefinition.READ_ONLY;
 import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
 import static java.sql.Connection.TRANSACTION_SERIALIZABLE;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 
 /**
@@ -72,7 +74,7 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
  * @author  harayuanwang, michael-a-mcmahon
  * @since   0.1.0
  */
-final class OracleConnectionImpl implements Connection {
+final class OracleConnectionImpl implements Connection, Lifecycle {
 
   /** Adapts JDBC Driver APIs into Reactive Streams APIs */
   private final ReactiveJdbcAdapter adapter;
@@ -84,14 +86,22 @@ final class OracleConnectionImpl implements Connection {
   private final java.sql.Connection jdbcConnection;
 
   /**
+   * Timeout applied to the execution of {@link Statement} and {@link Batch}
+   * objects that this {@code Connection} creates. The value is never
+   * null. The value is never a negative duration. A value of
+   * {@link Duration#ZERO} represents no timeout.
+   */
+  private Duration statementTimeout = Duration.ZERO;
+
+  /**
    * Constructs a new connection that uses the specified {@code adapter} to
    * perform database operations with the specified {@code jdbcConnection}.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null. Retained.
    * @param jdbcConnection JDBC connection to an Oracle Database. Not null.
-   *                       Retained.
+   * @param adapter Adapts JDBC calls into reactive streams. Not null.
+   * @throws IllegalArgumentException If {@code timeout} is negative
    */
   OracleConnectionImpl(
-    ReactiveJdbcAdapter adapter, java.sql.Connection jdbcConnection) {
+    java.sql.Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
     this.adapter = adapter;
     this.jdbcConnection = jdbcConnection;
   }
@@ -125,7 +135,7 @@ final class OracleConnectionImpl implements Connection {
 
     final IsolationLevel isolationLevel;
     int jdbcIsolationLevel =
-      getOrHandleSQLException(jdbcConnection::getTransactionIsolation);
+      fromJdbc(jdbcConnection::getTransactionIsolation);
 
     // Map JDBC's isolation level to an R2DBC IsolationLevel
     switch (jdbcIsolationLevel) {
@@ -193,13 +203,8 @@ final class OracleConnectionImpl implements Connection {
    * behavior of this method.
    * </p>
    *
-   *
    * @implNote Supporting SERIALIZABLE isolation level requires a way to
    * disable Oracle JDBC's result set caching feature.
-   *
-   * @implNote Supporting {@code LOCK_WAIT_TIMEOUT} could be emulated by
-   * executing {@code ALTER SESSION SET ddl_lock_wait=...}, and then resetting
-   * the value once the transaction ends.
    *
    * @throws IllegalArgumentException If the {@code definition} specifies an
    * unsupported isolation level.
@@ -207,7 +212,7 @@ final class OracleConnectionImpl implements Connection {
    * an isolation level and read only.
    * @throws IllegalArgumentException If the {@code definition} does not
    * specify an isolation level, read only, or name.
-   * @throws IllegalArgumentException If the {@code definition} specifies a
+   * @throws UnsupportedOperationException If the {@code definition} specifies a
    * lock wait timeout.
    * @throws IllegalStateException If this {@code Connection} is closed
    */
@@ -317,9 +322,9 @@ final class OracleConnectionImpl implements Connection {
     }
 
     if (definition.getAttribute(LOCK_WAIT_TIMEOUT) != null) {
-      // TODO: ALTER SESSION SET ddl_lock_wait = ...
-      throw new IllegalArgumentException(
-        "LOCK_WAIT_TIMEOUT is not supported in this release");
+      throw new UnsupportedOperationException(
+        "Oracle Database does not support a lock wait timeout transaction" +
+         " parameter");
     }
   }
 
@@ -393,7 +398,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Batch createBatch() {
     requireOpenConnection(jdbcConnection);
-    return new OracleBatchImpl(adapter, jdbcConnection);
+    return new OracleBatchImpl(statementTimeout, jdbcConnection, adapter);
   }
 
   /**
@@ -417,7 +422,8 @@ final class OracleConnectionImpl implements Connection {
   public Statement createStatement(String sql) {
     requireNonNull(sql, "sql is null");
     requireOpenConnection(jdbcConnection);
-    return new OracleStatementImpl(adapter, jdbcConnection, sql);
+    return new OracleStatementImpl(
+      sql, statementTimeout, jdbcConnection, adapter);
   }
 
   /**
@@ -431,7 +437,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public boolean isAutoCommit() {
     requireOpenConnection(jdbcConnection);
-    return getOrHandleSQLException(jdbcConnection::getAutoCommit);
+    return fromJdbc(jdbcConnection::getAutoCommit);
   }
 
   /**
@@ -446,7 +452,7 @@ final class OracleConnectionImpl implements Connection {
   public ConnectionMetadata getMetadata() {
     requireOpenConnection(jdbcConnection);
     return new OracleConnectionMetadataImpl(
-      getOrHandleSQLException(jdbcConnection::getMetaData));
+      fromJdbc(jdbcConnection::getMetaData));
   }
 
   /**
@@ -530,8 +536,8 @@ final class OracleConnectionImpl implements Connection {
   /**
    * {@inheritDoc}
    * <p>
-   * This SPI method implementation sets the auto-commit mode of the JDBC
-   * connection.
+   * Implements the R2DBC SPI method by setting the auto-commit mode of the
+   * JDBC connection.
    * </p><p>
    * The returned publisher sets the JDBC connection's auto-commit mode
    * <i>after</i> a subscriber subscribes, <i>before</i> the subscriber
@@ -545,7 +551,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Void> setAutoCommit(boolean autoCommit) {
     requireOpenConnection(jdbcConnection);
-    return Mono.defer(() -> getOrHandleSQLException(() -> {
+    return Mono.defer(() -> fromJdbc(() -> {
       if (autoCommit == jdbcConnection.getAutoCommit()) {
         return Mono.empty(); // No change
       }
@@ -559,11 +565,60 @@ final class OracleConnectionImpl implements Connection {
         // Changing auto-commit from disabled to enabled. Commit in case
         // there is an active transaction.
         return Mono.from(commitTransaction())
-          .doOnSuccess(nil -> runOrHandleSQLException(() ->
+          .doOnSuccess(nil -> runJdbc(() ->
             jdbcConnection.setAutoCommit(true)));
       }
     }))
     .cache();
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by throwing an
+   * {@link UnsupportedOperationException} indicating that Oracle Database does
+   * not support configuring a database session with a lock wait timeout.
+   * </p>
+   * @implNote The DDL_LOCK_TIMEOUT parameter would only apply to DDL
+   * statements, and not effect DML or SELECT FOR UPDATE statements.
+   * @implNote Implementing this method by configuring a general statement
+   * timeout would not be correct. A correct implementation would have the
+   * timeout apply only when waiting to acquire a lock. The lock wait timeout
+   * should not apply when a statement execution exceeds it due to other
+   * factors, such as network latency.
+   */
+  @Override
+  public Publisher<Void> setLockWaitTimeout(Duration timeout) {
+    throw new UnsupportedOperationException(
+      "Oracle Database does not support a lock wait timeout session parameter");
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by setting the {@link #statementTimeout}.
+   * The timeout will only apply to {@link Statement} and {@link Batch} objects
+   * that this {@code Connection} creates <i>after</i> the {@code Publisher}
+   * returned by this method emits {@code onComplete}.
+   * </p><p>
+   * A {@code Batch} object created by this {@code Connection} applies the
+   * provided {@code timeout} individually to each statement it executes.
+   * </p>
+   * @throws IllegalArgumentException {@inheritDoc}
+   * @throws IllegalArgumentException If the {@code timeout} is a negative
+   * {@code Duration}
+   */
+  @Override
+  public Publisher<Void> setStatementTimeout(Duration timeout) {
+    requireNonNull(timeout, "timeout is null");
+
+    if (timeout.isNegative()) {
+      throw new IllegalArgumentException(
+        "timeout is a negative Duration: " + timeout);
+    }
+
+    this.statementTimeout = timeout;
+    return Mono.empty();
   }
 
   /**
@@ -654,7 +709,7 @@ final class OracleConnectionImpl implements Connection {
   @Override
   public Publisher<Boolean> validate(ValidationDepth depth) {
     requireNonNull(depth, "depth is null");
-    return Mono.defer(() -> getOrHandleSQLException(() -> {
+    return Mono.defer(() -> fromJdbc(() -> {
       if (jdbcConnection.isClosed()) {
         return Mono.just(false);
       }
@@ -673,6 +728,41 @@ final class OracleConnectionImpl implements Connection {
       }
     }))
     .cache();
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by invoking the
+   * {@link java.sql.Connection#beginRequest()} method of the JDBC
+   * {@code Connection}. The {@code beginRequest} method is JDBC's
+   * equivalent to R2DBC's {@code postAllocate} method.
+   * </p>
+   */
+  @Override
+  public Publisher<Void> postAllocate() {
+    return Mono.fromSupplier(() -> {
+      runJdbc(jdbcConnection::beginRequest);
+      return null;
+    });
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Implements the R2DBC SPI method by invoking the
+   * {@link java.sql.Connection#endRequest()} method of the JDBC
+   * {@code Connection}. The {@code endRequest} method is JDBC's equivalent
+   * to R2DBC's {@code preRelease} method.
+   * </p>
+   */
+
+  @Override
+  public Publisher<Void> preRelease() {
+    return Mono.fromSupplier(() -> {
+      runJdbc(jdbcConnection::endRequest);
+      return null;
+    });
   }
 
 }

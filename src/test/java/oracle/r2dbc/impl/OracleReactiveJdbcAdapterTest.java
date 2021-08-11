@@ -21,13 +21,16 @@
 
 package oracle.r2dbc.impl;
 
+import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.Option;
 import io.r2dbc.spi.R2dbcTimeoutException;
+import io.r2dbc.spi.Result;
 import oracle.jdbc.OracleConnection;
 import oracle.jdbc.datasource.OracleDataSource;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
@@ -50,25 +53,31 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.DRIVER;
 import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.STATEMENT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
-
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
 import static oracle.r2dbc.test.DatabaseConfig.serviceName;
+import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.user;
-
 import static oracle.r2dbc.util.Awaits.awaitError;
+import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
+import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
+import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Verifies that
- * {@link OracleColumnMetadataImpl} implements behavior that is specified in
+ * {@link OracleReadableMetadataImpl} implements behavior that is specified in
  * it's class and method level javadocs.
  */
 public class OracleReactiveJdbcAdapterTest {
@@ -336,6 +345,74 @@ public class OracleReactiveJdbcAdapterTest {
         "r2dbc:oracle://localhost:" + listeningChannel.socket().getLocalPort()
           + "?connectTimeout=PT0.5S")); // The value is parsed as a Duration
     }
+  }
+
+  /**
+   * Verifies that the {@link ConnectionFactoryOptions#STATEMENT_TIMEOUT} option
+   * is applied, as specified in the javadoc of
+   * {@link OracleReactiveJdbcAdapter#createDataSource(ConnectionFactoryOptions)}
+   */
+  @Test
+  public void testStatementTimeout() {
+    Connection connection0 =
+      Mono.from(ConnectionFactories.get(ConnectionFactoryOptions
+        .builder()
+        .option(DRIVER, "oracle")
+        .option(HOST, host())
+        .option(PORT, port())
+        .option(DATABASE, serviceName())
+        .option(USER, user())
+        .option(PASSWORD, password())
+        .option(STATEMENT_TIMEOUT, Duration.ofSeconds(2))
+        // Disable OOB to support testing with an 18.x database
+        .option(Option.valueOf(
+          OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
+          "true")
+        .build())
+        .create())
+        .block(connectTimeout());
+    Connection connection1 =
+      Mono.from(sharedConnection()).block(connectTimeout());
+
+    try {
+      // Lock a table
+      awaitExecution(connection1.createStatement(
+        "CREATE TABLE testStatementTimeout (v NUMBER)"));
+      awaitUpdate(1, connection1.createStatement(
+        "INSERT INTO testStatementTimeout VALUES(0)"));
+      Result lockingResult = Mono.from(connection1.createStatement(
+        "SELECT * FROM testStatementTimeout FOR UPDATE")
+        .execute())
+        .block(sqlTimeout());
+
+      try {
+        // Attempt to update the locked table. Expect the 2 second timeout to
+        // trigger. Allow up to 10 seconds of variance to account for slow
+        // systems.
+        Duration start = Duration.ofNanos(System.nanoTime());
+        awaitError(R2dbcTimeoutException.class,
+          Mono.from(connection0.createStatement(
+            "UPDATE testStatementTimeout SET v=1 WHERE v=0")
+            .execute())
+            .flatMapMany(Result::getRowsUpdated));
+        Duration actual = Duration.ofNanos(System.nanoTime()).minus(start);
+        assertTrue(actual.toSeconds() >= 2,
+          "Timeout triggered too soon: " + actual);
+        assertTrue(actual.toSeconds() < 12,
+          "Timeout triggered too late: " + actual);
+      }
+      finally {
+        // Consume the result to close the cursor
+        awaitNone(lockingResult.getRowsUpdated());
+      }
+    }
+    finally {
+      tryAwaitNone(connection0.close());
+      tryAwaitExecution(connection1.createStatement(
+        "DROP TABLE testStatementTimeout"));
+      tryAwaitNone(connection1.close());
+    }
+
   }
 
   /**

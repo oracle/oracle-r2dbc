@@ -27,11 +27,13 @@ import io.r2dbc.spi.ConnectionFactoryMetadata;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.Statement;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import javax.sql.DataSource;
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * <p>
@@ -105,6 +107,20 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
 
   /**
    * <p>
+   * Timeout applied to the execution of {@link Statement}s created by
+   * {@link Connection}s created by this {@code ConnectionFactory}.
+   * </p><p>
+   * The {@link #dataSource} is not configured with this value because Oracle
+   * JDBC does not have a connection property to set a statement execution
+   * timeout. This value is retained by an instance of
+   * {@code OracleConnectionFactoryImpl} so that it may be applied to each
+   * {@code Connection} it creates.
+   * </p>
+   */
+  private final Duration statementTimeout;
+
+  /**
+   * <p>
    * Constructs a new factory that applies the values specified by the {@code
    * options} parameter when opening a database connection. This constructor
    * fails if any <a href="#required_options">required options</a>
@@ -150,11 +166,21 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have
    * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
+   *
+   * @throws IllegalArgumentException If the
+   * {@link ConnectionFactoryOptions#STATEMENT_TIMEOUT} {@code Option} specifies
+   * a negative {@code Duration}
    */
   OracleConnectionFactoryImpl(ConnectionFactoryOptions options) {
     OracleR2dbcExceptions.requireNonNull(options, "options is null.");
     adapter = ReactiveJdbcAdapter.getOracleAdapter();
     dataSource = adapter.createDataSource(options);
+    statementTimeout = Optional.ofNullable(
+      options.getValue(ConnectionFactoryOptions.STATEMENT_TIMEOUT))
+      .map(timeout -> (timeout instanceof Duration)
+        ? (Duration)timeout
+        : Duration.parse(timeout.toString()))
+      .orElse(Duration.ZERO);
   }
 
   /**
@@ -183,7 +209,13 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
   public Publisher<Connection> create() {
     return Mono.defer(() ->
         Mono.fromDirect(adapter.publishConnection(dataSource)))
-      .map(conn -> new OracleConnectionImpl(adapter, conn));
+      .flatMap(conn -> {
+        OracleConnectionImpl connection =
+          new OracleConnectionImpl(conn, adapter);
+
+        return Mono.from(connection.setStatementTimeout(statementTimeout))
+          .thenReturn(connection);
+      });
   }
 
   /**

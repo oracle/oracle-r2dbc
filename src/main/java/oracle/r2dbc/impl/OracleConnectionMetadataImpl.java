@@ -24,7 +24,7 @@ package oracle.r2dbc.impl;
 import java.sql.DatabaseMetaData;
 import io.r2dbc.spi.ConnectionMetadata;
 
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 
 
 /**
@@ -61,7 +61,7 @@ final class OracleConnectionMetadataImpl implements ConnectionMetadata {
    */
   @Override
   public String getDatabaseProductName() {
-    return getOrHandleSQLException(dbMetaData::getDatabaseProductName);
+    return fromJdbc(dbMetaData::getDatabaseProductName);
   }
 
   /**
@@ -73,6 +73,6 @@ final class OracleConnectionMetadataImpl implements ConnectionMetadata {
    */
   @Override
   public String getDatabaseVersion() {
-    return getOrHandleSQLException(dbMetaData::getDatabaseProductVersion);
+    return fromJdbc(dbMetaData::getDatabaseProductVersion);
   }
 }

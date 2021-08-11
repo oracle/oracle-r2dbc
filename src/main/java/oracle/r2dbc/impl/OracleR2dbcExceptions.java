@@ -86,7 +86,7 @@ final class OracleR2dbcExceptions {
    * @throws IllegalStateException If {@code jdbcConnection} is closed
    */
   static void requireOpenConnection(java.sql.Connection jdbcConnection) {
-    if (getOrHandleSQLException(jdbcConnection::isClosed))
+    if (fromJdbc(jdbcConnection::isClosed))
       throw new IllegalStateException("Connection is closed");
   }
 
@@ -231,14 +231,14 @@ final class OracleR2dbcExceptions {
    * </pre>
    * Can be expressed more concisely as:
    * <pre>
-   *   OracleR2dbcExceptions.runOrHandleSQLException(preparedStatement::addBatch);
+   *   OracleR2dbcExceptions.runJdbc(preparedStatement::addBatch);
    * </pre>
    *
    * @param runnable Runs to completion or throws a {@code SQLException}. Not
    *   null.
    * @throws R2dbcException If the supplier throws a {@code SQLException}.
    */
-  static void runOrHandleSQLException(ThrowingRunnable runnable)
+  static void runJdbc(ThrowingRunnable runnable)
     throws R2dbcException {
     try {
       runnable.runOrThrow();
@@ -262,7 +262,7 @@ final class OracleR2dbcExceptions {
    * </pre>
    * Can be expressed more concisely as:
    * <pre>
-   *   return getOrHandleSQLException(resultSet::getMetaData);
+   *   return fromJdbc(resultSet::getMetaData);
    * </pre>
    *
    * @param supplier Returns a value or throws a {@code SQLException}. Not
@@ -271,7 +271,7 @@ final class OracleR2dbcExceptions {
    * @return The output of the specified {@code supplier}.
    * @throws R2dbcException If the supplier throws a {@code SQLException}.
    */
-  static <T> T getOrHandleSQLException(ThrowingSupplier<T> supplier)
+  static <T> T fromJdbc(ThrowingSupplier<T> supplier)
     throws R2dbcException {
     try {
       return supplier.getOrThrow();
@@ -319,12 +319,12 @@ final class OracleR2dbcExceptions {
      * R2dbcException} if an error is encountered.
      * @throws R2dbcException If the run does not complete due to an error.
      * @implNote The default implementation invokes
-     * {@link #runOrHandleSQLException(ThrowingRunnable)} with this {@code
+     * {@link #runJdbc(ThrowingRunnable)} with this {@code
      * ThrowingRunnable}.
      */
     @Override
     default void run() throws R2dbcException {
-      runOrHandleSQLException(this);
+      runJdbc(this);
     }
   }
 
@@ -352,12 +352,12 @@ final class OracleR2dbcExceptions {
      * encountered.
      * @throws R2dbcException If a value is not returned due to an error.
      * @implNote The default implementation invokes
-     * {@link #getOrHandleSQLException(ThrowingSupplier)} (ThrowingRunnable)}
+     * {@link #fromJdbc(ThrowingSupplier)} (ThrowingRunnable)}
      * with this {@code ThrowingSupplier}.
      */
     @Override
     default T get() throws R2dbcException {
-      return getOrHandleSQLException(this);
+      return fromJdbc(this);
     }
   }
 

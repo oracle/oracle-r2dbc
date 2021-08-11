@@ -46,9 +46,9 @@ import java.sql.SQLTransientException;
 import java.util.ArrayList;
 import java.util.List;
 
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.getOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.runOrHandleSQLException;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -64,14 +64,14 @@ public class OracleR2dbcExceptionsTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleR2dbcExceptions#getOrHandleSQLException(OracleR2dbcExceptions.ThrowingSupplier)} ()}
+   * {@link OracleR2dbcExceptions#fromJdbc(OracleR2dbcExceptions.ThrowingSupplier)} ()}
    */
   @Test
   public void testGetOrHandleSqlException() {
 
     // Expect a supplied value when the supplier doesn't throw
     Object expected = new Object();
-    assertSame(expected, getOrHandleSQLException(() -> expected));
+    assertSame(expected, fromJdbc(() -> expected));
 
     // Expect a thrown SQLException to be handled by throwing an
     // R2dbcException.
@@ -79,7 +79,7 @@ public class OracleR2dbcExceptionsTest {
     SQLException sqlException = new SQLException(
       "SQL-MESSAGE", "SQL-STATE", 9, ioException);
     R2dbcException r2dbcException = assertThrows(R2dbcException.class, () ->
-      getOrHandleSQLException(() -> {
+      fromJdbc(() -> {
           throw sqlException;
         }));
 
@@ -99,7 +99,7 @@ public class OracleR2dbcExceptionsTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleR2dbcExceptions#runOrHandleSQLException(OracleR2dbcExceptions.ThrowingRunnable)}
+   * {@link OracleR2dbcExceptions#runJdbc(OracleR2dbcExceptions.ThrowingRunnable)}
    */
   @Test
   public void testRunOrHandleSqlException() {
@@ -107,7 +107,7 @@ public class OracleR2dbcExceptionsTest {
     // Expect a runnable to be ran
     Object expected = new Object();
     List<Object> list = new ArrayList<>();
-    runOrHandleSQLException(() -> list.add(expected));
+    runJdbc(() -> list.add(expected));
     assertSame(expected, list.get(0));
 
     // Expect a thrown SQLException to be handled by throwing an
@@ -116,7 +116,7 @@ public class OracleR2dbcExceptionsTest {
     SQLException sqlException = new SQLException(
       "SQL-MESSAGE", "SQL-STATE", 9, ioException);
     R2dbcException r2dbcException = assertThrows(R2dbcException.class, () ->
-      runOrHandleSQLException(() -> {
+      runJdbc(() -> {
         throw sqlException;
       }));
 
