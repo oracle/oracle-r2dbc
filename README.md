@@ -20,9 +20,9 @@ Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified 
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
 # About This Version
 The 0.3.0 release Oracle R2DBC implements version 0.9.0.M2 of the R2DBC SPI.
-The 0.9.0.M2 SPI update introduces support for consuming a ```Result``` as a
- stream of ```Segment``` objects, configuring statement execution timeouts, and
- managing pooled ```Connection```s with the ```LifeCycle``` interface.
+The 0.9.0.M2 SPI update introduces support for consuming a `Result` as a
+ stream of `Segment` objects, configuring statement execution timeouts, and
+ managing pooled `Connection`s with the `LifeCycle` interface.
  
 The 0.3.0 release updates the Oracle JDBC dependency to 21.3. The 21.3 release 
  introduces several improvements for the Reactive Extensions:
