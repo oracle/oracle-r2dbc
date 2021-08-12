@@ -948,7 +948,10 @@ public class OracleStatementImplTest {
 
       // Expect a failure with invalid column name "eye-d"
       assertEquals(statement, statement.returnGeneratedValues("x", "eye-d"));
-      awaitError(R2dbcException.class, statement.bind(0, "test").execute());
+      awaitError(R2dbcException.class,
+        Flux.from(statement.bind(0, "test").execute())
+          .flatMap(result ->
+            result.map(generatedValues -> fail("Unexpected row"))));
 
       // Expect a ROWID value when no column names are specified
       Statement rowIdQuery = connection.createStatement(
