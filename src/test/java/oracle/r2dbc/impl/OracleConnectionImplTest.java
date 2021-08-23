@@ -40,6 +40,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static io.r2dbc.spi.TransactionDefinition.*;
@@ -82,7 +83,7 @@ public class OracleConnectionImplTest {
     Connection sessionA =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      verifyReadCommittedIsolation(sessionA, sessionA.beginTransaction());
+      verifyReadCommittedIsolation(sessionA, sessionA::beginTransaction);
 
       // TODO: Verify serializable
     }
@@ -122,7 +123,7 @@ public class OracleConnectionImplTest {
         () -> sessionA.beginTransaction(transactionDefinition(Map.of(
           LOCK_WAIT_TIMEOUT, Duration.ofSeconds(10)))));
 
-      verifyReadCommittedIsolation(sessionA,
+      verifyReadCommittedIsolation(sessionA, () ->
         sessionA.beginTransaction(IsolationLevel.READ_COMMITTED));
 
       // TODO: Verify serializable
@@ -280,7 +281,7 @@ public class OracleConnectionImplTest {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      verifyReadCommittedIsolation(connection,
+      verifyReadCommittedIsolation(connection, () ->
         connection.beginTransaction(transactionDefinition(Map.of(
           READ_ONLY, false))));
     }
@@ -303,7 +304,7 @@ public class OracleConnectionImplTest {
       // Try to use a unique transaction name
       String name =
         "testBeginTransactionNameIsolationLevel : " + System.nanoTime();
-      verifyReadCommittedIsolation(connection,
+      verifyReadCommittedIsolation(connection, () ->
         connection.beginTransaction(transactionDefinition(Map.of(NAME, name))));
     }
     finally {
@@ -315,14 +316,16 @@ public class OracleConnectionImplTest {
    * Verifies that a {@code beginTransactionPublisher} begins a transaction
    * with the READ COMMITTED isolation level for {@code sessionA}
    * @param sessionA Database session
-   * @param beginTransactionPublisher Publishes {@code onComplete} when a
-   * READ COMMITTED transaction begins for {@code sessionA}
+   * @param publisherSupplier Outputs a {@code Publisher} that emits
+   * {@code onComplete} when a READ COMMITTED transaction begins for
+   * {@code sessionA}
    */
   private static void verifyReadCommittedIsolation(
-    Connection sessionA, Publisher<Void> beginTransactionPublisher) {
+    Connection sessionA, Supplier<Publisher<Void>> publisherSupplier) {
 
-    // Expect the publisher to set auto-commit false when the first
-    // subscriber subscribes
+    // Create a publisher and expect it to set auto-commit false only after the
+    // first subscriber subscribes
+    Publisher<Void> beginTransactionPublisher = publisherSupplier.get();
     assertTrue(sessionA.isAutoCommit(),
       "Unexpected return value from isAutoCommit() before" +
         " beginTransaction()");
@@ -349,7 +352,7 @@ public class OracleConnectionImplTest {
 
       // Now begin a transaction and verify that a table INSERT is not visible
       // until the transaction is committed.
-      awaitNone(sessionA.beginTransaction());
+      awaitNone(publisherSupplier.get());
       assertFalse(
         sessionA.isAutoCommit(),
         "Unexpected return value from isAutoCommit() after" +
