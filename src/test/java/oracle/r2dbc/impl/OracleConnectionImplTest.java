@@ -369,9 +369,24 @@ public class OracleConnectionImplTest {
         awaitQuery(
           Collections.emptyList(), row -> 0, selectInSessionB);
 
-        // Now sessionA COMMITs and sessionB can now see the INSERT
+        // sessionA COMMITs and sessionB can now see the INSERT
         awaitNone(sessionA.commitTransaction());
         awaitQuery(List.of("A"), row -> row.get("value"), selectInSessionB);
+
+        // Begin a new READ COMMITTED transaction with sessionA, then update the
+        // row in sessionB, then verify that sessionA can only see the update
+        // after sessionB commits
+        awaitNone(publisherSupplier.get());
+        awaitNone(sessionB.beginTransaction());
+        awaitUpdate(1, sessionB.createStatement(
+          "UPDATE verifyReadCommittedIsolation SET value = 'B'"));
+        awaitQuery(List.of("A"), row -> row.get("value"),
+          sessionA.createStatement(
+            "SELECT value FROM verifyReadCommittedIsolation"));
+        awaitNone(sessionB.commitTransaction());
+        awaitQuery(List.of("B"), row -> row.get("value"),
+          sessionA.createStatement(
+            "SELECT value FROM verifyReadCommittedIsolation"));
       }
       finally {
         awaitNone(sessionB.close());
