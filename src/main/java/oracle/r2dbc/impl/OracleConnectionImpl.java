@@ -42,8 +42,6 @@ import static io.r2dbc.spi.TransactionDefinition.ISOLATION_LEVEL;
 import static io.r2dbc.spi.TransactionDefinition.LOCK_WAIT_TIMEOUT;
 import static io.r2dbc.spi.TransactionDefinition.NAME;
 import static io.r2dbc.spi.TransactionDefinition.READ_ONLY;
-import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
-import static java.sql.Connection.TRANSACTION_SERIALIZABLE;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
@@ -94,6 +92,38 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   private Duration statementTimeout = Duration.ZERO;
 
   /**
+   * <p>
+   * The isolation level of the database session created by this
+   * {@code Connection}. The value is initialized as READ COMMITTED because
+   * that is the default isolation level of an Oracle Database session. The
+   * value of this field may be updated by
+   * {@link #setTransactionIsolationLevel(IsolationLevel)}.
+   * </p><p>
+   * The value of this field will not be correct if user code executes a
+   * command that changes the isolation level, such as
+   * {@code ALTER SESSION SET ISOLATION_LEVEL = ...}.
+   * </p>
+   */
+  private IsolationLevel isolationLevel = READ_COMMITTED;
+
+  /**
+   * <p>
+   * The definition of the current transaction, or {@code null} if there is
+   * no current transaction. This field is set to a non-null value by
+   * invocations of {@link #beginTransaction()} or
+   * {@link #beginTransaction(TransactionDefinition)}. This field is set
+   * back to a {@code null} value when the transaction ends with an
+   * invocation of {@link #commitTransaction()} or
+   * {@link #rollbackTransaction()}.
+   * </p><p>
+   * The value of this field will not be correct if user code begins a
+   * transaction implicitly by executing DML without first calling one
+   * of the {@code beginTransaction} methods.
+   * </p>
+   */
+  private TransactionDefinition currentTransaction = null;
+
+  /**
    * Constructs a new connection that uses the specified {@code adapter} to
    * perform database operations with the specified {@code jdbcConnection}.
    * @param jdbcConnection JDBC connection to an Oracle Database. Not null.
@@ -110,8 +140,11 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * {@inheritDoc}
    * <p>
    * Implements the R2DBC SPI method by executing a {@code SET TRANSACTION}
-   * command to explicitly begin a transaction on the Oracle Database to which
-   * JDBC is connected.
+   * command to explicitly begin a transaction on the Oracle Database that
+   * JDBC is connected to. The transaction started by this method has
+   * the isolation level set by the last call to
+   * {@link Connection#setTransactionIsolationLevel(IsolationLevel)}, or
+   * {@link IsolationLevel#READ_COMMITTED} if no isolation level has been set.
    * </p><p>
    * Oracle Database supports transactions that begin <i>implicitly</i>
    * when executing SQL statements that modify data, or when a executing a
@@ -132,27 +165,6 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Publisher<Void> beginTransaction() {
     requireOpenConnection(jdbcConnection);
-
-    final IsolationLevel isolationLevel;
-    int jdbcIsolationLevel =
-      fromJdbc(jdbcConnection::getTransactionIsolation);
-
-    // Map JDBC's isolation level to an R2DBC IsolationLevel
-    switch (jdbcIsolationLevel) {
-      case TRANSACTION_READ_COMMITTED:
-        isolationLevel = READ_COMMITTED;
-        break;
-      case TRANSACTION_SERIALIZABLE:
-        isolationLevel = SERIALIZABLE;
-        break;
-      default:
-        // In 21c, Oracle only supports READ COMMITTED or SERIALIZABLE. Any
-        // other level is unexpected and has not been verified with test cases.
-        throw new IllegalArgumentException(
-          "Unrecognized JDBC transaction isolation level: "
-            + jdbcIsolationLevel);
-    }
-
     return beginTransaction(isolationLevel);
   }
 
@@ -203,8 +215,9 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * behavior of this method.
    * </p>
    *
-   * @implNote Supporting SERIALIZABLE isolation level requires a way to
-   * disable Oracle JDBC's result set caching feature.
+   * @param definition {@inheritDoc}. Oracle R2DBC retains a reference to
+   * this object. After this method returns, mutations to the object may
+   * effect the behavior of Oracle R2DBC.
    *
    * @throws IllegalArgumentException If the {@code definition} specifies an
    * unsupported isolation level.
@@ -226,7 +239,8 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
       .then(Mono.from(createStatement(composeSetTransaction(definition))
         .execute())
         .flatMap(result -> Mono.from(result.getRowsUpdated()))
-        .then())
+        .then()
+        .doOnSuccess(nil -> this.currentTransaction = definition))
       .cache();
   }
 
@@ -310,7 +324,8 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
       }
 
       // TODO: Only supporting READ COMMITTED
-      if (! isolationLevel.equals(READ_COMMITTED)) {
+      if (! (isolationLevel.equals(READ_COMMITTED)
+        || isolationLevel.equals(SERIALIZABLE))) {
         throw new IllegalArgumentException(
           "Unsupported ISOLATION_LEVEL: " + isolationLevel);
       }
@@ -375,7 +390,8 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Publisher<Void> commitTransaction() {
     requireOpenConnection(jdbcConnection);
-    return adapter.publishCommit(jdbcConnection);
+    return Mono.from(adapter.publishCommit(jdbcConnection))
+      .doOnSuccess(nil -> currentTransaction = null);
   }
 
   /**
@@ -511,7 +527,8 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Publisher<Void> rollbackTransaction() {
     requireOpenConnection(jdbcConnection);
-    return adapter.publishRollback(jdbcConnection);
+    return Mono.from(adapter.publishRollback(jdbcConnection))
+      .doOnSuccess(nil -> currentTransaction = null);
   }
 
   /**
@@ -624,30 +641,57 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   /**
    * {@inheritDoc}
    * <p>
-   * Implements the R2DBC SPI method by returning the JDBC connection's
-   * transaction isolation level.
+   * Implements the R2DBC SPI method by returning the isolation level set for
+   * the database session of this {@code Connection}, if the session is not
+   * currently in a transaction.
+   * </p><p>
+   * If the session is in a transaction, and an isolation level was
+   * explicitly specified via {@link TransactionDefinition#ISOLATION_LEVEL},
+   * then the isolation level of that transaction is returned. If the current
+   * transaction is read-only, then {@link IsolationLevel#SERIALIZABLE} is
+   * returned as read-only transactions have the same behavior as if the
+   * SERIALIZABLE isolation level. Otherwise, if no isolation level was
+   * explicitly set, then the current transaction should have the isolation
+   * level set for the database session.
    * </p>
-   * @implNote Currently, Oracle R2DBC only supports the READ COMMITTED
-   * isolation level.
    * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public IsolationLevel getTransactionIsolationLevel() {
     requireOpenConnection(jdbcConnection);
-    return READ_COMMITTED;
+
+    if (currentTransaction == null) {
+      return isolationLevel;
+    }
+    else {
+      IsolationLevel currentIsolationLevel =
+        currentTransaction.getAttribute(ISOLATION_LEVEL);
+
+      return currentIsolationLevel != null
+        ? currentIsolationLevel
+        : Boolean.TRUE == currentTransaction.getAttribute(READ_ONLY)
+          ? SERIALIZABLE
+          : isolationLevel;
+    }
   }
 
   /**
    * {@inheritDoc}
    * <p>
    * Implements the R2DBC SPI method by setting the transaction isolation
-   * level of the JDBC connection.
+   * level of this connection's database session. This method will by-pass
+   * the JDBC {@link java.sql.Connection#setTransactionIsolation(int)}
+   * method in order to execute a non-blocking {@code ALTER SESSION} command.
+   * After this method is called, invocations of
+   * {@link java.sql.Connection#getTransactionIsolation()} on the JDBC
+   * {@code Connection} may no longer return a correct value. The correct
+   * isolation level is retained by the {@link #isolationLevel} field of this
+   * {@code Connection}.
    * </p><p>
    * Oracle Database only supports {@link IsolationLevel#READ_COMMITTED} and
-   * {@link IsolationLevel#SERIALIZABLE} isolation levels. If an unsupported
-   * {@code isolationLevel} is specified to this method, then the returned
-   * publisher emits {@code onError} with an {@link R2dbcException}
-   * indicating that the specified {@code isolationLevel} is not supported.
+   * {@link IsolationLevel#SERIALIZABLE} isolation levels. This method throws
+   * an {@code IllegalArgumentException} if an unsupported
+   * {@code isolationLevel} is specified.
    * </p><p>
    * Oracle Database does not support changing an isolation level during
    * an active transaction. If the isolation level is changed during an
@@ -662,8 +706,6 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * transaction isolation level for each subscription. Signals emitted to
    * the first subscription are propagated to all subsequent subscriptions.
    * </p>
-   * @implNote Currently, Oracle R2DBC only supports the READ COMMITTED
-   * isolation level.
    * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
@@ -672,18 +714,29 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
     requireNonNull(isolationLevel, "isolationLevel is null");
     requireOpenConnection(jdbcConnection);
 
-    // TODO: Need to add a connection factory option that disables Oracle
-    //  JDBC's Result Set caching function before SERIALIZABLE can be supported.
-    // For now, the isolation level can never be changed from the default READ
-    // COMMITTED.
-    if (isolationLevel.equals(READ_COMMITTED)) {
+    // Do nothing if the level isn't changed
+    if (isolationLevel.equals(this.isolationLevel))
       return Mono.empty();
+
+    // Compose a command to set the isolation level of the database session:
+    // ALTER SESSION SET ISOLATION_LEVEL = {SERIALIZABLE | READ COMMITTED}
+    String alterSession = "ALTER SESSION SET ISOLATION_LEVEL = ";
+    if (isolationLevel.equals(READ_COMMITTED)) {
+      alterSession += "READ COMMITTED";
+    }
+    else if (isolationLevel.equals(SERIALIZABLE)) {
+      alterSession += "SERIALIZABLE";
     }
     else {
-      return Mono.error(OracleR2dbcExceptions.newNonTransientException(
-        "Oracle R2DBC does not support isolation level: " + isolationLevel,
-        null));
+      throw new IllegalArgumentException(
+        "Oracle Database does not support isolation level: " + isolationLevel);
     }
+
+    return Mono.from(createStatement(alterSession)
+      .execute())
+      .then()
+      .doOnSuccess(nil -> this.isolationLevel = isolationLevel)
+      .cache();
   }
 
   /**

@@ -206,8 +206,14 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       // OOB is not supported and automatically disable OOB. This automated 
       // detection is not impleneted in 18.x.
       Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK)
+        OracleConnection
+          .CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
 
+      // Allow the client-side ResultSet cache to be disabled. It is
+      // necessary to do so when using the serializable transaction isolation
+      // level in order to prevent phantom reads.
+      Option.valueOf(
+        OracleConnection.CONNECTION_PROPERTY_ENABLE_QUERY_RESULT_CACHE)
     );
 
   /**

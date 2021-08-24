@@ -177,6 +177,10 @@ Options. For Options having any of the following names, a CharSequence value may
   - [oracle.net.disableOob](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK)
     - Out of band (oob) breaks effect statement timeouts. Set this to  "true"
     if statement timeouts are not working correctly.
+  - [oracle.jdbc.enableQueryResultCache](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_ENABLE_QUERY_RESULT_CACHE)
+    - Cached query results can cause phantom reads even if the serializable
+     transaction isolation level is set. Set this to "false" if using the
+      serializable isolation level.
 - Oracle Net Descriptors of the form ```(DESCRIPTION=...)``` may be specified as an io.r2dbc.spi.Option having the name `oracleNetDescriptor`.
   - If `oracleNetDescriptor` is specified, then it is invalid to specify any other options that might conflict with information in the descriptor, such as: `HOST`, `PORT`, `DATABASE`, and `SSL`.
   - The `oracleNetDescriptor` option may appear in the query section of an R2DBC URL: `r2dbc:oracle://?oracleNetDescriptor=(DESCRIPTION=...)`
@@ -207,8 +211,9 @@ signals demand, and does not support multiple subscribers.
 or Oracle JDBC Driver error message](https://docs.oracle.com/en/database/oracle/oracle-database/21/errmg/ORA-00000.html#GUID-27437B7F-F0C3-4F1F-9C6E-6780706FB0F6)
 
 ### Transactions
-- READ COMMITTED is the default transaction isolation level, and is the
-only level supported in this release.
+- READ COMMITTED is the default transaction isolation level
+- SERIALIZABLE is the only isolation level, besides READ COMMITED, that
+ Oracle Database supports.
 - Transaction savepoints are not supported in this release.
 - TransactionDefinition.LOCK_WAIT_TIMEOUT is not supported in this release.
   - Oracle Database does not support a lock wait timeout that applies to all statements within a transaction.
