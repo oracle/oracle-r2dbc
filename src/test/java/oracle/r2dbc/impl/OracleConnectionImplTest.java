@@ -241,11 +241,14 @@ public class OracleConnectionImplTest {
         awaitUpdate(1, sessionB.createStatement(
           "INSERT INTO testBeginTransactionReadOnly VALUES ('b')"));
 
-        // Begin a READ ONLY transaction with sessionA and expect a query result
-        // having only the committed row, and not the uncomitted row
+        // Begin a READ ONLY transaction with sessionA. Expect
+        // getTransactionIsolationLevel to return SERIALIZABLE as read-only
+        // transactions have the same behavior. Expect a query result
+        // having only the committed row, and not the uncommitted row
         awaitNone(sessionA.commitTransaction());
         awaitNone(sessionA.beginTransaction(transactionDefinition(Map.of(
           READ_ONLY, true))));
+        assertEquals(SERIALIZABLE, sessionA.getTransactionIsolationLevel());
         awaitQuery(List.of("a"), row -> row.get(0, String.class),
           sessionA.createStatement(
             "SELECT value FROM testBeginTransactionReadOnly"));
@@ -286,6 +289,12 @@ public class OracleConnectionImplTest {
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
       verifyReadCommittedIsolation(connection, () ->
+        connection.beginTransaction(transactionDefinition(Map.of(
+          READ_ONLY, false))));
+
+      // Expect read write transactions to have the session's isolation level
+      awaitNone(connection.setTransactionIsolationLevel(SERIALIZABLE));
+      verifySerializableIsolation(connection, () ->
         connection.beginTransaction(transactionDefinition(Map.of(
           READ_ONLY, false))));
     }
@@ -367,6 +376,7 @@ public class OracleConnectionImplTest {
         sessionA.isAutoCommit(),
         "Unexpected return value from isAutoCommit() after" +
           " beginTransaction()");
+      assertEquals(READ_COMMITTED, sessionA.getTransactionIsolationLevel());
       awaitUpdate(1, sessionA.createStatement(
         "INSERT INTO verifyReadCommittedIsolation VALUES ('A')"));
 
@@ -455,6 +465,7 @@ public class OracleConnectionImplTest {
         sessionA.isAutoCommit(),
         "Unexpected return value from isAutoCommit() after" +
           " beginTransaction()");
+      assertEquals(SERIALIZABLE, sessionA.getTransactionIsolationLevel());
       awaitUpdate(1, sessionA.createStatement(
         "INSERT INTO verifySerializableIsolation VALUES ('A')"));
 
@@ -1018,7 +1029,25 @@ public class OracleConnectionImplTest {
         "Unexpected return value of getTransactionIsolationLevel() for a" +
           " newly created connection");
 
-      // TODO: Verify serializable
+
+      // Begin a transaction with a different level that what was passed to
+      // setTransactionIsolationLevel. Expect the getter to return the level
+      // of the current transaction
+      awaitNone(connection.beginTransaction(SERIALIZABLE));
+      assertEquals(SERIALIZABLE, connection.getTransactionIsolationLevel());
+
+      // End the transaction and expect the getter to return the setter value
+      awaitNone(connection.commitTransaction());
+      assertEquals(READ_COMMITTED, connection.getTransactionIsolationLevel());
+
+      // Set the level and expect the getter to return it
+      awaitNone(connection.setTransactionIsolationLevel(SERIALIZABLE));
+      assertEquals(SERIALIZABLE, connection.getTransactionIsolationLevel());
+
+      // Begin a READ ONLY transaction, expect the READ COMMITTED ISOLATION
+      // level.
+      //TODO
+
     }
     finally {
       tryAwaitNone(connection.close());

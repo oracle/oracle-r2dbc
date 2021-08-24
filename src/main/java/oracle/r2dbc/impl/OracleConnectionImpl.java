@@ -643,8 +643,16 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * <p>
    * Implements the R2DBC SPI method by returning the isolation level set for
    * the database session of this {@code Connection}, if the session is not
-   * currently in a transaction. If the session is in a transaction, then the
-   * isolation level of that transaction is returned.
+   * currently in a transaction.
+   * </p><p>
+   * If the session is in a transaction, and an isolation level was
+   * explicitly specified via {@link TransactionDefinition#ISOLATION_LEVEL},
+   * then the isolation level of that transaction is returned. If the current
+   * transaction is read-only, then {@link IsolationLevel#SERIALIZABLE} is
+   * returned as read-only transactions have the same behavior as if the
+   * SERIALIZABLE isolation level. Otherwise, if no isolation level was
+   * explicitly set, then the current transaction should have the isolation
+   * level set for the database session.
    * </p>
    * @throws IllegalStateException If this {@code Connection} is closed
    */
@@ -659,10 +667,11 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
       IsolationLevel currentIsolationLevel =
         currentTransaction.getAttribute(ISOLATION_LEVEL);
 
-      if (currentIsolationLevel == null)
-        return isolationLevel;
-      else
-        return currentIsolationLevel;
+      return currentIsolationLevel != null
+        ? currentIsolationLevel
+        : Boolean.TRUE == currentTransaction.getAttribute(READ_ONLY)
+          ? SERIALIZABLE
+          : isolationLevel;
     }
   }
 
