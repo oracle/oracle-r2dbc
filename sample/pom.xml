@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+
+  This software is dual-licensed to you under the Universal Permissive License 
+  (UPL) 1.0 as shown at https://oss.oracle.com/licenses/upl or Apache License
+  2.0 as shown at http://www.apache.org/licenses/LICENSE-2.0. You may choose
+  either license.
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     https://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.oracle.database.r2dbc</groupId>
+  <artifactId>oracle-r2dbc-samples</artifactId>
+  <version>0.2.0</version>
+  <name>oracle-r2dbc-samples</name>
+  <description>
+    Code examples for the Oracle R2DBC Driver 
+  </description>
+  <url>
+    https://github.com/oracle/oracle-r2dbc
+  </url>
+  <inceptionYear>2019</inceptionYear>
+  <licenses>
+    <license>
+      <name>Universal Permissive License v1.0</name>
+      <url>https://opensource.org/licenses/UPL</url>
+    </license>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <organization>Oracle America, Inc.</organization>
+      <organizationUrl>http://www.oracle.com</organizationUrl>
+    </developer>
+  </developers>
+  <scm>
+    <url>https://github.com/oracle/oracle-r2dbc.git</url>
+    <connection>
+      scm:git:https://github.com/oracle/oracle-r2dbc.git
+    </connection>
+    <developerConnection>scm:git:git@github.com:oracle/oracle-r2dbc.git</developerConnection>
+  </scm>
+  <issueManagement>
+    <system>GitHub</system>
+    <url>https://github.com/oracle/oracle-r2dbc/issues</url>
+  </issueManagement>
+
+  <properties>
+    <java.version>11</java.version>
+    <oracle-r2dbc.version>0.3.0</oracle-r2dbc.version>
+    <reactor.version>3.3.0.RELEASE</reactor.version>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.8.1</version>
+        <configuration>
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+            <arg>-Xlint:-options</arg>
+            <arg>-Xlint:-processing</arg>
+            <arg>-Xlint:-serial</arg>
+          </compilerArgs>
+          <showWarnings>true</showWarnings>
+          <release>${java.version}</release>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-clean-plugin</artifactId>
+        <version>3.1.0</version>
+      </plugin>
+    </plugins>
+  </build>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.oracle.database.r2dbc</groupId>
+      <artifactId>oracle-r2dbc</artifactId>
+      <version>${oracle-r2dbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.projectreactor</groupId>
+      <artifactId>reactor-test</artifactId>
+      <version>${reactor.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
