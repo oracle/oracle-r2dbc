@@ -286,8 +286,8 @@ public final class JdbcToR2dbc {
 
   /**
    * Uses R2DBC to conditionally execute an INSERT if an UPDATE returns a row
-   * count of zero. This  method performs the same database interactions as the
-   * {@link #executeConditionallyJdbc(Connection)} method.
+   * count of zero. This method performs the same database interactions as the
+   * {@link #executeConditionallyJdbc(java.sql.Connection)} method.
    * @param connection Database connection
    * @return A {@code Publisher} that emits {@code onNext} with the number of
    * rows updated, or emits {@code onError} with an {@link R2dbcException} if
@@ -432,7 +432,7 @@ public final class JdbcToR2dbc {
   /**
    * Executes all examples with both JDBC and R2DBC.
    */
-  public static void main(String[] args) throws SQLException {
+  public static void main(String[] args) {
     createTable();
     try {
       useJdbc();
