@@ -41,7 +41,7 @@ import static oracle.r2dbc.util.Awaits.awaitUpdate;
  * {@link OracleReadableImpl} implements behavior that is specified in it's class
  * and method level javadocs.
  */
-public class OracleReableImplTest {
+public class OracleReadableImplTest {
 
   /**
    * Verifies the implementation of

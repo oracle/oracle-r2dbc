@@ -28,7 +28,6 @@ import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
-import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingRunnable;
 import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingSupplier;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -50,7 +49,6 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.IntStream;
@@ -61,10 +59,10 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
-import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createUpdateCountResult;
+import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
 
 /**
  * <p>
@@ -719,7 +717,7 @@ final class OracleStatementImpl implements Statement {
       (preparedStatement, discardQueue) ->
         setBindValues(preparedStatement, currentBindValues, discardQueue),
       preparedStatement ->
-        publishSqlResult(preparedStatement, currentFetchSize));
+        publishSqlResult(preparedStatement, currentFetchSize, true));
   }
 
   /**
@@ -795,24 +793,31 @@ final class OracleStatementImpl implements Statement {
    * returned {@code Publisher} emits 0 {@code Result}s if the {@code
    * preparedStatement} returns no update count, row data, or implicit results.
    * </p>
+   * @param isCursorClosable {@code true} if the cursor can be closed if no
+   * result is a {@code ResultSet}
    * @return A {@code Publisher} that emits the {@code Result}s of executing a
    * {@code preparedStatement}.
    */
   private Publisher<OracleResultImpl> publishSqlResult(
-    PreparedStatement preparedStatement, int fetchSize) {
+    PreparedStatement preparedStatement, int fetchSize,
+    boolean isCursorClosable) {
 
-    runJdbc(preparedStatement::closeOnCompletion);
     return Mono.from(publishSqlExecution(preparedStatement, fetchSize))
       .flatMapMany(isResultSet -> {
 
-        // Check if any Result is a ResultSet to see if closeOnCompletion
-        // will close the cursor
-        boolean isAnyResultSet = isResultSet;
+        // Retain Publishers that complete when an implicit ResultSet is
+        // consumed.
+        List<Publisher<Void>> implicitResultConsumptions = new ArrayList<>(0);
 
-        // Create all Results before emitting any. The JDBC API should not be
-        // called after emitting the first one. Once a Result is emitted,
-        // user code may initiate another database call, and this would have
-        // a JDBC API block the thread.
+        // Collect all Results into a List before any are emitted to user
+        // code. Ideally, no JDBC API calls should occur after the first
+        // Result is emitted; Once a Result has been emitted, user code may
+        // initiate a new Statement execution, and the JDBC connection
+        // becomes locked. If a JDBC call occurs while the connection is
+        // locked, it will block the calling thread. This can potentially
+        // cause a deadlock where all threads are blocked until the JDBC
+        // connection is unlocked, and the JDBC connection can not become
+        // unlocked until a thread is available.
         List<OracleResultImpl> results = new ArrayList<>(1);
         OracleResultImpl firstResult =
           getSqlResult(adapter, preparedStatement, isResultSet);
@@ -821,26 +826,55 @@ final class OracleStatementImpl implements Statement {
           results.add(firstResult);
 
         do {
+          // Move the statement to the next result, if any
           boolean isNextResultSet = fromJdbc(() ->
             preparedStatement.getMoreResults(
               PreparedStatement.KEEP_CURRENT_RESULT));
-          isAnyResultSet |= isNextResultSet;
+
+          // Get the next result, if any
           OracleResultImpl nextResult =
             getSqlResult(adapter, preparedStatement, isNextResultSet);
 
-          if (nextResult != null)
-            results.add(nextResult);
-          else
+          // Break out of this loop if there is no next result
+          if (nextResult == null)
             break;
 
+          // If the result is an implicit ResultSet, then retain it's
+          // consumption publisher
+          if (isNextResultSet)
+            implicitResultConsumptions.add(nextResult.onConsumed());
+
+          // Add the next result to the list of all results
+          results.add(nextResult);
         } while (true);
 
-        // Close the cursor if no Results are a ResultSet. Otherwise, let
-        // PreparedStatement.closeOnCompletion() close the cursor.
-        if (!isAnyResultSet)
-          runJdbc(preparedStatement::close);
+        Publisher<OracleResultImpl> resultPublisher =
+          Flux.fromIterable(results);
 
-        return Flux.fromIterable(results);
+        if (!isCursorClosable) {
+          // Don't attempt to close the cursor if the caller provided
+          // isCursorClosable as false
+          return resultPublisher;
+        }
+        else if (implicitResultConsumptions.isEmpty()) {
+          // If no result is a ResultSet, then the cursor can be closed now.
+          // Otherwise, PreparedStatement.closeOnCompletion() will close the
+          // cursor after the ResultSet emits the last row
+          if (!isResultSet)
+            runJdbc(preparedStatement::close);
+          else
+            runJdbc(preparedStatement::closeOnCompletion);
+
+          return resultPublisher;
+        }
+        else {
+          // If at least one Result is an implicit ResultSet, then
+          // PreparedStatement.closeOnCompletion()
+          return Flux.from(resultPublisher)
+            .concatWith(Flux.merge(implicitResultConsumptions)
+              .doFinally(signalType -> runJdbc(preparedStatement::close))
+              .cast(OracleResultImpl.class));
+        }
       });
   }
 
@@ -912,9 +946,19 @@ final class OracleStatementImpl implements Statement {
   private Publisher<OracleResultImpl> publishCallResult(
     CallableStatement callableStatement, Object[] bindValues,
     int fetchSize) {
-    return Flux.from(publishSqlResult(callableStatement, fetchSize))
-      .concatWith(Mono.just(createCallResult(
-        createOutParameterRow(callableStatement, bindValues))));
+
+    // Create a Result of OutParameters that are read from the
+    // CallableStatement.
+    OracleResultImpl callResult =
+      createCallResult(createOutParameterRow(callableStatement, bindValues));
+
+    return Flux.concat(
+      publishSqlResult(callableStatement, fetchSize, false),
+      Mono.just(callResult)
+        // Close the CallableStatement after the Result is consumed.
+        .concatWith(Mono.from(callResult.onConsumed())
+          .doOnTerminate(() -> runJdbc(callableStatement::close))
+          .cast(OracleResultImpl.class)));
   }
 
   /**
@@ -1035,6 +1079,7 @@ final class OracleStatementImpl implements Statement {
                   " has executed a query that returns row data");
             }
             else {
+              runJdbc(preparedStatement::closeOnCompletion);
               return createGeneratedValuesResult(
                 fromJdbc(preparedStatement::getUpdateCount),
                 fromJdbc(preparedStatement::getGeneratedKeys),
@@ -1083,6 +1128,7 @@ final class OracleStatementImpl implements Statement {
 
     addImplicit();
     Queue<Object[]> currentBatch = batch;
+    int batchSize = batch.size();
     batch = new LinkedList<>();
 
     // Index incremented with each update count
@@ -1096,7 +1142,7 @@ final class OracleStatementImpl implements Statement {
         return Flux.from(adapter.publishBatchUpdate(preparedStatement))
           // All update counts are collected into a single long[]
           .collect(
-            () -> new long[currentBatch.size()],
+            () -> new long[batchSize],
             (updateCounts, updateCount) ->
               updateCounts[index.getAndIncrement()] = updateCount)
           .map(updateCounts -> {
@@ -1106,15 +1152,25 @@ final class OracleStatementImpl implements Statement {
               OracleResultImpl.createBatchUpdateResult(updateCounts));
 
             // Close the cursor before emitting the Result
-            runJdbc(preparedStatement::closeOnCompletion);
-
+            runJdbc(preparedStatement::close);
             return result;
           })
-          .onErrorResume(error ->
-            error.getCause() instanceof BatchUpdateException
-              ? Mono.just(OracleResultImpl.createBatchUpdateErrorResult(
-              (BatchUpdateException) error.getCause()))
-              : Mono.error(error));
+          .onErrorResume(error -> {
+            final Mono<OracleResultImpl> resultPublisher;
+
+            if (error.getCause() instanceof BatchUpdateException) {
+              resultPublisher = Mono.just(
+                OracleResultImpl.createBatchUpdateErrorResult(
+                  (BatchUpdateException) error.getCause()));
+            }
+            else {
+              resultPublisher = Mono.error(error);
+            }
+
+            // Close the cursor before emitting the Result
+            runJdbc(preparedStatement::close);
+            return resultPublisher;
+          });
       });
   }
 
@@ -1435,19 +1491,27 @@ final class OracleStatementImpl implements Statement {
     Function<T, Publisher<OracleResultImpl>> resultFunction) {
 
     T preparedStatement = statementSupplier.get();
+    AtomicBoolean isResultEmitted = new AtomicBoolean(false);
     return Flux.usingWhen(
       Mono.just(new LinkedList<Publisher<Void>>()),
       discardQueue ->
         Flux.from(bindFunction.apply(preparedStatement, discardQueue))
-          .thenMany(resultFunction.apply(preparedStatement))
-          .onErrorResume(R2dbcException.class, r2dbcException ->
-            Mono.just(OracleResultImpl.createErrorResult(r2dbcException)))
-          .defaultIfEmpty(createUpdateCountResult(-1L)),
+          .thenMany(resultFunction.apply(preparedStatement)),
       discardQueue ->
         Flux.fromIterable(discardQueue)
           .concatMapDelayError(Function.identity()))
-      .doOnCancel(() -> runJdbc(preparedStatement::close))
-      .doOnError(error -> runJdbc(preparedStatement::close));
+      .doOnNext(result -> isResultEmitted.set(true))
+      .onErrorResume(R2dbcException.class, r2dbcException ->
+        Mono.just(OracleResultImpl.createErrorResult(r2dbcException)))
+      .defaultIfEmpty(createUpdateCountResult(-1L))
+      .doFinally(signalType -> {
+        // Close the cursor if the publisher is cancelled or emits an error
+        // before a Result is emitted. Otherwise, the resultFunction should
+        // arrange for the cursor to be closed as it may need to remain open
+        // until the Result is consumed
+        if (! isResultEmitted.get())
+          runJdbc(preparedStatement::close);
+      });
   }
 
   /**
@@ -1464,6 +1528,7 @@ final class OracleStatementImpl implements Statement {
   private static OracleResultImpl getWarnings(
     PreparedStatement preparedStatement, OracleResultImpl result) {
     SQLWarning warning = fromJdbc(preparedStatement::getWarnings);
+    runJdbc(preparedStatement::clearWarnings);
     return warning == null
       ? result
       : OracleResultImpl.createWarningResult(warning, result);
