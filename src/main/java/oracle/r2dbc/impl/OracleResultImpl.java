@@ -357,6 +357,16 @@ abstract class OracleResultImpl implements Result {
   }
 
   /**
+   * Creates a {@code Result} that publishes a batch of {@code updateCounts}
+   * as {@link UpdateCount} segments
+   * @return A {@code Result} for a batch DML update
+   * @param updateCounts Update counts to publish
+   */
+  static OracleResultImpl createBatchUpdateResult(long[] updateCounts) {
+    return new BatchUpdateResult(updateCounts);
+  }
+
+  /**
    * Creates a {@code Result} that publishes update counts of a
    * {@code batchUpdateException} as {@link UpdateCount} segments, followed a
    * {@link Message} segment with the {@code batchUpdateException} mapped to

@@ -22,7 +22,6 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
-import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Result.Message;
 import io.r2dbc.spi.Result.RowSegment;
@@ -37,7 +36,6 @@ import reactor.core.publisher.Signal;
 
 import java.util.Iterator;
 import java.util.List;
-import java.util.Queue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -56,7 +54,10 @@ import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.consumeOne;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Verifies that
@@ -264,22 +265,23 @@ public class OracleResultImplTest {
         });
 
       // Expect no rows from SELECT of zero rows
-      consumeOne(connection.createStatement(
+      awaitNone(Flux.from(connection.createStatement(
         "SELECT x, y FROM testMap WHERE x = 99")
-        .execute(),
-        noRowsResult -> {
+        .execute())
+        .flatMap(noRowsResult -> {
           Publisher<Object> noRowsPublisher =
             noRowsResult.map((row, metadata) -> row.get(0));
-          awaitNone(noRowsPublisher);
 
           // Expect IllegalStateException from multiple Result consumptions.
           assertThrows(IllegalStateException.class,
             () -> noRowsResult.map((row, metadata) -> "unexpected"));
           assertThrows(IllegalStateException.class, noRowsResult::getRowsUpdated);
 
-          // Expect row data publisher to reject multiple subscribers
-          awaitError(IllegalStateException.class, noRowsPublisher);
-        });
+          return Flux.from(noRowsPublisher)
+            .doOnTerminate(() ->
+              // Expect row data publisher to reject multiple subscribers
+              awaitError(IllegalStateException.class, noRowsPublisher));
+        }));
 
       // Expect 2 rows from SELECT of 2 rows
       awaitMany(asList(asList(0, 1), asList(0, 2)),
@@ -303,7 +305,7 @@ public class OracleResultImplTest {
             assertThrows(IllegalStateException.class, selectResult::getRowsUpdated);
 
             return Flux.from(selectRowPublisher)
-              .doFinally(signalType ->
+              .doOnTerminate(() ->
                 // Expect row data publisher to reject multiple subscribers
                 awaitError(IllegalStateException.class, selectRowPublisher));
           }));
