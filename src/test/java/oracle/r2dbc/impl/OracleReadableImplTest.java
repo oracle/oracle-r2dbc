@@ -66,7 +66,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndex")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(-1))));
 
         // Expect IllegalArgumentException for an index greater than or equal
@@ -75,7 +75,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndex")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(2))));
 
         // Expect valid indexes to return the INSERTed values
@@ -134,7 +134,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(null))));
 
         // Expect IllegalArgumentException for unmatched names
@@ -142,37 +142,37 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("z"))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("xx"))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("x "))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(" x"))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(" "))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(""))));
 
         // Expect valid names to return the INSERTed values
@@ -290,7 +290,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndexAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(0, null))));
 
         // Expect IllegalArgumentException for an unsupported type
@@ -299,7 +299,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndexAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) ->
                 row.get(0, Unsupported.class))));
 
@@ -308,7 +308,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndexAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(-1, Integer.class))));
 
         // Expect IllegalArgumentException for an index greater than or equal
@@ -317,7 +317,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndexAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(2, Integer.class))));
 
         // Expect valid indexes to return the INSERTed values
@@ -379,7 +379,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("x", null))));
 
         // Expect IllegalArgumentException for an unsupported type
@@ -388,7 +388,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) ->
                 row.get("x", Unsupported.class))));
 
@@ -397,7 +397,7 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(null, Integer.class))));
 
         // Expect IllegalArgumentException for unmatched names
@@ -405,37 +405,37 @@ public class OracleReadableImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("z", Integer.class))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("xx", Integer.class))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("x ", Integer.class))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(" x", Integer.class))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get(" ", Integer.class))));
         awaitError(IllegalArgumentException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> row.get("", Integer.class))));
 
         // Expect valid names to return the INSERTed values

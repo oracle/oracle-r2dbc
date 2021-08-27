@@ -1498,8 +1498,7 @@ final class OracleStatementImpl implements Statement {
         Flux.from(bindFunction.apply(preparedStatement, discardQueue))
           .thenMany(resultFunction.apply(preparedStatement)),
       discardQueue ->
-        Flux.fromIterable(discardQueue)
-          .concatMapDelayError(Function.identity()))
+        Flux.concatDelayError(Flux.fromIterable(discardQueue)))
       .doOnNext(result -> isResultEmitted.set(true))
       .onErrorResume(R2dbcException.class, r2dbcException ->
         Mono.just(OracleResultImpl.createErrorResult(r2dbcException)))
