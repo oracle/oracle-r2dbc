@@ -84,7 +84,7 @@ public class OracleRowMetadataImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByIndex")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) ->
                 metadata.getColumnMetadata(-1).getPrecision())));
 
@@ -94,7 +94,7 @@ public class OracleRowMetadataImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByIndex")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) ->
                 metadata.getColumnMetadata(2).getPrecision())));
 
@@ -165,7 +165,7 @@ public class OracleRowMetadataImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> metadata.getColumnMetadata(null))
             ));
 
@@ -174,42 +174,42 @@ public class OracleRowMetadataImplTest {
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> metadata.getColumnMetadata("z"))
             ));
         awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> metadata.getColumnMetadata("xx"))
             ));
         awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> metadata.getColumnMetadata("x "))
             ));
         awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> metadata.getColumnMetadata(" x"))
             ));
         awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> metadata.getColumnMetadata(" "))
             ));
         awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByName")
             .execute())
-            .flatMap(result ->
+            .concatMap(result ->
               result.map((row, metadata) -> metadata.getColumnMetadata(""))
             ));
 

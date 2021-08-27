@@ -24,7 +24,13 @@
 
 package oracle.r2dbc.test;
 
-import io.r2dbc.spi.*;
+import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.ConnectionFactories;
+import io.r2dbc.spi.ConnectionFactory;
+import io.r2dbc.spi.ConnectionFactoryOptions;
+import io.r2dbc.spi.Result;
+import io.r2dbc.spi.Row;
+import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.test.TestKit;
 import oracle.jdbc.datasource.OracleDataSource;
 import org.junit.jupiter.api.Disabled;
@@ -38,8 +44,8 @@ import reactor.test.StepVerifier;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.function.Function;
+import java.util.stream.IntStream;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
 import static io.r2dbc.spi.ConnectionFactoryOptions.DRIVER;
@@ -195,6 +201,20 @@ public class OracleTestKit implements TestKit<Integer> {
       return value;
   }
 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Override the default implementation to extract multiple update counts
+   * from a single {@code result} and return a {@code Mono} that emits the
+   * sum of all update counts.
+   * </p>
+   */
+  @Override
+  public Mono<Integer> extractRowsUpdated(Result result) {
+    return Flux.from(result.getRowsUpdated())
+      .reduce(0, (total, updateCount) -> total + updateCount);
+  }
+
   @Override
   public String getPlaceholder(int index) {
     return String.format(":%d", index + 1);
@@ -239,6 +259,36 @@ public class OracleTestKit implements TestKit<Integer> {
       .as(StepVerifier::create)
       .expectNext(100).as("value from col1")
       .expectNext(100).as("value from col1 (upper case)")
+      .verifyComplete();
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
+   * Overrides the default implementation to expect 10 {@link io.r2dbc.spi.Result.UpdateCount}
+   * segments from a single {@code Result}. The default implementation expects
+   * 10 {@code Result}s each with a single {@code UpdateCount}. Batch DML
+   * execution is a single call to Oracle Database, and so Oracle R2DBC
+   * returns a signle {@code Result}
+   * </p>
+   */
+  @Override
+  @Test
+  public void prepareStatement() {
+    Flux.usingWhen(getConnectionFactory().create(),
+      connection -> {
+        Statement statement = connection.createStatement(expand(TestStatement.INSERT_VALUE_PLACEHOLDER, getPlaceholder(0)));
+
+        IntStream.range(0, 10)
+          .forEach(i -> TestKit.bind(statement, getIdentifier(0), i).add());
+
+        return Flux.from(statement
+          .execute())
+          .flatMap(Result::getRowsUpdated);
+      },
+      Connection::close)
+      .as(StepVerifier::create)
+      .expectNextCount(10).as("values from insertions")
       .verifyComplete();
   }
 

@@ -175,12 +175,23 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
     OracleR2dbcExceptions.requireNonNull(options, "options is null.");
     adapter = ReactiveJdbcAdapter.getOracleAdapter();
     dataSource = adapter.createDataSource(options);
+
+    // Handle any Options that Oracle JDBC doesn't
+    if (options.hasOption(ConnectionFactoryOptions.LOCK_WAIT_TIMEOUT)) {
+      throw new UnsupportedOperationException(
+        "Unsupported Option: "
+          + ConnectionFactoryOptions.LOCK_WAIT_TIMEOUT.name()
+          + ". Oracle Database does not support a lock wait timeout session " +
+          "parameter.");
+    }
+
     statementTimeout = Optional.ofNullable(
       options.getValue(ConnectionFactoryOptions.STATEMENT_TIMEOUT))
       .map(timeout -> (timeout instanceof Duration)
         ? (Duration)timeout
         : Duration.parse(timeout.toString()))
       .orElse(Duration.ZERO);
+
   }
 
   /**

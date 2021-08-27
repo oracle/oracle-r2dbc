@@ -948,7 +948,10 @@ public class OracleStatementImplTest {
 
       // Expect a failure with invalid column name "eye-d"
       assertEquals(statement, statement.returnGeneratedValues("x", "eye-d"));
-      awaitError(R2dbcException.class, statement.bind(0, "test").execute());
+      awaitError(R2dbcException.class,
+        Flux.from(statement.bind(0, "test").execute())
+          .flatMap(result ->
+            result.map(generatedValues -> fail("Unexpected row"))));
 
       // Expect a ROWID value when no column names are specified
       Statement rowIdQuery = connection.createStatement(
@@ -1755,8 +1758,8 @@ public class OracleStatementImplTest {
       IntStream.rangeClosed(0, 100)
         .forEach(i -> insert.bind(0, i).add());
       awaitOne(101, Flux.from(insert.execute())
-        .reduce(0, (updateCount, result) ->
-          updateCount + awaitOne(result.getRowsUpdated())));
+        .flatMap(Result::getRowsUpdated)
+        .reduce(0, (total, updateCount) -> total + updateCount));
 
       // Create a procedure that returns a cursor
       awaitExecution(connection.createStatement(
@@ -1865,8 +1868,8 @@ public class OracleStatementImplTest {
       IntStream.rangeClosed(0, 100)
         .forEach(i -> insert.bind(0, i).add());
       awaitOne(101, Flux.from(insert.execute())
-        .reduce(0, (updateCount, result) ->
-          updateCount + awaitOne(result.getRowsUpdated())));
+        .flatMap(Result::getRowsUpdated)
+        .reduce(0, (total, updateCount) -> total + updateCount));
 
       // Create a procedure that returns a cursor
       awaitExecution(connection.createStatement(
