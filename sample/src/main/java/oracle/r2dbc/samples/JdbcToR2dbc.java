@@ -140,6 +140,7 @@ public final class JdbcToR2dbc {
    * @return {@code DataSource} configured to connect with a database
    */
   static DataSource configureJdbc() throws SQLException {
+
     OracleDataSource dataSource = new oracle.jdbc.pool.OracleDataSource();
     dataSource.setDriverType("thin");
     dataSource.setServerName(DatabaseConfig.HOST);
@@ -148,6 +149,7 @@ public final class JdbcToR2dbc {
     dataSource.setUser(DatabaseConfig.USER);
     dataSource.setPassword(DatabaseConfig.PASSWORD);
     return dataSource;
+
   }
 
   /**
@@ -157,6 +159,7 @@ public final class JdbcToR2dbc {
    * @return {@code ConnectionFactory} configured to connect with a database
    */
   static ConnectionFactory configureR2dbc() {
+
     return ConnectionFactories.get(ConnectionFactoryOptions.builder()
       .option(DRIVER, "oracle")
       .option(HOST, DatabaseConfig.HOST)
@@ -165,6 +168,7 @@ public final class JdbcToR2dbc {
       .option(USER, DatabaseConfig.USER)
       .option(PASSWORD, DatabaseConfig.PASSWORD)
       .build());
+
   }
 
   /**
@@ -172,8 +176,7 @@ public final class JdbcToR2dbc {
    * interactions as {@link #queryR2dbc(io.r2dbc.spi.Connection)}.
    * @return Value returned by a SQL query
    */
-  static String queryJdbc(java.sql.Connection connection)
-    throws SQLException {
+  static String queryJdbc(java.sql.Connection connection) throws SQLException {
 
     try (java.sql.Statement statement  = connection.createStatement()) {
       ResultSet resultSet =
@@ -184,6 +187,7 @@ public final class JdbcToR2dbc {
       else
         throw new NoSuchElementException("Query returned zero rows");
     }
+
   }
 
   /**
@@ -192,6 +196,7 @@ public final class JdbcToR2dbc {
    * @return Value returned by a SQL query
    */
   static Publisher<String> queryR2dbc(io.r2dbc.spi.Connection connection) {
+
     return Flux.from(connection.createStatement(
       "SELECT 'Hello, R2DBC!' FROM sys.dual")
       .execute())
@@ -199,6 +204,7 @@ public final class JdbcToR2dbc {
         result.map(row -> row.get(0, String.class)))
       .switchIfEmpty(Flux.error(
         new NoSuchElementException("Query returned zero rows")));
+
   }
 
   /**
@@ -206,14 +212,15 @@ public final class JdbcToR2dbc {
    * interactions as {@link #insertR2dbc(io.r2dbc.spi.Connection)}.
    * @return Count of inserted rows.
    */
-  static int insertJdbc(java.sql.Connection connection)
-    throws SQLException {
+  static int insertJdbc(java.sql.Connection connection) throws SQLException {
+
     try (PreparedStatement preparedStatement = connection.prepareStatement(
       "INSERT INTO JdbcToR2dbcTable(id, value) VALUES (?, ?)")) {
       preparedStatement.setInt(1, 0);
       preparedStatement.setString(2, "JDBC");
       return preparedStatement.executeUpdate();
     }
+
   }
 
   /**
@@ -221,14 +228,15 @@ public final class JdbcToR2dbc {
    * interactions as {@link #insertJdbc(java.sql.Connection)}.
    * @return {@code Publisher} emitting the count of inserted rows.
    */
-  static Publisher<Integer> insertR2dbc(
-    io.r2dbc.spi.Connection connection) {
+  static Publisher<Integer> insertR2dbc(io.r2dbc.spi.Connection connection) {
+
     return Flux.from(connection.createStatement(
       "INSERT INTO JdbcToR2dbcTable(id, value) VALUES (?, ?)")
       .bind(0, 0)
       .bind(1, "R2DBC")
       .execute())
       .flatMap(Result::getRowsUpdated);
+
   }
 
   /**
@@ -236,14 +244,15 @@ public final class JdbcToR2dbc {
    * interactions as {@link #updateR2dbc(io.r2dbc.spi.Connection)}.
    * @return Count of updated rows.
    */
-  static int updateJdbc(java.sql.Connection connection)
-    throws SQLException {
+  static int updateJdbc(java.sql.Connection connection) throws SQLException {
+
     try (PreparedStatement preparedStatement = connection.prepareStatement(
       "UPDATE JdbcToR2dbcTable SET value = ? WHERE id = ?")) {
       preparedStatement.setString(1, "JDBC");
       preparedStatement.setInt(2, 0);
       return preparedStatement.executeUpdate();
     }
+
   }
 
   /**
@@ -251,14 +260,15 @@ public final class JdbcToR2dbc {
    * interactions as {@link #updateJdbc(java.sql.Connection)}.
    * @return {@code Publisher} emitting the count of updated rows.
    */
-  static Publisher<Integer> updateR2dbc(
-    io.r2dbc.spi.Connection connection) {
+  static Publisher<Integer> updateR2dbc(io.r2dbc.spi.Connection connection) {
+
     return Flux.from(connection.createStatement(
       "UPDATE JdbcToR2dbcTable SET value = ? WHERE id = ?")
       .bind(0, "R2DBC")
       .bind(1, 0)
       .execute())
       .flatMap(Result::getRowsUpdated);
+
   }
 
   /**
@@ -268,8 +278,7 @@ public final class JdbcToR2dbc {
    * @param connection Database connection
    * @return Count of updated rows
    */
-  static int tryUpdateJdbc(java.sql.Connection connection)
-    throws SQLException {
+  static int tryUpdateJdbc(java.sql.Connection connection) throws SQLException {
 
     // Try to update the row
     int updateCount = updateJdbc(connection);
@@ -279,6 +288,7 @@ public final class JdbcToR2dbc {
       return insertJdbc(connection);
     else
       return updateCount;
+
   }
 
   /**
@@ -301,6 +311,7 @@ public final class JdbcToR2dbc {
           return Flux.just(updateCount);
 
       });
+
   }
 
   /**
@@ -311,8 +322,7 @@ public final class JdbcToR2dbc {
    * @param connection Database connection
    * @return Count of updated rows
    */
-  static int tryInsertJdbc(java.sql.Connection connection)
-    throws SQLException {
+  static int tryInsertJdbc(java.sql.Connection connection) throws SQLException {
 
     try {
       // Try to insert the row
@@ -327,6 +337,7 @@ public final class JdbcToR2dbc {
         throw sqlException;
 
     }
+
   }
 
   /**
@@ -336,8 +347,7 @@ public final class JdbcToR2dbc {
    * @param connection Database connection
    * @return {@code Publisher} emitting the count of updated rows.
    */
-  static Publisher<Integer> tryInsertR2dbc(
-    io.r2dbc.spi.Connection connection) {
+  static Publisher<Integer> tryInsertR2dbc(io.r2dbc.spi.Connection connection) {
 
     // Try to insert the row
     return Flux.from(insertR2dbc(connection))
@@ -350,6 +360,7 @@ public final class JdbcToR2dbc {
           return Flux.error(r2dbcException);
 
       });
+
   }
 
   /**
@@ -364,11 +375,9 @@ public final class JdbcToR2dbc {
    * @throws SQLException If the database interaction fails with an
    * unexpected error.
    */
-  static int loopJdbc(java.sql.Connection connection)
-    throws SQLException {
+  static int loopJdbc(java.sql.Connection connection) throws SQLException {
 
     do {
-
       try {
         // Try to update the row, or insert it if it does not exist
         return tryUpdateJdbc(connection);
@@ -381,8 +390,8 @@ public final class JdbcToR2dbc {
           throw sqlException;
 
       }
-
     } while (true);
+
   }
 
   /**
@@ -427,6 +436,7 @@ public final class JdbcToR2dbc {
           return loopR2dbc(connection);
 
       });
+
   }
 
   /**
