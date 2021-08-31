@@ -2,8 +2,7 @@
 .DS_Store
 *.iml
 /src/test/resources/config.properties
-/sample/.gradle/
-/sample/build/
+/sample/target/
 /sample/config.properties
 .github/workflows/startup/99_done.sh
 .github/workflows/startup/done
