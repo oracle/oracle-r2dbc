@@ -357,6 +357,16 @@ abstract class OracleResultImpl implements Result {
   }
 
   /**
+   * Creates a {@code Result} that publishes a batch of {@code updateCounts}
+   * as {@link UpdateCount} segments
+   * @return A {@code Result} for a batch DML update
+   * @param updateCounts Update counts to publish
+   */
+  static OracleResultImpl createBatchUpdateResult(long[] updateCounts) {
+    return new BatchUpdateResult(updateCounts);
+  }
+
+  /**
    * Creates a {@code Result} that publishes update counts of a
    * {@code batchUpdateException} as {@link UpdateCount} segments, followed a
    * {@link Message} segment with the {@code batchUpdateException} mapped to
@@ -444,18 +454,17 @@ abstract class OracleResultImpl implements Result {
   private static final class ResultSetResult extends OracleResultImpl {
 
     private final ResultSet resultSet;
+    private final RowMetadataImpl metadata;
     private final ReactiveJdbcAdapter adapter;
 
     private ResultSetResult(ResultSet resultSet, ReactiveJdbcAdapter adapter) {
       this.resultSet = resultSet;
+      this.metadata = createRowMetadata(fromJdbc(resultSet::getMetaData));
       this.adapter = adapter;
     }
 
     @Override
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      RowMetadataImpl metadata =
-        createRowMetadata(fromJdbc(resultSet::getMetaData));
-
       return adapter.publishRows(resultSet, jdbcReadable ->
         mappingFunction.apply(
           new RowSegmentImpl(createRow(jdbcReadable, metadata, adapter))));
@@ -595,7 +604,9 @@ abstract class OracleResultImpl implements Result {
         // Invoke publishSegments(Class, Function) rather than
         // publishSegments(Function) to update the state of the result; Namely,
         // the state that has the onConsumed Publisher emit a terminal signal.
-        .concatWith(result.publishSegments(Segment.class, mappingFunction));
+        .concatWith(result != null
+          ? result.publishSegments(Segment.class,mappingFunction)
+          : Mono.empty());
     }
   }
 

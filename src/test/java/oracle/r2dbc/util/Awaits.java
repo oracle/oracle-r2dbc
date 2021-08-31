@@ -22,7 +22,6 @@
 package oracle.r2dbc.util;
 
 import io.r2dbc.spi.Result;
-import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import oracle.r2dbc.test.DatabaseConfig;
 import org.reactivestreams.Publisher;
