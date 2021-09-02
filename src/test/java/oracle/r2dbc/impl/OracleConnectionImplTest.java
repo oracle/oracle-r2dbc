@@ -40,8 +40,11 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import static io.r2dbc.spi.IsolationLevel.READ_COMMITTED;
+import static io.r2dbc.spi.IsolationLevel.SERIALIZABLE;
 import static io.r2dbc.spi.TransactionDefinition.*;
 import static java.util.Collections.emptyMap;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
@@ -64,7 +67,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -83,7 +85,10 @@ public class OracleConnectionImplTest {
     Connection sessionA =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      verifyReadCommittedIsolation(sessionA, sessionA.beginTransaction());
+      verifyReadCommittedIsolation(sessionA, sessionA::beginTransaction);
+      awaitNone(
+        sessionA.setTransactionIsolationLevel(IsolationLevel.SERIALIZABLE));
+      verifySerializableIsolation(sessionA, sessionA::beginTransaction);
     }
     finally {
       awaitNone(sessionA.close());
@@ -106,25 +111,26 @@ public class OracleConnectionImplTest {
       assertThrows(IllegalArgumentException.class,
         () -> sessionA.beginTransaction(transactionDefinition(emptyMap())));
       assertThrows(IllegalArgumentException.class,
-        () -> sessionA.beginTransaction(IsolationLevel.SERIALIZABLE));
-      assertThrows(IllegalArgumentException.class,
         () -> sessionA.beginTransaction(IsolationLevel.READ_UNCOMMITTED));
       assertThrows(IllegalArgumentException.class,
         () -> sessionA.beginTransaction(IsolationLevel.REPEATABLE_READ));
       assertThrows(IllegalArgumentException.class,
         () -> sessionA.beginTransaction(transactionDefinition(Map.of(
-          ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
+          ISOLATION_LEVEL, READ_COMMITTED,
           READ_ONLY, true))));
       assertThrows(IllegalArgumentException.class,
         () -> sessionA.beginTransaction(transactionDefinition(Map.of(
-          ISOLATION_LEVEL, IsolationLevel.READ_COMMITTED,
+          ISOLATION_LEVEL, READ_COMMITTED,
           READ_ONLY, false))));
       assertThrows(IllegalArgumentException.class,
         () -> sessionA.beginTransaction(transactionDefinition(Map.of(
           LOCK_WAIT_TIMEOUT, Duration.ofSeconds(10)))));
 
-      verifyReadCommittedIsolation(sessionA,
-        sessionA.beginTransaction(IsolationLevel.READ_COMMITTED));
+      verifyReadCommittedIsolation(sessionA, () ->
+        sessionA.beginTransaction(READ_COMMITTED));
+
+      verifySerializableIsolation(sessionA, () ->
+        sessionA.beginTransaction(IsolationLevel.SERIALIZABLE));
     }
     finally {
       awaitNone(sessionA.close());
@@ -235,11 +241,14 @@ public class OracleConnectionImplTest {
         awaitUpdate(1, sessionB.createStatement(
           "INSERT INTO testBeginTransactionReadOnly VALUES ('b')"));
 
-        // Begin a READ ONLY transaction with sessionA and expect a query result
-        // having only the committed row, and not the uncomitted row
+        // Begin a READ ONLY transaction with sessionA. Expect
+        // getTransactionIsolationLevel to return SERIALIZABLE as read-only
+        // transactions have the same behavior. Expect a query result
+        // having only the committed row, and not the uncommitted row
         awaitNone(sessionA.commitTransaction());
         awaitNone(sessionA.beginTransaction(transactionDefinition(Map.of(
           READ_ONLY, true))));
+        assertEquals(SERIALIZABLE, sessionA.getTransactionIsolationLevel());
         awaitQuery(List.of("a"), row -> row.get(0, String.class),
           sessionA.createStatement(
             "SELECT value FROM testBeginTransactionReadOnly"));
@@ -279,7 +288,13 @@ public class OracleConnectionImplTest {
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {
-      verifyReadCommittedIsolation(connection,
+      verifyReadCommittedIsolation(connection, () ->
+        connection.beginTransaction(transactionDefinition(Map.of(
+          READ_ONLY, false))));
+
+      // Expect read write transactions to have the session's isolation level
+      awaitNone(connection.setTransactionIsolationLevel(SERIALIZABLE));
+      verifySerializableIsolation(connection, () ->
         connection.beginTransaction(transactionDefinition(Map.of(
           READ_ONLY, false))));
     }
@@ -302,8 +317,14 @@ public class OracleConnectionImplTest {
       // Try to use a unique transaction name
       String name =
         "testBeginTransactionNameIsolationLevel : " + System.nanoTime();
-      verifyReadCommittedIsolation(connection,
+      verifyReadCommittedIsolation(connection, () ->
         connection.beginTransaction(transactionDefinition(Map.of(NAME, name))));
+      verifyReadCommittedIsolation(connection, () ->
+        connection.beginTransaction(transactionDefinition(
+          Map.of(NAME, name, ISOLATION_LEVEL, READ_COMMITTED))));
+      verifySerializableIsolation(connection, () ->
+        connection.beginTransaction(transactionDefinition(
+          Map.of(NAME, name, ISOLATION_LEVEL, SERIALIZABLE))));
     }
     finally {
       tryAwaitNone(connection.close());
@@ -314,14 +335,16 @@ public class OracleConnectionImplTest {
    * Verifies that a {@code beginTransactionPublisher} begins a transaction
    * with the READ COMMITTED isolation level for {@code sessionA}
    * @param sessionA Database session
-   * @param beginTransactionPublisher Publishes {@code onComplete} when a
-   * READ COMMITTED transaction begins for {@code sessionA}
+   * @param publisherSupplier Outputs a {@code Publisher} that emits
+   * {@code onComplete} when a READ COMMITTED transaction begins for
+   * {@code sessionA}
    */
   private static void verifyReadCommittedIsolation(
-    Connection sessionA, Publisher<Void> beginTransactionPublisher) {
+    Connection sessionA, Supplier<Publisher<Void>> publisherSupplier) {
 
-    // Expect the publisher to set auto-commit false when the first
-    // subscriber subscribes
+    // Create a publisher and expect it to set auto-commit false only after the
+    // first subscriber subscribes
+    Publisher<Void> beginTransactionPublisher = publisherSupplier.get();
     assertTrue(sessionA.isAutoCommit(),
       "Unexpected return value from isAutoCommit() before" +
         " beginTransaction()");
@@ -348,11 +371,12 @@ public class OracleConnectionImplTest {
 
       // Now begin a transaction and verify that a table INSERT is not visible
       // until the transaction is committed.
-      awaitNone(sessionA.beginTransaction());
+      awaitNone(publisherSupplier.get());
       assertFalse(
         sessionA.isAutoCommit(),
         "Unexpected return value from isAutoCommit() after" +
           " beginTransaction()");
+      assertEquals(READ_COMMITTED, sessionA.getTransactionIsolationLevel());
       awaitUpdate(1, sessionA.createStatement(
         "INSERT INTO verifyReadCommittedIsolation VALUES ('A')"));
 
@@ -365,9 +389,24 @@ public class OracleConnectionImplTest {
         awaitQuery(
           Collections.emptyList(), row -> 0, selectInSessionB);
 
-        // Now sessionA COMMITs and sessionB can now see the INSERT
+        // sessionA COMMITs and sessionB can now see the INSERT
         awaitNone(sessionA.commitTransaction());
         awaitQuery(List.of("A"), row -> row.get("value"), selectInSessionB);
+
+        // Begin a new READ COMMITTED transaction with sessionA, then update the
+        // row in sessionB, then verify that sessionA can only see the update
+        // after sessionB commits
+        awaitNone(publisherSupplier.get());
+        awaitNone(sessionB.beginTransaction());
+        awaitUpdate(1, sessionB.createStatement(
+          "UPDATE verifyReadCommittedIsolation SET value = 'B'"));
+        awaitQuery(List.of("A"), row -> row.get("value"),
+          sessionA.createStatement(
+            "SELECT value FROM verifyReadCommittedIsolation"));
+        awaitNone(sessionB.commitTransaction());
+        awaitQuery(List.of("B"), row -> row.get("value"),
+          sessionA.createStatement(
+            "SELECT value FROM verifyReadCommittedIsolation"));
       }
       finally {
         awaitNone(sessionB.close());
@@ -376,6 +415,101 @@ public class OracleConnectionImplTest {
     finally {
       tryAwaitExecution(sessionA.createStatement(
         "DROP TABLE verifyReadCommittedIsolation"));
+      tryAwaitNone(sessionA.setAutoCommit(true));
+    }
+  }
+
+  /**
+   * Verifies that a {@code publisherSupplier} outputs a {@code Publisher} that
+   * begins a transaction with the SERIALIZABLE isolation level for
+   * {@code sessionA}
+   * @param sessionA Database session
+   * @param publisherSupplier Outputs a {@code Publisher} that emits
+   * {@code onComplete} when a SERIALIZABLE transaction begins for
+   * {@code sessionA}
+   */
+  private static void verifySerializableIsolation(
+    Connection sessionA, Supplier<Publisher<Void>> publisherSupplier) {
+
+    // Create a publisher and expect it to set auto-commit false only after the
+    // first subscriber subscribes
+    Publisher<Void> beginTransactionPublisher = publisherSupplier.get();
+    assertTrue(sessionA.isAutoCommit(),
+      "Unexpected return value from isAutoCommit() before" +
+        " beginTransaction()");
+
+    try {
+      // Insert into this table after beginning a transaction
+      awaitExecution(sessionA.createStatement(
+        "CREATE TABLE verifySerializableIsolation (value VARCHAR(10))"));
+
+      awaitNone(beginTransactionPublisher);
+      assertFalse(
+        sessionA.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() after" +
+          " beginTransaction()");
+
+      // Expect the publisher to NOT repeatedly set auto-commit to false
+      // for each subscriber
+      awaitNone(sessionA.setAutoCommit(true));
+      awaitNone(beginTransactionPublisher);
+      assertTrue(
+        sessionA.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() after multiple " +
+          "subscriptions to a beginTransaction() publisher");
+
+      // Now begin a transaction and verify that a table INSERT is not visible
+      // until the transaction is committed.
+      awaitNone(publisherSupplier.get());
+      assertFalse(
+        sessionA.isAutoCommit(),
+        "Unexpected return value from isAutoCommit() after" +
+          " beginTransaction()");
+      assertEquals(SERIALIZABLE, sessionA.getTransactionIsolationLevel());
+      awaitUpdate(1, sessionA.createStatement(
+        "INSERT INTO verifySerializableIsolation VALUES ('A')"));
+
+      // sessionB doesn't see the INSERT made in sessionA's open transaction
+      Connection sessionB =
+        Mono.from(newConnection()).block(connectTimeout());
+      try {
+        Statement selectInSessionB = sessionB.createStatement(
+          "SELECT value FROM verifySerializableIsolation");
+        awaitQuery(
+          Collections.emptyList(), row -> 0, selectInSessionB);
+
+        // sessionA COMMITs and sessionB can now see the INSERT
+        awaitNone(sessionA.commitTransaction());
+        awaitQuery(List.of("A"), row -> row.get("value"), selectInSessionB);
+
+        // Begin a new SERIALIZABLE transaction with sessionA, then update the
+        // row in sessionB, then verify that sessionA does not see the update
+        // after sessionB commits, and only sees the update after its
+        // SERIALIZABLE transaction ends
+        awaitNone(publisherSupplier.get());
+        awaitNone(sessionB.beginTransaction());
+        awaitUpdate(1, sessionB.createStatement(
+          "UPDATE verifySerializableIsolation SET value = 'B'"));
+        awaitQuery(List.of("A"), row -> row.get("value"),
+          sessionA.createStatement(
+            "SELECT value FROM verifySerializableIsolation"));
+        awaitNone(sessionB.commitTransaction());
+        awaitQuery(List.of("A"), row -> row.get("value"),
+          sessionA.createStatement(
+            "SELECT value FROM verifySerializableIsolation"));
+        awaitNone(sessionA.commitTransaction());
+        awaitQuery(List.of("B"), row -> row.get("value"),
+          sessionA.createStatement(
+            "SELECT value FROM verifySerializableIsolation"));
+      }
+      finally {
+        awaitNone(sessionB.close());
+      }
+    }
+    finally {
+      tryAwaitExecution(sessionA.createStatement(
+        "DROP TABLE verifySerializableIsolation"));
+      tryAwaitNone(sessionA.setAutoCommit(true));
     }
   }
 
@@ -464,7 +598,7 @@ public class OracleConnectionImplTest {
     assertThrows(IllegalStateException.class,
       () -> connection.beginTransaction());
     assertThrows(IllegalStateException.class,
-      () -> connection.beginTransaction(IsolationLevel.READ_COMMITTED));
+      () -> connection.beginTransaction(READ_COMMITTED));
     assertThrows(IllegalStateException.class,
       () -> connection.commitTransaction());
     assertThrows(IllegalStateException.class,
@@ -489,7 +623,7 @@ public class OracleConnectionImplTest {
       () -> connection.setAutoCommit(true));
     assertThrows(IllegalStateException.class,
       () ->
-        connection.setTransactionIsolationLevel(IsolationLevel.READ_COMMITTED));
+        connection.setTransactionIsolationLevel(READ_COMMITTED));
 
     // Expect multiple subscribers to see same the signal from the close()
     // publisher
@@ -890,10 +1024,30 @@ public class OracleConnectionImplTest {
     try {
       // Expect the initial isolation level to be READ_COMMITTED
       assertEquals(
-        IsolationLevel.READ_COMMITTED,
+        READ_COMMITTED,
         connection.getTransactionIsolationLevel(),
         "Unexpected return value of getTransactionIsolationLevel() for a" +
           " newly created connection");
+
+
+      // Begin a transaction with a different level that what was passed to
+      // setTransactionIsolationLevel. Expect the getter to return the level
+      // of the current transaction
+      awaitNone(connection.beginTransaction(SERIALIZABLE));
+      assertEquals(SERIALIZABLE, connection.getTransactionIsolationLevel());
+
+      // End the transaction and expect the getter to return the setter value
+      awaitNone(connection.commitTransaction());
+      assertEquals(READ_COMMITTED, connection.getTransactionIsolationLevel());
+
+      // Set the level and expect the getter to return it
+      awaitNone(connection.setTransactionIsolationLevel(SERIALIZABLE));
+      assertEquals(SERIALIZABLE, connection.getTransactionIsolationLevel());
+
+      // Begin a READ ONLY transaction, expect the READ COMMITTED ISOLATION
+      // level.
+      //TODO
+
     }
     finally {
       tryAwaitNone(connection.close());
@@ -916,29 +1070,22 @@ public class OracleConnectionImplTest {
       // testSetTransactionIsolationLevelUnsupported because the full name
       // might exceed the maximum identifier length on some databases
       awaitExecution(sessionA.createStatement(
-        "CREATE TABLE tstilUnsupported" +
-          " (value VARCHAR(10))"));
+        "CREATE TABLE tstilUnsupported (value VARCHAR(10))"));
 
       try {
         // Set the READ COMMITTED level, and expect the sessionA to remain at
         // this level after setting unsupported levels. Expect setting any
         // level other than READ COMMITTED to result in onError
         awaitNone(
-          sessionA.setTransactionIsolationLevel(IsolationLevel.READ_COMMITTED));
-        awaitError(
-          R2dbcException.class,
+          sessionA.setTransactionIsolationLevel(READ_COMMITTED));
+        assertThrows(IllegalArgumentException.class, () ->
           sessionA.setTransactionIsolationLevel(
             IsolationLevel.READ_UNCOMMITTED));
-        awaitError(
-          R2dbcException.class,
+        assertThrows(IllegalArgumentException.class, () ->
           sessionA.setTransactionIsolationLevel(
             IsolationLevel.REPEATABLE_READ));
-        awaitError(
-          R2dbcException.class,
-          sessionA.setTransactionIsolationLevel(
-            IsolationLevel.SERIALIZABLE));
         assertEquals(
-          IsolationLevel.READ_COMMITTED,
+          READ_COMMITTED,
           sessionA.getTransactionIsolationLevel(),
           "Unexpected return value of getTransactionIsolationLevel() after " +
             "setting an unsupported isolation level");
@@ -976,7 +1123,6 @@ public class OracleConnectionImplTest {
         "Unexpected onNext signal from close()");
     }
   }
-
   /**
    * Verifies the implementation of
    * {@link OracleConnectionImpl#setTransactionIsolationLevel(IsolationLevel)}
@@ -987,7 +1133,7 @@ public class OracleConnectionImplTest {
     Connection sessionA =
       Mono.from(sharedConnection()).block(connectTimeout());
     awaitNone(
-      sessionA.setTransactionIsolationLevel(IsolationLevel.READ_COMMITTED));
+      sessionA.setTransactionIsolationLevel(READ_COMMITTED));
 
     try {
       // Verify isolation levels by reading inserts made into this table. The
@@ -995,7 +1141,7 @@ public class OracleConnectionImplTest {
       // testSetTransactionIsolationLevelReadCommitted because the full name
       // might exceed the maximum identifier length on some databases
       awaitExecution(sessionA.createStatement(
-        "CREATE TABLE tstilReadCommited" +
+        "CREATE TABLE tstilReadComitted" +
           " (value VARCHAR(10))"));
 
       try {
@@ -1004,19 +1150,19 @@ public class OracleConnectionImplTest {
         Connection sessionB =
           Mono.from(newConnection()).block(connectTimeout());
         assertEquals(
-          IsolationLevel.READ_COMMITTED,
+          READ_COMMITTED,
           sessionB.getTransactionIsolationLevel(),
           "Unexpected return value of getTransactionIsolationLevel() for a"
             + " newly created connection");
         try {
           Statement insertInSessionB = sessionB.createStatement(
-            "INSERT INTO tstilReadCommited" +
+            "INSERT INTO tstilReadComitted" +
               " VALUES (?)");
           Statement updateInSessionB = sessionB.createStatement(
-            "UPDATE tstilReadCommited" +
+            "UPDATE tstilReadComitted" +
               " SET value = :newValue WHERE value = :oldValue");
           Statement selectInSessionA = sessionA.createStatement(
-            "SELECT value FROM tstilReadCommited" +
+            "SELECT value FROM tstilReadComitted" +
               " ORDER BY value");
 
           // sessionB INSERTs a row and commits before sessionA begins a
@@ -1052,7 +1198,7 @@ public class OracleConnectionImplTest {
           // sessionA completes it's transaction and all changes from sessionB
           // become visible.
           awaitUpdate(1, sessionA.createStatement(
-            "INSERT INTO tstilReadCommited" +
+            "INSERT INTO tstilReadComitted" +
               " VALUES('D')"));
           awaitNone(sessionA.commitTransaction());
           awaitQuery(
@@ -1064,7 +1210,102 @@ public class OracleConnectionImplTest {
       }
       finally {
         tryAwaitExecution(sessionA.createStatement(
-          "DROP TABLE tstilReadCommited"));
+          "DROP TABLE tstilReadComitted"));
+      }
+    }
+    finally {
+      awaitNone(sessionA.close());
+    }
+  }
+
+  /**
+   * Verifies the implementation of
+   * {@link OracleConnectionImpl#setTransactionIsolationLevel(IsolationLevel)}
+   * when {@link IsolationLevel#SERIALIZABLE} is supplied as an argument.
+   */
+  @Test
+  public void testSetTransactionIsolationLevelSerializable() {
+    Connection sessionA =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    awaitNone(
+      sessionA.setTransactionIsolationLevel(IsolationLevel.SERIALIZABLE));
+
+    try {
+      // Verify isolation levels by reading inserts made into this table. The
+      // table name is an abbreviation of
+      // testSetTransactionIsolationLevelSerializable because the full name
+      // might exceed the maximum identifier length on some databases
+      awaitExecution(sessionA.createStatement(
+        "CREATE TABLE tstilSerializable" +
+          " (value VARCHAR(10))"));
+
+      try {
+        // sessionB executes writes to the test table, and sessionA reads
+        // from the test table.
+        Connection sessionB =
+          Mono.from(newConnection()).block(connectTimeout());
+        assertEquals(
+          READ_COMMITTED,
+          sessionB.getTransactionIsolationLevel(),
+          "Unexpected return value of getTransactionIsolationLevel() for a"
+            + " newly created connection");
+        try {
+          Statement insertInSessionB = sessionB.createStatement(
+            "INSERT INTO tstilSerializable" +
+              " VALUES (?)");
+          Statement updateInSessionB = sessionB.createStatement(
+            "UPDATE tstilSerializable" +
+              " SET value = :newValue WHERE value = :oldValue");
+          Statement selectInSessionA = sessionA.createStatement(
+            "SELECT value FROM tstilSerializable" +
+              " ORDER BY value");
+
+          // sessionB INSERTs a row and commits before sessionA begins a
+          // READ COMMITTED transaction. The row is visible to sessionA because
+          // it was committed before the transaction began.
+          awaitNone(sessionB.beginTransaction());
+          awaitUpdate(1, insertInSessionB.bind(0, "A"));
+          awaitNone(sessionB.commitTransaction());
+          awaitNone(sessionA.beginTransaction());
+          awaitQuery(List.of("A"), row -> row.get(0), selectInSessionA);
+
+          // Expect setting the SERIALIZABLE level to prevent dirty reads.
+          // sessionB UPDATEs a row and doesn't commit. The updated row is not
+          // visible to sessionA.
+          awaitUpdate(
+            1, updateInSessionB.bind("oldValue", "A").bind("newValue", "B"));
+          awaitQuery(List.of("A"), row -> row.get(0), selectInSessionA);
+
+          // Expect setting the SERIALIZABLE level to prevent non-repeatable
+          // reads. The UPDATE is committed in sessionB. The updated row is not
+          // visible to sessionA.
+          awaitNone(sessionB.commitTransaction());
+          awaitQuery(List.of("A"), row -> row.get(0), selectInSessionA);
+
+          // Expect setting the SERIALIZABLE level to prevent Phantom reads.
+          // sessionB INSERTs a new row and commits. The INSERTed row is not
+          // visible to sessionA.
+          awaitNone(sessionB.beginTransaction());
+          awaitUpdate(1, insertInSessionB.bind(0, "C"));
+          awaitNone(sessionB.commitTransaction());
+          awaitQuery(List.of("A"), row -> row.get(0), selectInSessionA);
+
+          // sessionA completes it's transaction and all changes from sessionB
+          // become visible.
+          awaitUpdate(1, sessionA.createStatement(
+            "INSERT INTO tstilSerializable" +
+              " VALUES('D')"));
+          awaitNone(sessionA.commitTransaction());
+          awaitQuery(
+            List.of("B", "C", "D"), row -> row.get(0), selectInSessionA);
+        }
+        finally {
+          awaitNone(sessionB.close());
+        }
+      }
+      finally {
+        tryAwaitExecution(sessionA.createStatement(
+          "DROP TABLE tstilSerializable"));
       }
     }
     finally {
