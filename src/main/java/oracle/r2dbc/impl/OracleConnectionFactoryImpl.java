@@ -99,9 +99,6 @@ import java.util.Optional;
  */
 final class OracleConnectionFactoryImpl implements ConnectionFactory {
 
-  /** Adapts Oracle JDBC Driver APIs into Reactive Streams APIs */
-  private final ReactiveJdbcAdapter adapter;
-
   /** JDBC data source that this factory uses to open connections */
   private final DataSource dataSource;
 
@@ -173,8 +170,8 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    */
   OracleConnectionFactoryImpl(ConnectionFactoryOptions options) {
     OracleR2dbcExceptions.requireNonNull(options, "options is null.");
-    adapter = ReactiveJdbcAdapter.getOracleAdapter();
-    dataSource = adapter.createDataSource(options);
+    dataSource = ReactiveJdbcAdapter.getOracleAdapter()
+      .createDataSource(options);
 
     // Handle any Options that Oracle JDBC doesn't
     if (options.hasOption(ConnectionFactoryOptions.LOCK_WAIT_TIMEOUT)) {
@@ -218,15 +215,21 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    */
   @Override
   public Publisher<Connection> create() {
-    return Mono.defer(() ->
-        Mono.fromDirect(adapter.publishConnection(dataSource)))
-      .flatMap(conn -> {
-        OracleConnectionImpl connection =
-          new OracleConnectionImpl(conn, adapter);
+    return Mono.defer(() -> {
 
-        return Mono.from(connection.setStatementTimeout(statementTimeout))
-          .thenReturn(connection);
-      });
+      // Create a new adapter for each connection. The adapter guards access
+      // to a particular connection.
+      ReactiveJdbcAdapter adapter = ReactiveJdbcAdapter.getOracleAdapter();
+
+      return Mono.fromDirect(adapter.publishConnection(dataSource))
+        .flatMap(conn -> {
+          OracleConnectionImpl connection =
+            new OracleConnectionImpl(conn, adapter);
+
+          return Mono.from(connection.setStatementTimeout(statementTimeout))
+            .thenReturn(connection);
+        });
+    });
   }
 
   /**

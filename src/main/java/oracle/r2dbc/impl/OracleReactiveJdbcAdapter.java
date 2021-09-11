@@ -35,6 +35,7 @@ import oracle.jdbc.OracleRow;
 import oracle.jdbc.datasource.OracleDataSource;
 import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingSupplier;
 import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 import reactor.core.publisher.DirectProcessor;
 import reactor.core.publisher.Flux;
@@ -54,20 +55,22 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
-import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
-import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
-import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
-import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
+import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.SSL;
-
+import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
@@ -78,15 +81,15 @@ import static org.reactivestreams.FlowAdapters.toPublisher;
 /**
  * <p>
  * Implementation of {@link ReactiveJdbcAdapter} for the Oracle JDBC Driver.
- * This adapter is compatible with the 21c release of Oracle JDBC. The
+ * This adapter is compatible with the 21.3 release of Oracle JDBC. The
  * implementation adapts the behavior of the Reactive Extensions APIs of Oracle
  * JDBC to conform with the R2DBC standards. Typically, the adaption of Reactive
  * Extensions for R2DBC conformance requires the following:
  * </p><ul>
  *   <li>
  *     Interfacing with {@code org.reactivestreams}: All Reactive Extensions
- *     APIs interface with the {@link Flow} equivalents of the {@code org
- *     .reactivestreams} types.
+ *     APIs interface with the {@link Flow} equivalents of the
+ *     {@code org.reactivestreams} types.
  *   </li>
  *   <li>
  *     Deferred Execution: Most Reactive Extension APIs do not defer
@@ -95,6 +98,13 @@ import static org.reactivestreams.FlowAdapters.toPublisher;
  *   <li>
  *     Type Conversion: Most Reactive Extensions APIs do not emit or consume
  *     the same types as R2DBC SPIs.
+ *   </li>
+ *   <li>
+ *     Thread Safety: An instance of this adapter guards access to a JDBC
+ *     Connection without blocking a thread. Oracle JDBC implements thread
+ *     safety by blocking threads, and this can cause deadlocks in common
+ *     R2DBC programming scenarios. See the JavaDoc of
+ *     {@link UsingConnectionSubscriber} for more details.
  *   </li>
  * </ul><p>
  * A instance of this class is obtained by invoking {@link #getInstance()}.
@@ -111,10 +121,6 @@ import static org.reactivestreams.FlowAdapters.toPublisher;
  *  @since   0.1.0
  */
 final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
-
-  /** Sole instance of this class */
-  private static final OracleReactiveJdbcAdapter INSTANCE =
-    new OracleReactiveJdbcAdapter();
 
   /**
    * The set of JDBC connection properties that this adapter supports. Each
@@ -223,8 +229,11 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static final Option<CharSequence> DESCRIPTOR =
     Option.valueOf("oracleNetDescriptor");
 
+  /** Guards access to a JDBC {@code Connection} created by this adapter */
+  private final AsyncLock asyncLock = new AsyncLock();
+
   /**
-   * Used to construct the {@link #INSTANCE} of this singleton class.
+   * Used to construct the instances of this class.
    */
   private OracleReactiveJdbcAdapter() { }
 
@@ -233,7 +242,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * @return An Oracle JDBC adapter
    */
   static OracleReactiveJdbcAdapter getInstance() {
-    return INSTANCE;
+    return new OracleReactiveJdbcAdapter();
   }
 
   /**
@@ -707,9 +716,12 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   @Override
   public Publisher<Boolean> publishSQLExecution(
     PreparedStatement sqlStatement) {
+
     OraclePreparedStatement oraclePreparedStatement =
         unwrapOraclePreparedStatement(sqlStatement);
-    return adaptFlowPublisher(oraclePreparedStatement::executeAsyncOracle);
+
+    return adaptFlowPublisher(
+      oraclePreparedStatement::executeAsyncOracle);
   }
 
   /**
@@ -723,9 +735,12 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   @Override
   public Publisher<Long> publishBatchUpdate(
     PreparedStatement batchUpdateStatement) {
+
     OraclePreparedStatement oraclePreparedStatement =
       unwrapOraclePreparedStatement(batchUpdateStatement);
-    return adaptFlowPublisher(oraclePreparedStatement::executeBatchAsyncOracle);
+
+    return adaptFlowPublisher(
+      oraclePreparedStatement::executeBatchAsyncOracle);
   }
 
   /**
@@ -739,6 +754,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   @Override
   public <T> Publisher<T> publishRows(
     ResultSet resultSet, Function<JdbcReadable, T> rowMappingFunction) {
+
     OracleResultSet oracleResultSet = unwrapOracleResultSet(resultSet);
 
     return adaptFlowPublisher(() ->
@@ -760,13 +776,15 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   @Override
   public Publisher<Void> publishCommit(Connection connection) {
+
     OracleConnection oracleConnection = unwrapOracleConnection(connection);
+
     return adaptFlowPublisher(() -> {
-      if (oracleConnection.getAutoCommit())
-        return toFlowPublisher(Mono.empty());
-      else
-        return oracleConnection.commitAsyncOracle();
-    });
+        if (oracleConnection.getAutoCommit())
+          return toFlowPublisher(Mono.empty());
+        else
+          return oracleConnection.commitAsyncOracle();
+      });
   }
 
   /**
@@ -783,7 +801,9 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   @Override
   public Publisher<Void> publishRollback(Connection connection) {
+
     OracleConnection oracleConnection = unwrapOracleConnection(connection);
+
     return adaptFlowPublisher(() -> {
         if (oracleConnection.getAutoCommit())
           return toFlowPublisher(Mono.empty());
@@ -816,7 +836,9 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   public Publisher<ByteBuffer> publishBlobRead(Blob blob)
     throws R2dbcException {
+
     OracleBlob oracleBlob = castAsType(blob, OracleBlob.class);
+
     return Flux.from(adaptFlowPublisher(() -> oracleBlob.publisherOracle(1L)))
       .map(ByteBuffer::wrap);
   }
@@ -831,7 +853,9 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   public Publisher<String> publishClobRead(Clob clob)
     throws R2dbcException {
+
     OracleClob oracleClob = castAsType(clob, OracleClob.class);
+
     return adaptFlowPublisher(() -> oracleClob.publisherOracle(1L));
   }
 
@@ -992,8 +1016,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   private <T> Publisher<T> adaptFlowPublisher(
     ThrowingSupplier<Flow.Publisher<? extends T>> publisherSupplier) {
-    return Flux.from(deferOnce(publisherSupplier))
-      .onErrorMap(SQLException.class, OracleR2dbcExceptions::toR2dbcException);
+    return usingConnection(Flux.from(deferOnce(publisherSupplier))
+      .onErrorMap(SQLException.class, OracleR2dbcExceptions::toR2dbcException));
   }
 
   /**
@@ -1152,6 +1176,359 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static boolean isTypeConversionError(int errorCode) {
     // ORA-17004 is raised for an unsupported type conversion
     return errorCode == 17004;
+  }
+
+  /**
+   * Returns a {@code Publisher} that proxies signals to and from a
+   * provided {@code publisher} in order to guards access to the JDBC
+   * {@code Connection} associated with this adapter. Invocations of
+   * {@link Publisher#subscribe(Subscriber)} and
+   * {@link Subscription#request(long)} will only occur when the JDBC connection
+   * is not being used by another thread or another publisher.
+   *
+   * @param publisher A publisher that uses the JDBC connection
+   * @return A Publisher that
+   */
+  private <T> Publisher<T> usingConnection(Publisher<T> publisher) {
+
+    return subscriber ->
+      asyncLock.lock(() ->
+        publisher.subscribe(
+          new UsingConnectionSubscriber<>(subscriber)));
+
+  }
+
+  /**
+   * <p>
+   * A {@code Subscriber} that uses the {@link #asyncLock} to ensure that
+   * threads do not become blocked when contending for this adapter's JDBC
+   * {@code Connection}. Any time a {@code Subscriber} subscribes to a
+   * {@code Publisher} that uses the JDBC {@code Connection}, an instance of
+   * {@code UsingConnectionSubscriber} should be created in order to proxy
+   * signals between that {@code Publisher} and the downstream
+   * {@code Subscriber}.
+   * </p>
+   *
+   * <h3>Problem Overview</h3>
+   * <p>
+   * {@code UsingConnectionSubscriber} solves a problem with how Oracle JDBC
+   * implements thread safety. When an asynchronous database call is initiated
+   * with a {@code Connection}, that {@code Connection} is locked until
+   * the call completes. When a {@code Connection} is locked, any thread that
+   * invokes a method of that {@code Connection} or any object created by that
+   * {@code Connection} will become blocked. This can lead to a deadlock where
+   * all threads in a pool have become blocked until the database call
+   * completes, and JDBC can not complete the database call until a thread
+   * becomes unblocked.
+   * </p><p>
+   * As a simplified example, consider what would happen with the code below if
+   * the Executor had a pool of 1 thread:
+   * </p><pre>
+   * List<Flow.Publisher<Boolean>> publishers = new ArrayList<>();
+   * executor.execute(() -> {
+   *   try {
+   *     publishers.add(connection.prepareStatement("SELECT 0 FROM dual")
+   *       .unwrap(OraclePreparedStatement.class)
+   *       .executeAsyncOracle());
+   *
+   *     publishers.add(connection.prepareStatement("SELECT 1 FROM dual")
+   *       .unwrap(OraclePreparedStatement.class)
+   *       .executeAsyncOracle());
+   *   }
+   *   catch (SQLException sqlException) {
+   *     sqlException.printStackTrace();
+   *   }
+   * });
+   * </pre><p>
+   * After the first call to {@code executeAsyncOracle}, the connection is
+   * locked, and so when the second call to {@code executeAsyncOracle} is
+   * made, the executor thread is blocked. If Oracle JDBC is configured to use
+   * this same executor, which has a pool of just one thread, then no thread
+   * is left to handle the response from the database for the first call to
+   * {@code executeAsyncOracle}. With no thread available to handle the
+   * response, the call is never completed and the connection is never
+   * unlocked, so the code above results in a deadlock.
+   * </p><p>
+   * While the code above presents a somewhat obvious scenario, it is more
+   * common for deadlocks to occur in less obvious ways. Consider this code
+   * example which uses Project Reactor and R2DBC:
+   * </p><pre>
+   * Flux.usingWhen(
+   *   connectionFactory.create(),
+   *   connection ->
+   *     Flux.usingWhen(
+   *       Mono.from(connection.beginTransaction())
+   *         .thenReturn(connection),
+   *       connection ->
+   *         connection.createStatement("INSERT INTO deadlock VALUES(?)")
+   *           .bind(0, 0)
+   *           .execute(),
+   *       Connection::commitTransaction),
+   *   Connection::close)
+   *   .hasElements();
+   * </pre><p>
+   * The hasElements() operator transforms the sequence into a single boolean
+   * value. When an {@code onNext} signal delivers this value, the subscriber
+   * emits a {@code cancel} signal to the upstream publisher as the
+   * subscriber does not require any additional values. This cancel signal
+   * triggers a subscription to both the commitTransaction() publisher and to
+   * the close() publisher. The commitTransaction() publisher subscribed to
+   * first, and this has the Oracle JDBC connection locked until that
+   * database call completes. The close() publisher is subscribed to immediately
+   * afterwards, and this has the thread become blocked. As there is no
+   * thread left to handle the result of the commit, the connection never
+   * becomes unlocked.
+   * </p>
+   *
+   * <h3>Guarding Access to the JDBC Connection</h3>
+   * <p>
+   * Access to the JDBC Connection must be guarded such that no thread will
+   * attempt to use it when an asynchronous database call is in-flight. The
+   * potential for an in-flight call exists whenever there is a pending signal
+   * from the upstream {@code Publisher}. Instances of
+   * {@code UsingConnectionSubscriber} acquire the {@link #asyncLock}
+   * before requesting a signal from the publisher, and release the
+   * {@code asyncLock} once that signal is received. This ensures that no other
+   * thread will be able to acquire the {@code asyncLock} when a pending signal
+   * is potentially pending upon an asynchronous database call.
+   * </p><p>
+   * An {@code onSubscribe} signal is pending between an invocation of
+   * {@link Publisher#subscribe(Subscriber)} and an invocation of
+   * {@link Subscriber#onSubscribe(Subscription)}. Accordingly, the
+   * {@link #asyncLock} <i>MUST</i> be acquired before invoking
+   * {@code subscribe} with an instance of {@code UsingConnectionSubscriber}.
+   * When that instance receives an {@code onSubscribe} signal, it will release
+   * the {@code asyncLock}.
+   * </p><p>
+   * An {@code onNext} signal is pending between an invocation of
+   * {@link Subscription#request(long)} and a number of invocations of
+   * {@link Subscriber#onNext(Object)} equal to the number of
+   * values requested. Accordingly, instances of
+   * {@code UsingConnectionSubscriber} acquire the {@link #asyncLock} before
+   * emitting a {@code request} signal, and release the {@code asyncLock} when
+   * a corresponding number of {@code onNext} signals have been received.
+   * </p><p>
+   * When a {@code cancel} signal is emitted to the upstream {@code Publisher},
+   * that publisher will not emit any further signals to the downstream
+   * {@code Subscriber}. If an instance {@code UsingConnectionSubscriber}
+   * has acquired the {@link #asyncLock} for a pending {@code onNext} signal,
+   * then it will defer sending a {@code cancel} signal until the pending
+   * {@code onNext} signal has been received. Deferring cancellation until the
+   * the publisher invokes {@code onNext} ensures that the cancellation happens
+   * after any pending database call, and before any subsequent database calls
+   * that would obtain additional values for {@code onNext}.
+   * </p>
+   */
+  private final class UsingConnectionSubscriber<T>
+    implements Subscription, Subscriber<T> {
+
+    /**
+     * Value of {@link #demand} after a {@code cancel} signal has been received
+     * from the downstream subscriber, but before a pending {@code onNext}
+     * signal has been received.
+     */
+    private static final long CANCEL_PENDING = -1;
+
+    /**
+     * Value of {@link #demand} after a {@code cancel} signal has been received
+     * from the downstream subscriber, and after any pending {@code onNext}
+     * signal has been received, and after the {@code cancel} signal has been
+     * emitted to the upstream publisher.
+     */
+    private static final long CANCEL_COMPLETE = -2;
+
+    /** Downstream subscriber that requests values from database calls. */
+    private final Subscriber<T> downstream;
+
+    /**
+     * Subscription from an upstream publisher that emits values from database
+     * calls.
+     */
+    private Subscription upstream;
+
+    /**
+     * Unfilled demand from {@code request} signals. When the value is a
+     * positive number, it is equal to the number of pending {@code onNext}
+     * signals. When a {@code cancel} signal is received from downstream, the
+     * value is set to either {@link #CANCEL_PENDING} or
+     * {@link #CANCEL_COMPLETE}.
+     * if an {@code
+     * onNext}
+     * signal is
+     * pending, or it is set to {@link #CANCEL_COMPLETE} if no {@code onNext}
+     * signal is pending.
+     *
+     */
+    private final AtomicLong demand = new AtomicLong(0L);
+
+    private UsingConnectionSubscriber(Subscriber<T> downstream) {
+      this.downstream = downstream;
+    }
+
+    @Override
+    public void onSubscribe(Subscription subscription) {
+      asyncLock.unlock();
+      upstream = subscription;
+      downstream.onSubscribe(this);
+    }
+
+    @Override
+    public void request(long n) {
+      long currentDemand = demand.getAndUpdate(current ->
+        current < 0L
+          ? current
+          : Long.MAX_VALUE - current < n
+            ? Long.MAX_VALUE
+            : current + n);
+
+      // If no onNext signals are currently pending, then acquire the lock
+      // before signalling the request. Otherwise, if signals are already pending,
+      // then lock is already acquired (and it won't be released by onNext
+      // now that the demand value has been increased). If the current demand
+      // is less than zero, then this subscription is cancelled, so don't
+      // signal the request at all.
+      if (currentDemand == 0)
+        asyncLock.lock(() -> upstream.request(n));
+      else if (currentDemand > 0)
+        upstream.request(n);
+    }
+
+    @Override
+    public void onNext(T value) {
+
+      long currentDemand = demand.getAndUpdate(current ->
+        current == Long.MAX_VALUE
+          ? current
+          : current == CANCEL_PENDING
+            ? CANCEL_COMPLETE
+            : current - 1L);
+
+      // Send the cancel signal now if it was pending upon this onNext signal
+      if (currentDemand == CANCEL_PENDING) {
+        upstream.cancel();
+        asyncLock.unlock();
+      }
+      else if (currentDemand > 0L){
+
+        // Unlock if this was the last pending onNext signal. Note that even if
+        // request(long) has been invoked after getAndUpdate returned, it will
+        // not have acquired the the lock yet. The lock first needs to be
+        // unlocked here.
+        if (currentDemand == 1)
+          asyncLock.unlock();
+
+        downstream.onNext(value);
+      }
+
+      // Don't emit anything if this subscription has been cancelled.
+    }
+
+    @Override
+    public void cancel() {
+      long currentDemand = demand.getAndUpdate(current ->
+        current > 0 || current == CANCEL_PENDING
+          ? CANCEL_PENDING
+          : CANCEL_COMPLETE);
+
+      // Send the cancel signal now if no onNext signals are pending.
+      if (currentDemand == 0)
+        upstream.cancel();
+
+    }
+
+    @Override
+    public void onError(Throwable error) {
+      terminate();
+      downstream.onError(error);
+    }
+
+    @Override
+    public void onComplete() {
+      terminate();
+      downstream.onComplete();
+    }
+
+    /**
+     * Terminates upon receiving {@code onComplete} or {@code onError}.
+     * Termination has this subscriber release the {@link #asyncLock} if it
+     * is currently being held. The {@link #demand} is updated so that no
+     * future request signals will have this subscriber acquire the lock again.
+     */
+    private void terminate() {
+      long currentDemand = demand.getAndSet(CANCEL_COMPLETE);
+
+      if (currentDemand > 0 || currentDemand == CANCEL_PENDING)
+        asyncLock.unlock();
+    }
+  }
+
+  /**
+   * <p>
+   * A lock that is acquired asynchronously. Acquiring threads invoke
+   * {@link #lock(Runnable)} with a {@code Runnable} that will access a
+   * guarded resource. The {@code Runnable} <i>MUST</i> ensure that a single
+   * invocation of {@link #unlock()} will occur after its {@code run()} method
+   * has been invoked. The call to {@code unlock} may occur asynchronously on
+   * a thread other than the one invoking {@code run}.
+   * </p><p>
+   * An instance of this lock is used to guard access to the Oracle JDBC
+   * Connection, without blocking threads that contend for it.
+   * </p>
+   */
+  private static final class AsyncLock {
+
+    /**
+     * Count that is incremented for invocation of {@link #lock(Runnable)},
+     * and is decremented by each invocation of {@link #unlock()}. This lock
+     * is unlocked when the count is 0.
+     */
+    private final AtomicInteger waitCount = new AtomicInteger(0);
+
+    /**
+     * Dequeue of {@code Runnable} callbacks enqueued each time an invocation of
+     * {@link #lock(Runnable)} is not able to acquire this lock. The head of
+     * this dequeue is dequeued and executed by an invocation of
+     * {@link #unlock()}.
+     */
+    private final ConcurrentLinkedDeque<Runnable> waitQueue =
+      new ConcurrentLinkedDeque<>();
+
+    /**
+     * Returns a {@code Publisher} that emits {@code onComplete} when
+     * this lock is acquired.
+     * @return
+     */
+    void lock(Runnable callback) {
+      assert waitCount.get() >= 0 : "Wait count is less than 0: " + waitCount;
+
+      // Acquire this lock and invoke the callback immediately, if possible
+      if (waitCount.compareAndSet(0, 1)) {
+        callback.run();
+      }
+      else {
+        // Enqueue the callback to be invoked asynchronously when this
+        // lock is unlocked
+        waitQueue.addLast(callback);
+
+        // Another thread may have unlocked this lock while this thread was
+        // enqueueing the callback. Dequeue and execute the head of the deque
+        // if this is the case.
+        if (0 == waitCount.getAndIncrement())
+          waitQueue.removeFirst().run();
+      }
+
+    }
+
+    void unlock() {
+      assert waitCount.get() > 0 : "Wait count is less than 1: " + waitCount;
+
+      // Decrement the count. Assuming that lock was called before this
+      // method, the count is guaranteed to be 1 or greater. If it greater
+      // than 1 after being decremented, then another invocation of lock has
+      // enqueued a callback
+      if (0 != waitCount.decrementAndGet())
+        waitQueue.removeFirst().run();
+    }
   }
 
   /**
