@@ -40,6 +40,8 @@ import java.math.BigDecimal;
 import java.sql.RowId;
 import java.sql.SQLWarning;
 import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -2017,6 +2019,193 @@ public class OracleStatementImplTest {
       assertNull(cause.getCause());
     }
     finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that concurrent statement execution does not cause threads
+   * to block.
+   */
+  @Test
+  public void testConcurrentExecute() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      // Create many statements and execute them in parallel. "Many" should
+      // be enough to exhaust the common ForkJoinPool if any thread gets blocked
+      Publisher<Integer>[] publishers =
+        new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
+
+      for (int i = 0; i < publishers.length; i++) {
+        Flux<Integer> flux = Flux.from(connection.createStatement(
+          "SELECT " + i + " FROM sys.dual")
+          .execute())
+          .flatMap(result ->
+            result.map(row -> row.get(0, Integer.class)))
+          .cache();
+
+        flux.subscribe();
+        publishers[i] = flux;
+      }
+
+      awaitMany(
+        IntStream.range(0, publishers.length)
+          .boxed()
+          .collect(Collectors.toList()),
+        Flux.concat(publishers));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that concurrent statement execution and row fetching does not
+   * cause threads to block.
+   */
+  @Test
+  public void testConcurrentFetch() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testConcurrentFetch (value NUMBER)"));
+
+      // Create many statements and execute them in parallel. "Many" should
+      // be enough to exhaust the common ForkJoinPool if any thread gets blocked
+      Publisher<Integer>[] publishers =
+        new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
+
+      for (int i = 0; i < publishers.length; i++) {
+
+        // Batch insert 100 values
+        Statement statement = connection.createStatement(
+          "INSERT INTO testConcurrentFetch VALUES (?)");
+        int start = i * 100;
+        statement.bind(0, start);
+        IntStream.range(start + 1, start + 100)
+          .forEach(value -> {
+            statement.add().bind(0, value);
+          });
+
+        Mono<Integer> mono = Flux.from(statement.execute())
+          .flatMap(Result::getRowsUpdated)
+          .collect(Collectors.summingInt(Integer::intValue))
+          .cache();
+
+        mono.subscribe();
+        publishers[i] = mono;
+      }
+
+      awaitMany(
+        IntStream.range(0, publishers.length)
+          .map(i -> 100)
+          .boxed()
+          .collect(Collectors.toList()),
+        Flux.merge(publishers));
+
+      // Fetch rows in parallel
+      Publisher<List<Integer>>[] fetchPublishers =
+        new Publisher[publishers.length];
+
+      for (int i = 0; i < publishers.length; i++) {
+        Mono<List<Integer>> mono = Flux.from(connection.createStatement(
+          "SELECT value FROM testConcurrentFetch")
+          .execute())
+          .flatMap(result ->
+            result.map(row -> row.get(0, Integer.class)))
+          .collect(Collectors.toList())
+          .cache();
+
+        mono.subscribe();
+        fetchPublishers[i] = mono;
+      }
+
+      List<Integer> expected = IntStream.range(0, publishers.length * 100)
+        .boxed()
+        .collect(Collectors.toList());
+
+      awaitMany(IntStream.range(0, publishers.length)
+        .mapToObj(i -> expected)
+        .collect(Collectors.toList()),
+        Flux.merge(fetchPublishers));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testConcurrentFetch"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies behavior when commitTransaction() and close() Publishers are
+   * subscribed to concurrently due to cancelling a Flux.usingWhen(...)
+   * operator.
+   */
+  @Test
+  public void testUsingWhenCancel() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testUsingWhenCancel (value NUMBER)"));
+
+      // Use more threads than what the FJP has available
+      Publisher<Boolean>[] publishers =
+        new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
+
+      for (int i = 0; i < publishers.length; i++) {
+
+        int value = i;
+
+        // The hasElements operator below will cancel its subscription upon
+        // receiving onNext. This triggers a subscription to the
+        // commitTransaction() publisher, immediately followed by a subscription
+        // to the close() publisher. Expect the driver to defer the subscription
+        // to the close() publisher until the commitTransaction publisher has
+        // completed. If not deferred, then the thread subscribing to the close
+        // publisher will block, and this test will deadlock as the
+        // commitTransaction publisher has no available thread to complete with.
+        Mono<Boolean> mono = Flux.usingWhen(
+          newConnection(),
+          newConnection ->
+            Flux.usingWhen(
+              Mono.from(newConnection.beginTransaction())
+                .thenReturn(newConnection),
+              newConnection0 ->
+                Flux.from(newConnection.createStatement(
+                  "INSERT INTO testUsingWhenCancel VALUES (?)")
+                  .bind(0, value)
+                  .execute())
+                  .flatMap(Result::getRowsUpdated),
+              Connection::commitTransaction),
+          Connection::close)
+          .hasElements()
+          .cache();
+
+        mono.subscribe();
+        publishers[i] = mono;
+      }
+
+      awaitMany(
+        Stream.generate(() -> true)
+          .limit(publishers.length)
+          .collect(Collectors.toList()),
+        Flux.merge(publishers));
+
+    }
+    finally {
+      // Note that Flux.usingWhen doesn't actually wait for the
+      // commitTransaction publisher to complete (because the downstream
+      // subscriber has already cancelled the subscription, so it can't
+      // receive the result anyway).
+      // This means the transactions may not have ended by the time the
+      // drop table command executes. Set a DDL wait timeout to avoid a
+      // "Resource busy..." error from the database.
+      tryAwaitExecution(connection.createStatement(
+        "ALTER SESSION SET ddl_lock_wait_timeout=15"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testUsingWhenCancel"));
       tryAwaitNone(connection.close());
     }
   }

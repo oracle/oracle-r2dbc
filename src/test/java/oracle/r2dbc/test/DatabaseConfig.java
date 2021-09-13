@@ -157,7 +157,10 @@ public final class DatabaseConfig {
    * @return A publisher of a shared connection to a test database.
    */
   public static Publisher<? extends Connection> sharedConnection() {
-    return SHARED_CONNECTION_FACTORY.create();
+    // Check this property in case tests should run without sharing a connection
+    return Boolean.getBoolean("oracle.r2dbc.test.disableSharedConnection")
+      ? newConnection()
+      : SHARED_CONNECTION_FACTORY.create();
   }
 
   /**
