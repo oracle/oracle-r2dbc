@@ -57,6 +57,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,7 +109,10 @@ import static org.reactivestreams.FlowAdapters.toPublisher;
  *     {@link UsingConnectionSubscriber} for more details.
  *   </li>
  * </ul><p>
- * A instance of this class is obtained by invoking {@link #getInstance()}.
+ * A instance of this class is obtained by invoking {@link #getInstance()}. A
+ * new instance should be created each time a JDBC {@code Connection} is
+ * created, and that instance should be used to execute database calls with
+ * that {@code Connection} only.
  * </p><p>
  * All JDBC type parameters supplied to the methods of this class must
  * {@linkplain Wrapper#isWrapperFor(Class) wrap} an Oracle JDBC interface
@@ -137,7 +141,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * does or how it should be configured.
    */
   private static final Set<Option<CharSequence>>
-    SUPPORTED_CONNECTION_PROPERTY_OPTIONS = Set.of(
+    JDBC_CONNECTION_PROPERTY_OPTIONS = Set.of(
 
       // Support TNS_ADMIN (tnsnames.ora, ojdbc.properties).
       OracleR2dbcOptions.TNS_ADMIN,
@@ -489,10 +493,9 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
   /**
    * Configures an {@code oracleDataSource} with the values of extended R2DBC
-   * {@code Options}. Extended options are those declared as
-   * {@link #SUPPORTED_CONNECTION_PROPERTY_OPTIONS} in this class. The values
-   * of these options are used to configure the {@code oracleDataSource} as
-   * specified in the javadoc of
+   * {@code Options}. Extended options are those declared in
+   * {@link OracleR2dbcOptions}. The values of these options are used to
+   * configure the {@code oracleDataSource} as specified in the javadoc of
    * {@link #createDataSource(ConnectionFactoryOptions)}
    * @param oracleDataSource An data source to configure
    * @param options R2DBC options. Not null.
@@ -509,8 +512,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
           OracleConnection.CONNECTION_PROPERTY_TNS_ADMIN, tnsAdmin.toString()));
     }
 
-    // Apply any extended options as connection properties
-    for (Option<CharSequence> option : SUPPORTED_CONNECTION_PROPERTY_OPTIONS) {
+    // Apply any JDBC connection property options
+    for (Option<CharSequence> option : JDBC_CONNECTION_PROPERTY_OPTIONS) {
       // Using Object as the value type allows options to be set as types like
       // Boolean or Integer. These types make sense for numeric or boolean
       // connection property values, such as statement cache size, or enable x.
@@ -662,11 +665,12 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   @Override
   public Publisher<? extends Connection> publishConnection(
-    DataSource dataSource) {
+    DataSource dataSource, Executor executor) {
     OracleDataSource oracleDataSource = unwrapOracleDataSource(dataSource);
     return Mono.from(adaptFlowPublisher(() ->
         oracleDataSource
           .createConnectionBuilder()
+          .executorOracle(executor)
           .buildConnectionPublisherOracle()))
       .onErrorMap(R2dbcException.class, error ->
         error.getErrorCode() == 18714 // ORA-18714 : Login timeout expired
