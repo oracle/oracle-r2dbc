@@ -23,7 +23,7 @@ package oracle.r2dbc.samples;
 
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactoryOptions;
-import io.r2dbc.spi.Option;
+import oracle.r2dbc.OracleR2dbcOptions;
 import reactor.core.publisher.Mono;
 
 import static oracle.r2dbc.samples.DatabaseConfig.HOST;
@@ -47,7 +47,8 @@ public class DescriptorURL {
 
   /**
    * A TNS descriptor specifying the HOST, PORT, and SERVICE_NAME read from
-   * {@link DatabaseConfig}.
+   * {@link DatabaseConfig}. These values can be configured in a
+   * config.properties file of the current directory.
    */
   private static final String DESCRIPTOR = "(DESCRIPTION=" +
     "(ADDRESS=(HOST="+HOST+")(PORT="+PORT+")(PROTOCOL=tcp))" +
@@ -55,7 +56,7 @@ public class DescriptorURL {
 
   public static void main(String[] args) {
     // A descriptor may appear in the query section of an R2DBC URL:
-    String r2dbcUrl = "r2dbc:oracle://?oracleNetDescriptor="+DESCRIPTOR;
+    String r2dbcUrl = "r2dbc:oracle://?oracle.r2dbc.descriptor="+DESCRIPTOR;
     Mono.from(ConnectionFactories.get(ConnectionFactoryOptions.parse(r2dbcUrl)
       .mutate()
       .option(ConnectionFactoryOptions.USER, USER)
@@ -67,7 +68,7 @@ public class DescriptorURL {
           "SELECT 'Connected with TNS descriptor' FROM sys.dual")
           .execute())
           .flatMapMany(result ->
-            result.map((row, metadata) -> row.get(0, String.class)))
+            result.map(row -> row.get(0, String.class)))
           .concatWith(Mono.from(connection.close()).cast(String.class)))
       .toStream()
       .forEach(System.out::println);
@@ -75,7 +76,7 @@ public class DescriptorURL {
     // A descriptor may also be specified as an Option
     Mono.from(ConnectionFactories.get(ConnectionFactoryOptions.builder()
       .option(ConnectionFactoryOptions.DRIVER, "oracle")
-      .option(Option.valueOf("oracleNetDescriptor"), DESCRIPTOR)
+      .option(OracleR2dbcOptions.DESCRIPTOR, DESCRIPTOR)
       .option(ConnectionFactoryOptions.USER, USER)
       .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
       .build())

@@ -2126,10 +2126,11 @@ public class OracleStatementImplTest {
         .boxed()
         .collect(Collectors.toList());
 
-      awaitMany(IntStream.range(0, publishers.length)
+      awaitOne(IntStream.range(0, publishers.length)
         .mapToObj(i -> expected)
-        .collect(Collectors.toList()),
-        Flux.merge(fetchPublishers));
+        .collect(Collectors.toSet()),
+        Flux.merge(fetchPublishers)
+          .collect(Collectors.toSet()));
     }
     finally {
       tryAwaitExecution(connection.createStatement(
@@ -2203,7 +2204,7 @@ public class OracleStatementImplTest {
       // drop table command executes. Set a DDL wait timeout to avoid a
       // "Resource busy..." error from the database.
       tryAwaitExecution(connection.createStatement(
-        "ALTER SESSION SET ddl_lock_wait_timeout=15"));
+        "ALTER SESSION SET ddl_lock_timeout=15"));
       tryAwaitExecution(connection.createStatement(
         "DROP TABLE testUsingWhenCancel"));
       tryAwaitNone(connection.close());

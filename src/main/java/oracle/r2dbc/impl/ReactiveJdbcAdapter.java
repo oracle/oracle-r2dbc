@@ -38,6 +38,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 
 /**
@@ -124,6 +125,8 @@ interface ReactiveJdbcAdapter {
    * Publishes a single JDBC {@link Connection} to a single subscriber. The
    * connection is established as if by invoking
    * {@link DataSource#getConnection()} on the specified {@code dataSource}.
+   * The {@code Connection} is configured to execute asynchronous tasks using
+   * the provided {@code executor}.
    * </p><p>
    * The {@code dataSource} is retained by the returned publisher, meaning
    * that any mutable state of the {@code dataSource} can affect the behavior
@@ -144,10 +147,12 @@ interface ReactiveJdbcAdapter {
    * </p>
    * @param dataSource JDBC data source that is configured to establish a
    *   connection. Not null.
+   * @param executor Executor to use for executing asynchronous tasks. Not null.
    * @return A publisher that emits a JDBC connection. Not null.
    * @throws R2dbcException If a database access error occurs.
    */
-  Publisher<? extends Connection> publishConnection(DataSource dataSource)
+  Publisher<? extends Connection> publishConnection(
+    DataSource dataSource, Executor executor)
     throws R2dbcException;
 
   /**

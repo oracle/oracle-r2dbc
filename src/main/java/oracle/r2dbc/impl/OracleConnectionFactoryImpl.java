@@ -28,12 +28,15 @@ import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Statement;
+import oracle.r2dbc.OracleR2dbcOptions;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import javax.sql.DataSource;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 
 /**
  * <p>
@@ -101,6 +104,12 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
 
   /** JDBC data source that this factory uses to open connections */
   private final DataSource dataSource;
+
+  /**
+   * Executor configured by {@link oracle.r2dbc.OracleR2dbcOptions#EXECUTOR},
+   * or a default one if none was configured.
+   */
+  private final Executor executor;
 
   /**
    * <p>
@@ -189,6 +198,19 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
         : Duration.parse(timeout.toString()))
       .orElse(Duration.ZERO);
 
+    Object executor = options.getValue(OracleR2dbcOptions.EXECUTOR);
+    if (executor == null) {
+      this.executor = ForkJoinPool.commonPool();
+    }
+    else if (executor instanceof Executor) {
+      this.executor = (Executor) executor;
+    }
+    else {
+      throw new IllegalArgumentException(
+        "Value of " + OracleR2dbcOptions.EXECUTOR
+          + " is not an instance of Executor: " + executor.getClass());
+    }
+
   }
 
   /**
@@ -221,7 +243,7 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
       // to a particular connection.
       ReactiveJdbcAdapter adapter = ReactiveJdbcAdapter.getOracleAdapter();
 
-      return Mono.fromDirect(adapter.publishConnection(dataSource))
+      return Mono.fromDirect(adapter.publishConnection(dataSource, executor))
         .flatMap(conn -> {
           OracleConnectionImpl connection =
             new OracleConnectionImpl(conn, adapter);

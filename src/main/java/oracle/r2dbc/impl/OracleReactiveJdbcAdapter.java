@@ -33,6 +33,7 @@ import oracle.jdbc.OraclePreparedStatement;
 import oracle.jdbc.OracleResultSet;
 import oracle.jdbc.OracleRow;
 import oracle.jdbc.datasource.OracleDataSource;
+import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingSupplier;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
@@ -56,6 +57,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -107,7 +109,10 @@ import static org.reactivestreams.FlowAdapters.toPublisher;
  *     {@link UsingConnectionSubscriber} for more details.
  *   </li>
  * </ul><p>
- * A instance of this class is obtained by invoking {@link #getInstance()}.
+ * A instance of this class is obtained by invoking {@link #getInstance()}. A
+ * new instance should be created each time a JDBC {@code Connection} is
+ * created, and that instance should be used to execute database calls with
+ * that {@code Connection} only.
  * </p><p>
  * All JDBC type parameters supplied to the methods of this class must
  * {@linkplain Wrapper#isWrapperFor(Class) wrap} an Oracle JDBC interface
@@ -136,74 +141,53 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * does or how it should be configured.
    */
   private static final Set<Option<CharSequence>>
-    SUPPORTED_CONNECTION_PROPERTY_OPTIONS = Set.of(
+    JDBC_CONNECTION_PROPERTY_OPTIONS = Set.of(
 
       // Support TNS_ADMIN (tnsnames.ora, ojdbc.properties).
-      Option.valueOf(OracleConnection.CONNECTION_PROPERTY_TNS_ADMIN),
+      OracleR2dbcOptions.TNS_ADMIN,
 
       // Support wallet properties for TCPS/SSL/TLS
-      Option.valueOf(OracleConnection.CONNECTION_PROPERTY_WALLET_LOCATION),
-      Option.sensitiveValueOf(
-        OracleConnection.CONNECTION_PROPERTY_WALLET_PASSWORD),
+      OracleR2dbcOptions.TLS_WALLET_LOCATION,
+      OracleR2dbcOptions.TLS_WALLET_PASSWORD,
 
       // Support keystore properties for TCPS/SSL/TLS
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_KEYSTORE),
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_KEYSTORETYPE),
+      OracleR2dbcOptions.TLS_KEYSTORE,
+      OracleR2dbcOptions.TLS_KEYSTORE_TYPE,
       Option.sensitiveValueOf(
         OracleConnection
           .CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_KEYSTOREPASSWORD),
 
       // Support truststore properties for TCPS/SSL/TLS
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_TRUSTSTORE),
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_TRUSTSTORETYPE),
-      Option.sensitiveValueOf(
-        OracleConnection
-          .CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_TRUSTSTOREPASSWORD),
+      OracleR2dbcOptions.TLS_TRUSTSTORE,
+      OracleR2dbcOptions.TLS_TRUSTSTORE_TYPE,
+      OracleR2dbcOptions.TLS_TRUSTSTORE_PASSWORD,
 
       // Support authentication services (RADIUS, KERBEROS, and TCPS)
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_SERVICES),
+      OracleR2dbcOptions.AUTHENTICATION_SERVICES,
 
       // Support fine grained configuration for TCPS/SSL/TLS
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_SSL_CERTIFICATE_ALIAS),
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_SSL_SERVER_DN_MATCH),
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_SSL_SERVER_CERT_DN),
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_SSL_VERSION),
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_THIN_SSL_CIPHER_SUITES),
-      Option.valueOf(
-        OracleConnection
-          .CONNECTION_PROPERTY_THIN_SSL_KEYMANAGERFACTORY_ALGORITHM),
-      Option.valueOf(
-        OracleConnection
-          .CONNECTION_PROPERTY_THIN_SSL_TRUSTMANAGERFACTORY_ALGORITHM),
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_SSL_CONTEXT_PROTOCOL),
+      OracleR2dbcOptions.TLS_CERTIFICATE_ALIAS,
+      OracleR2dbcOptions.TLS_SERVER_DN_MATCH,
+      OracleR2dbcOptions.TLS_SERVER_CERT_DN,
+      OracleR2dbcOptions.TLS_VERSION,
+      OracleR2dbcOptions.TLS_CIPHER_SUITES,
+      OracleR2dbcOptions.TLS_KEYMANAGERFACTORY_ALGORITHM,
+      OracleR2dbcOptions.TLS_TRUSTMANAGERFACTORY_ALGORITHM,
+      OracleR2dbcOptions.SSL_CONTEXT_PROTOCOL,
 
       // Because of bug 32378754, the FAN support in the driver may cause a 10s
       // delay to connect. As a workaround the following property can be set
       // to false to disable FAN support in the driver.
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_FAN_ENABLED),
+      OracleR2dbcOptions.FAN_ENABLED,
 
       // Support statement cache configuration
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE),
+      OracleR2dbcOptions.IMPLICIT_STATEMENT_CACHE_SIZE,
 
       // Support LOB prefetch size configuration. A large size is configured
       // by default to support cases where memory is available to store entire
       // LOB values. A non-default size may be configured when LOB values are
       // too large to be prefetched and must be streamed from Blob/Clob objects.
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE),
+      OracleR2dbcOptions.DEFAULT_LOB_PREFETCH_SIZE,
 
       // Allow out-of-band (OOB) breaks to be disabled. Oracle JDBC uses OOB
       // breaks to interrupt a SQL call after a timeout expires. This option 
@@ -211,23 +195,13 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       // in 19.x, the database can detect when it's running on a system where
       // OOB is not supported and automatically disable OOB. This automated 
       // detection is not impleneted in 18.x.
-      Option.valueOf(
-        OracleConnection
-          .CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
+      OracleR2dbcOptions.DISABLE_OUT_OF_BAND_BREAK,
 
       // Allow the client-side ResultSet cache to be disabled. It is
       // necessary to do so when using the serializable transaction isolation
       // level in order to prevent phantom reads.
-      Option.valueOf(
-        OracleConnection.CONNECTION_PROPERTY_ENABLE_QUERY_RESULT_CACHE)
+      OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE
     );
-
-  /**
-   * Extended {@code Option} that specifies an Oracle Net Connect Descriptor
-   * of the form "(DESCRIPTION=...)"
-   */
-  private static final Option<CharSequence> DESCRIPTOR =
-    Option.valueOf("oracleNetDescriptor");
 
   /** Guards access to a JDBC {@code Connection} created by this adapter */
   private final AsyncLock asyncLock = new AsyncLock();
@@ -432,7 +406,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * conflicting values, such as {@link ConnectionFactoryOptions#HOST}.
    */
   private static String composeJdbcUrl(ConnectionFactoryOptions options) {
-    Object descriptor = options.getValue(DESCRIPTOR);
+    Object descriptor = options.getValue(OracleR2dbcOptions.DESCRIPTOR);
 
     if (descriptor != null) {
       validateDescriptorOptions(options);
@@ -455,10 +429,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   }
 
   /**
-   * Validates {@code options} when the {@link #DESCRIPTOR} {@code Option} is
-   * present. It is invalid to specify any other options having information
-   * that potentially conflicts with information in the descriptor, such as
-   * {@link ConnectionFactoryOptions#HOST}.
+   * Validates {@code options} when the {@link OracleR2dbcOptions#DESCRIPTOR}
+   * {@code Option} is present. It is invalid to specify any other options
+   * having information that potentially conflicts with information in the
+   * descriptor, such as {@link ConnectionFactoryOptions#HOST}.
    * @param options Options to validate
    * @throws IllegalArgumentException If {@code options} are invalid
    */
@@ -477,7 +451,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         .toArray(Option[]::new);
 
     if (conflictingOptions.length != 0) {
-      throw new IllegalArgumentException(DESCRIPTOR.name()
+      throw new IllegalArgumentException(OracleR2dbcOptions.DESCRIPTOR.name()
         + " Option has been specified with potentially conflicting Options: "
         + Arrays.toString(conflictingOptions));
     }
@@ -519,10 +493,9 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
   /**
    * Configures an {@code oracleDataSource} with the values of extended R2DBC
-   * {@code Options}. Extended options are those declared as
-   * {@link #SUPPORTED_CONNECTION_PROPERTY_OPTIONS} in this class. The values
-   * of these options are used to configure the {@code oracleDataSource} as
-   * specified in the javadoc of
+   * {@code Options}. Extended options are those declared in
+   * {@link OracleR2dbcOptions}. The values of these options are used to
+   * configure the {@code oracleDataSource} as specified in the javadoc of
    * {@link #createDataSource(ConnectionFactoryOptions)}
    * @param oracleDataSource An data source to configure
    * @param options R2DBC options. Not null.
@@ -539,8 +512,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
           OracleConnection.CONNECTION_PROPERTY_TNS_ADMIN, tnsAdmin.toString()));
     }
 
-    // Apply any extended options as connection properties
-    for (Option<CharSequence> option : SUPPORTED_CONNECTION_PROPERTY_OPTIONS) {
+    // Apply any JDBC connection property options
+    for (Option<CharSequence> option : JDBC_CONNECTION_PROPERTY_OPTIONS) {
       // Using Object as the value type allows options to be set as types like
       // Boolean or Integer. These types make sense for numeric or boolean
       // connection property values, such as statement cache size, or enable x.
@@ -692,11 +665,12 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    */
   @Override
   public Publisher<? extends Connection> publishConnection(
-    DataSource dataSource) {
+    DataSource dataSource, Executor executor) {
     OracleDataSource oracleDataSource = unwrapOracleDataSource(dataSource);
     return Mono.from(adaptFlowPublisher(() ->
         oracleDataSource
           .createConnectionBuilder()
+          .executorOracle(executor)
           .buildConnectionPublisherOracle()))
       .onErrorMap(R2dbcException.class, error ->
         error.getErrorCode() == 18714 // ORA-18714 : Login timeout expired

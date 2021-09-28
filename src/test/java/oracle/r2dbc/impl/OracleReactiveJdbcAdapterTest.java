@@ -29,7 +29,9 @@ import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.Result;
 import oracle.jdbc.OracleConnection;
 import oracle.jdbc.datasource.OracleDataSource;
+import oracle.r2dbc.OracleR2dbcOptions;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
@@ -41,11 +43,17 @@ import java.nio.file.StandardOpenOption;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
@@ -220,13 +228,13 @@ public class OracleReactiveJdbcAdapterTest {
       // Expect to connect with the descriptor in the R2DBC URL
       awaitNone(awaitOne(
         ConnectionFactories.get(String.format(
-          "r2dbc:oracle://%s:%s@?oracleNetDescriptor=%s",
+          "r2dbc:oracle://%s:%s@?oracle.r2dbc.descriptor=%s",
           user(), password(), descriptor))
           .create())
         .close());
       awaitNone(awaitOne(
         ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
-          "r2dbc:oracle://@?oracleNetDescriptor=%s", descriptor))
+          "r2dbc:oracle://@?oracle.r2dbc.descriptor=%s", descriptor))
           .mutate()
           .option(USER, user())
           .option(PASSWORD, password())
@@ -238,14 +246,14 @@ public class OracleReactiveJdbcAdapterTest {
       // the file path and an alias
       awaitNone(awaitOne(
         ConnectionFactories.get(String.format(
-          "r2dbc:oracle://%s:%s@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
+          "r2dbc:oracle://%s:%s@?oracle.r2dbc.descriptor=%s&TNS_ADMIN=%s",
           user(), password(), "test_alias", userDir))
           .create())
           .close());
       awaitNone(awaitOne(
         ConnectionFactories.get(ConnectionFactoryOptions.parse(
           String.format(
-            "r2dbc:oracle://@?oracleNetDescriptor=%s&TNS_ADMIN=%s",
+            "r2dbc:oracle://@?oracle.r2dbc.descriptor=%s&TNS_ADMIN=%s",
             "test_alias", userDir))
           .mutate()
           .option(USER, user())
@@ -258,25 +266,25 @@ public class OracleReactiveJdbcAdapterTest {
       // are provided with a descriptor
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get(
-          "r2dbc:oracle://"+host()+"?oracleNetDescriptor="+descriptor));
+          "r2dbc:oracle://"+host()+"?oracle.r2dbc.descriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle://"
-            +host()+":"+port()+"?oracleNetDescriptor="+descriptor));
+            +host()+":"+port()+"?oracle.r2dbc.descriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle://"+host()+":"+port()+"/"
-          +serviceName()+"?oracleNetDescriptor="+descriptor));
+          +serviceName()+"?oracle.r2dbc.descriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle://"+host()+"/"
-          +serviceName()+"?oracleNetDescriptor="+descriptor));
+          +serviceName()+"?oracle.r2dbc.descriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbc:oracle:///"
-            +serviceName()+"?oracleNetDescriptor="+descriptor));
+            +serviceName()+"?oracle.r2dbc.descriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get("r2dbcs:oracle://" + // r2dbcs is SSL=true
-          "?oracleNetDescriptor="+descriptor));
+          "?oracle.r2dbc.descriptor="+descriptor));
       assertThrows(IllegalArgumentException.class, () ->
         ConnectionFactories.get(
-          "r2dbc:oracle://?oracleNetDescriptor="+descriptor+"&ssl=true"));
+          "r2dbc:oracle://?oracle.r2dbc.descriptor="+descriptor+"&ssl=true"));
 
       // Create an ojdbc.properties file containing the user name
       Files.writeString(Path.of("ojdbc.properties"),
@@ -288,7 +296,7 @@ public class OracleReactiveJdbcAdapterTest {
         // specifies a user, and a standard option specifies the password.
         awaitNone(awaitOne(
           ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
-            "r2dbc:oracle://?oracleNetDescriptor=%s&TNS_ADMIN=%s",
+            "r2dbc:oracle://?oracle.r2dbc.descriptor=%s&TNS_ADMIN=%s",
             "test_alias", userDir))
             .mutate()
             .option(PASSWORD, password())
@@ -413,6 +421,52 @@ public class OracleReactiveJdbcAdapterTest {
       tryAwaitNone(connection1.close());
     }
 
+  }
+
+  /**
+   * Verifies the {@link oracle.r2dbc.OracleR2dbcOptions#EXECUTOR} option
+   */
+  @Test
+  public void testExecutorOption() {
+
+    // Create a custom executor that increments a count when Runnables are
+    // submitted, and then delegates to a single threaded executor.
+    AtomicInteger count = new AtomicInteger(0);
+    ExecutorService singleThread = Executors.newSingleThreadExecutor();
+    Executor testExecutor = runnable -> {
+      count.incrementAndGet();
+      singleThread.execute(runnable);
+    };
+
+    // Create a connection that is configured to use the custom executor
+    Connection connection = awaitOne(ConnectionFactories.get(
+      ConnectionFactoryOptions.builder()
+        .option(OracleR2dbcOptions.EXECUTOR, testExecutor)
+        .option(DRIVER, "oracle")
+        .option(HOST, host())
+        .option(PORT, port())
+        .option(DATABASE, serviceName())
+        .option(USER, user())
+        .option(PASSWORD, password())
+        .build())
+        .create());
+
+    try {
+      // Make some asynchronous database calls and expect the executor's
+      // count to be incremented
+      awaitOne(Set.of(0, 1, 2, 3), Flux.merge(
+        connection.createStatement("SELECT 0 FROM sys.dual").execute(),
+        connection.createStatement("SELECT 1 FROM sys.dual").execute(),
+        connection.createStatement("SELECT 2 FROM sys.dual").execute(),
+        connection.createStatement("SELECT 3 FROM sys.dual").execute())
+        .flatMap(result ->
+          result.map(row -> row.get(0, Integer.class)))
+        .collect(Collectors.toSet()));
+      assertTrue(count.get() != 0);
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
   }
 
   /**
