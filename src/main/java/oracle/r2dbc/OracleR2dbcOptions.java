@@ -35,7 +35,9 @@ public final class OracleR2dbcOptions {
 
   /**
    * Extended {@code Option} that specifies an Oracle Net Connect Descriptor
-   * of the form "(DESCRIPTION=...)"
+   * of the form "(DESCRIPTION=...)". If {@link #TNS_ADMIN} is specified,
+   * then the value of this {@code Option} may be set to a tnsnames.ora
+   * alias.
    */
   public static final Option<CharSequence> DESCRIPTOR =
     Option.valueOf("oracle.r2dbc.descriptor");
