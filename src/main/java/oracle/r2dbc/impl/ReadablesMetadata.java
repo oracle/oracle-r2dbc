@@ -123,7 +123,7 @@ class ReadablesMetadata<T extends ReadableMetadata> {
    * @param index the value index starting at 0
    * @return the {@link ReadableMetadata} for one value in this result. Not
    * null.
-   * @throws ArrayIndexOutOfBoundsException if the {@code index} is less than
+   * @throws IndexOutOfBoundsException if the {@code index} is less than
    * zero or greater than the number of available values.
    * @implSpec This method implements common behavior specified for both
    * {@link RowMetadata#getColumnMetadata(int)} and

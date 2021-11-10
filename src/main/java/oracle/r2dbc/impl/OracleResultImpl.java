@@ -586,9 +586,18 @@ abstract class OracleResultImpl implements Result {
    */
   private static final class WarningResult extends OracleResultImpl {
 
+    /** The warning of this result */
     private final SQLWarning warning;
+
+    /** The result that follows this result */
     private final OracleResultImpl result;
 
+    /**
+     * Constructs a result that publishes a {@code warning} as a
+     * {@link Message}, and then publishes the segments of a {@code result}.
+     * @param warning Warning to publish
+     * @param result Result of segments to publish after the warning
+     */
     private WarningResult(SQLWarning warning, OracleResultImpl result) {
       this.warning = warning;
       this.result = result;

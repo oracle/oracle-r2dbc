@@ -145,7 +145,8 @@ public class OracleR2dbcExceptionsTest {
       "SQL-MESSAGE", "SQL-STATE", 9, ioException);
     String message = "MESSAGE";
     R2dbcNonTransientException r2dbcException =
-      OracleR2dbcExceptions.newNonTransientException(message, sqlException);
+      OracleR2dbcExceptions.newNonTransientException(
+        message, null, sqlException);
 
     // Expect the R2dbcException to have the same message
     assertSame(message, r2dbcException.getMessage());

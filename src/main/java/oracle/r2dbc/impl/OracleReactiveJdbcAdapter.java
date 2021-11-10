@@ -194,7 +194,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       // may need to be disabled when connecting to an 18.x database. Starting
       // in 19.x, the database can detect when it's running on a system where
       // OOB is not supported and automatically disable OOB. This automated 
-      // detection is not impleneted in 18.x.
+      // detection is not implemented in 18.x.
       OracleR2dbcOptions.DISABLE_OUT_OF_BAND_BREAK,
 
       // Allow the client-side ResultSet cache to be disabled. It is
@@ -247,7 +247,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * When the "descriptor" option is provided, it is invalid to specify any
    * other options that might conflict with values also specified in the
    * descriptor. For instance, the descriptor element of
-   * {@code (ADDRESSS=(HOST=...)(PORT=...)(PROTOCOL=...))} specifies values
+   * {@code (ADDRESS=(HOST=...)(PORT=...)(PROTOCOL=...))} specifies values
    * that overlap with the standard {@code Option}s of {@code HOST}, {@code
    * PORT}, and {@code SSL}. An {@code IllegalArgumentException} is thrown
    * when the descriptor is provided with any overlapping {@code Option}s.
@@ -1136,7 +1136,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     }
     else {
       throw OracleR2dbcExceptions.newNonTransientException(
-        object.getClass() + " is not an instance of " + type, null);
+        object.getClass() + " is not an instance of " + type, null, null);
     }
   }
 
@@ -1468,9 +1468,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       new ConcurrentLinkedDeque<>();
 
     /**
-     * Returns a {@code Publisher} that emits {@code onComplete} when
-     * this lock is acquired.
-     * @return
+     * Executes a {@code callback} with exclusive access to the guarded
+     * resource.
      */
     void lock(Runnable callback) {
       assert waitCount.get() >= 0 : "Wait count is less than 0: " + waitCount;
