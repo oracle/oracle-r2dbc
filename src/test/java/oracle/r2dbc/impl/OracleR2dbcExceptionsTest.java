@@ -136,7 +136,7 @@ public class OracleR2dbcExceptionsTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleR2dbcExceptions#newNonTransientException(String, Throwable)}
+   * {@link OracleR2dbcExceptions#newNonTransientException(String, String, Throwable)}
    */
   @Test
   public void testNewNonTransientException() {

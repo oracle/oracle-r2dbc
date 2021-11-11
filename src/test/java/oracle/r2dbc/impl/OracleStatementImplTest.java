@@ -2211,6 +2211,25 @@ public class OracleStatementImplTest {
     }
   }
 
+  /**
+   * Verifies that {@link R2dbcException#getSql()} returns the SQL command
+   * that caused an exception.
+   */
+  @Test
+  public void testGetSql() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      String badSql = "SELECT 0 FROM dooool";
+      Result result = awaitOne(connection.createStatement(badSql).execute());
+      R2dbcException r2dbcException = assertThrows(R2dbcException.class, () ->
+        awaitOne(result.getRowsUpdated()));
+      assertEquals(badSql, r2dbcException.getSql());
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
   // TODO: Repalce with Parameters.inOut when that's available
   private static final class InOutParameter
     implements Parameter, Parameter.In, Parameter.Out {
