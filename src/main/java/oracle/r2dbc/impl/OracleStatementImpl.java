@@ -45,6 +45,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -533,7 +534,7 @@ final class OracleStatementImpl implements Statement {
    * {@code name}. The match is case-sensitive.
    * @param name A parameter name. Not null.
    * @param value A value to bind. May be null.
-   * @throws IllegalArgumentException if no named parameter matches the
+   * @throws NoSuchElementException if no named parameter matches the
    *   {@code identifier}
    */
   private void bindNamedParameter(String name, Object value) {
@@ -547,7 +548,7 @@ final class OracleStatementImpl implements Statement {
     }
 
     if (! isMatched) {
-      throw new IllegalArgumentException(
+      throw new NoSuchElementException(
         "Unrecognized parameter identifier: " + name);
     }
   }

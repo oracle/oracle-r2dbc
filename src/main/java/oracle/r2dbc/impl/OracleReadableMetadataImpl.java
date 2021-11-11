@@ -320,7 +320,7 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
     else if (type == R2dbcType.TIMESTAMP_WITH_TIME_ZONE) {
       // For the TIMESTAMP WITH TIMEZONE types, use the length of
       // OffsetDateTime.toString() as the precision. Use the scale from JDBC,
-      // even if it's 0 because a  TIMESTAMP may 0 decimal digits.
+      // even if it's 0 because a TIMESTAMP may have 0 decimal digits.
       return new OracleColumnMetadataImpl(type, name, nullability,
         OFFSET_DATE_TIME_PRECISION,
         fromJdbc(() -> resultSetMetaData.getScale(jdbcIndex)));
@@ -352,10 +352,10 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
 
       return new OracleColumnMetadataImpl(
         type, name, nullability,
-        // The getPrecision and getScale methods return 0 for types where
+        // The getPrecision and getScale methods return 0 or -1 for types where
         // precision and scale are not applicable.
-        precision == 0 ? null : precision,
-        scale == 0 ? null : scale);
+        precision < 1 ? null : precision,
+        scale < 1 ? null : scale);
     }
   }
 

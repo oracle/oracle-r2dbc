@@ -36,11 +36,11 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.math.BigDecimal;
 import java.sql.RowId;
 import java.sql.SQLWarning;
 import java.util.Collections;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -264,21 +264,21 @@ public class OracleStatementImplTest {
         IllegalArgumentException.class,
         () -> statement.bind("x", new UnsupportedType()));
 
-      // Expect IllegalArgumentException for an unmatched identifier
+      // Expect NoSuchElementException for an unmatched identifier
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("z", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("xx", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("X", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () ->
           connection.createStatement("SELECT x FROM testBindByIndex")
             .bind("x", 0));
@@ -544,21 +544,21 @@ public class OracleStatementImplTest {
         IllegalArgumentException.class,
         () -> selectStatement.bindNull(null, Integer.class));
 
-      // Expect IllegalArgumentException for an unmatched identifier
+      // Expect NoSuchElementException for an unmatched identifier
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("z", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("xx", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("X", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () ->
           connection.createStatement("SELECT x FROM testBindByIndex")
             .bind("x", 0));
