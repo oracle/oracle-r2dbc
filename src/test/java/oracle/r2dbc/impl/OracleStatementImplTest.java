@@ -95,7 +95,7 @@ public class OracleStatementImplTest {
           .bind(0, 0).bind(1, 0).add()
           .bind(0, 1).bind(1, 0).add()
           .bind(0, 1).bind(1, 1).add()
-          .bind(0, 1).bind(1, 2).add());
+          .bind(0, 1).bind(1, 2));
 
       // Expect bind values to be applied in WHERE clause as:
       // SELECT x, y FROM testBindByIndex WHERE x = 1 AND y > 0
@@ -217,7 +217,7 @@ public class OracleStatementImplTest {
           .bind("X", 0).bind("Y", 0).add()
           .bind("X", 1).bind("Y", 0).add()
           .bind("X", 1).bind("Y", 1).add()
-          .bind("X", 1).bind("Y", 2).add());
+          .bind("X", 1).bind("Y", 2));
 
       // Expect bind values to be applied in WHERE clause as:
       // SELECT x, y FROM testBindByName WHERE x = 1 AND y > 0
@@ -430,7 +430,7 @@ public class OracleStatementImplTest {
           .bindNull(0, Integer.class).bind(1, 1).add()
           .bindNull(0, Integer.class).bind(1, 2).add()
           .bind(0, 0).bind(1, 3).add()
-          .bind(0, 0).bindNull(1, Integer.class).add());
+          .bind(0, 0).bindNull(1, Integer.class));
       awaitQuery(
         asList(
           asList(null, 0),
@@ -574,7 +574,7 @@ public class OracleStatementImplTest {
           .bindNull("x", Integer.class).bind("y", 1).add()
           .bindNull("x", Integer.class).bind("y", 2).add()
           .bind("x", 0).bind("y", 3).add()
-          .bind("x", 0).bindNull("y", Integer.class).add());
+          .bind("x", 0).bindNull("y", Integer.class));
       awaitQuery(
         asList(
           asList(null, 0),
@@ -725,7 +725,7 @@ public class OracleStatementImplTest {
       awaitUpdate(
         asList(1, 1, 1),
         connection.createStatement("INSERT INTO testAdd VALUES(0, 0)")
-          .add().add().add());
+          .add().add());
       awaitQuery(
         asList(asList(0, 0), asList(0, 0), asList(0, 0)),
         row -> asList(row.get(0, Integer.class), row.get(1, Integer.class)),
@@ -737,7 +737,7 @@ public class OracleStatementImplTest {
         connection.createStatement("INSERT INTO testAdd VALUES(:x, :y)")
           .bind("x", 1).bind("y", 1).add()
           .bind("x", 1).bind("y", 2).add()
-          .bind("x", 1).bind("y", 3).add());
+          .bind("x", 1).bind("y", 3));
       awaitQuery(
         asList(asList(1, 1), asList(1, 2), asList(1, 3)),
         row -> asList(row.get(0, Integer.class), row.get(1, Integer.class)),
@@ -768,7 +768,7 @@ public class OracleStatementImplTest {
         Mono.from(connection.createStatement("SELECT ? FROM dual")
           .bind(0, 1).add()
           .bind(0, 2).add()
-          .bind(0, 3).add()
+          .bind(0, 3)
           .execute())
           .flatMapMany(Result::getRowsUpdated));
 
@@ -860,7 +860,7 @@ public class OracleStatementImplTest {
         asList(1, 1),
         updateStatement
           .bind("oldValue", 1).bind("newValue", 2).add()
-          .bind("oldValue", 0).bind("newValue", 1).add());
+          .bind("oldValue", 0).bind("newValue", 1));
 
       // Expect bind values to be cleared after execute with explicit add()
       assertThrows(IllegalStateException.class, updateStatement::execute);
@@ -1757,8 +1757,9 @@ public class OracleStatementImplTest {
       // Load [0,100] into the table
       Statement insert = connection.createStatement(
         "INSERT INTO testNoOutImplicitResult VALUES (?)");
-      IntStream.rangeClosed(0, 100)
+      IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
+      insert.bind(0, 100);
       awaitOne(101, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
         .reduce(0, (total, updateCount) -> total + updateCount));
@@ -1867,8 +1868,9 @@ public class OracleStatementImplTest {
       // Load [0,100] into the table
       Statement insert = connection.createStatement(
         "INSERT INTO testOutAndImplicitResult VALUES (?)");
-      IntStream.rangeClosed(0, 100)
+      IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
+      insert.bind(0, 100);
       awaitOne(101, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
         .reduce(0, (total, updateCount) -> total + updateCount));

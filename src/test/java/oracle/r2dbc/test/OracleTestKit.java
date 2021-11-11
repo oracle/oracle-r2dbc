@@ -28,6 +28,7 @@ import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
+import io.r2dbc.spi.R2dbcNonTransientException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
@@ -269,7 +270,7 @@ public class OracleTestKit implements TestKit<Integer> {
    * segments from a single {@code Result}. The default implementation expects
    * 10 {@code Result}s each with a single {@code UpdateCount}. Batch DML
    * execution is a single call to Oracle Database, and so Oracle R2DBC
-   * returns a signle {@code Result}
+   * returns a single {@code Result}
    * </p>
    */
   @Override
@@ -280,8 +281,17 @@ public class OracleTestKit implements TestKit<Integer> {
         Statement statement = connection.createStatement(expand(TestStatement.INSERT_VALUE_PLACEHOLDER, getPlaceholder(0)));
 
         IntStream.range(0, 10)
-          .forEach(i -> TestKit.bind(statement, getIdentifier(0), i).add());
+          .forEach(i -> {
+            TestKit.bind(statement, getIdentifier(0), i);
 
+            if (i != 9) {
+              statement.add();
+            }
+          });
+
+        // The original TestKit implementation is modified below to call
+        // Result.getRowsUpdated(), which returns a Publisher of 10
+        // UpdateCount segments.
         return Flux.from(statement
           .execute())
           .flatMap(Result::getRowsUpdated);

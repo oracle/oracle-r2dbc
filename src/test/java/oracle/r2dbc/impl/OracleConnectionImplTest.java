@@ -843,7 +843,9 @@ public class OracleConnectionImplTest {
           "Hola, Oracle",
           "Namaste, Oracle",
           "Ni hao, Oracle");
-        values.forEach(value -> insert.bind("value", value).add());
+        values.subList(0, values.size() - 1)
+          .forEach(value -> insert.bind("value", value).add());
+        insert.bind("value", values.get(values.size() - 1));
         awaitUpdate(
           values.stream().map(value -> 1).collect(Collectors.toList()),
           insert);
@@ -982,7 +984,7 @@ public class OracleConnectionImplTest {
             List.of(1, 1),
             insertInSessionA
               .bind(0, "D").add()
-              .bind(0, "D").add());
+              .bind(0, "D"));
           awaitNone(enableAutoCommitPublisher);
           assertFalse(sessionA.isAutoCommit(),
             "Unexpected value returned by isAutoCommit() after subscribing to"

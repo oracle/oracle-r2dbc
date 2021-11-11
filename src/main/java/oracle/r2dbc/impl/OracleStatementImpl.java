@@ -1092,10 +1092,9 @@ final class OracleStatementImpl implements Statement {
   /**
    * <p>
    * Executes this {@code Statement} as a batch DML command. The returned
-   * {@code Publisher} emits 1 {@code Result} for each set of bind values in
-   * this {@code Statement}'s {@link #batch}. Each {@code Result} has an
-   * update count and no row data. Update counts are floored to a maximum of
-   * {@link Integer#MAX_VALUE}.
+   * {@code Publisher} emits 1 {@code Result} having a
+   * {@link io.r2dbc.spi.Result.UpdateCount} segment for each set of bind
+   * values in the {@link #batch}.
    * </p><p>
    * This method copies any mutable state of this {@code Statement} needed to
    * execute the batch; Any mutations that occur after this method returns will
@@ -1108,14 +1107,14 @@ final class OracleStatementImpl implements Statement {
    * subscriber subscribes, before the subscriber emits a {@code request}
    * signal.
    * </p>
-   * @return {@code Publisher} that the {@code Result}s of executing this
+   * @return {@code Publisher} that emits the {@code Result}s of executing this
    * {@code Statement} as a batch DML command.
    * @throws IllegalStateException If this {@code Statement} has been
    * configured to return generated values with
    * {@link #returnGeneratedValues(String...)}. Oracle JDBC does not support
    * batch execution that returns generated keys.
-   * @throws IllegalStateException If at least one parameter has been set
-   * since the last call to {@link #add()}, but not all parameters have been set
+   * @throws IllegalStateException If not all parameters have been set since the
+   * last call to {@link #add()}
    * @throws IllegalStateException If all parameters have been set since the
    * last call to {@link #add()}, and an out parameter is present. JDBC does
    * not support batch execution with out parameters.
@@ -1127,7 +1126,8 @@ final class OracleStatementImpl implements Statement {
         "Batch execution with generated values is not supported");
     }
 
-    addImplicit();
+
+    add(); // TODO: Catch and emit IllegalStateException as R2dbcException?
     Queue<Object[]> currentBatch = batch;
     int batchSize = batch.size();
     batch = new LinkedList<>();
