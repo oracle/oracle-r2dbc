@@ -206,7 +206,13 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       value = getLocalDateTime(index);
     }
     else if (Object.class.equals(type)) {
-      value = convert(index, readablesMetadata.get(index).getJavaType());
+      // Use the default type mapping if Object.class has been specified.
+      // This method is invoked recursively with the default mapping, so long
+      // as Object.class is not also the default mapping.
+      Class<?> defaultType = readablesMetadata.get(index).getJavaType();
+      value = Object.class.equals(defaultType)
+        ? jdbcReadable.getObject(index, Object.class)
+        : convert(index, defaultType);
     }
     else {
       value = jdbcReadable.getObject(index, type);
