@@ -25,6 +25,7 @@ import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcNonTransientException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Result.Message;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Signal;
 
 import java.sql.RowId;
 import java.sql.SQLWarning;
@@ -806,12 +808,21 @@ public class OracleStatementImplTest {
           connection.createStatement("INSERT INTO table VALUES(:x, :y)")
             .bind("x", 0).bind("y", 1).add()
             .bind("x", 0).add());
-      assertThrows(
-        IllegalStateException.class,
-        () ->
-          connection.createStatement("INSERT INTO table VALUES(:x, :y)")
-            .bind("x", 0).bind("y", 1).add()
-            .bind("y", 1).execute()); // implicit add()
+
+      // Expect the statement to execute with previously added binds, and
+      // then emit an error if binds are missing in the final set of binds.
+      List<Signal<Integer>> signals =
+        awaitOne(Flux.from(connection.createStatement(
+          "INSERT INTO testAdd VALUES (:x, :y)")
+          .bind("x", 0).bind("y", 1).add()
+          .bind("y", 1).execute())
+          .flatMap(Result::getRowsUpdated)
+          .materialize()
+          .collectList());
+      assertEquals(2, signals.size());
+      assertEquals(1, signals.get(0).get());
+      assertTrue(
+        signals.get(1).getThrowable() instanceof IllegalStateException);
 
     }
     finally {

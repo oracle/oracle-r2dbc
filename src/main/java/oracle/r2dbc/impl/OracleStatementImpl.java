@@ -25,6 +25,7 @@ import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcNonTransientException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
@@ -1126,8 +1127,19 @@ final class OracleStatementImpl implements Statement {
         "Batch execution with generated values is not supported");
     }
 
+    // If parameters are not set, then capture the error and then emit it after
+    // the result of executing with all previously added binds
+    IllegalStateException missingParameters = null;
+    try {
+      add();
+    }
+    catch (IllegalStateException illegalStateException) {
+      missingParameters = illegalStateException;
+    }
+    Mono<OracleResultImpl> missingParametersMono = missingParameters == null
+      ? Mono.empty()
+      : Mono.error(missingParameters);
 
-    add(); // TODO: Catch and emit IllegalStateException as R2dbcException?
     Queue<Object[]> currentBatch = batch;
     int batchSize = batch.size();
     batch = new LinkedList<>();
@@ -1171,7 +1183,8 @@ final class OracleStatementImpl implements Statement {
             // Close the cursor before emitting the Result
             runJdbc(preparedStatement::close);
             return resultPublisher;
-          });
+          })
+          .concatWith(missingParametersMono);
       });
   }
 
