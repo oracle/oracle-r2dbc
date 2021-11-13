@@ -45,13 +45,12 @@ echo "touch $startUpMount/done" > $startUpScripts/99_done.sh
 
 # The oracle/docker-images repo is cloned. This repo provides Dockerfiles along
 # with a handy script to build images of Oracle Database. For now, this script
-# is just going to build an 18.4.0 XE image, because this can be done in an
-# automated fashion, without having to accept license agreements required by
-# newer versions like 19 and 21.
-# TODO: Also test with newer database versions
+# is just going to build an Express Edition (XE) image, because this can be 
+# done in an automated fashion. Other editions would require a script to accept
+# a license agreement.
 git clone https://github.com/oracle/docker-images.git
 cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
-./buildContainerImage.sh -v 18.4.0 -x
+./buildContainerImage.sh -v $1 -x
 
 # Run the image in a detached container
 # The startup directory is mounted. It contains a createUser.sql script that
@@ -59,7 +58,7 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # database has started.
 # The database port number, 1521, is mapped to the host system. The Oracle
 # R2DBC test suite is configured to connect with this port.
-docker run --name test_db --detach --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database:18.4.0-xe
+docker run --name test_db --detach --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "done" in the startup directory. When that file exists, it means
@@ -72,9 +71,9 @@ do
 done
 
 # Create a configuration file and run the tests. The service name, "xepdb1",
-# is always created for the 18.4.0 XE database, but it would probably change
-# for other database versions (TODO). The test user is created by the
-# startup/01_createUser.sql script
+# is always created for the XE database. It would probably change for other 
+# database editions. The test user is created by the startup/01_createUser.sql
+# script
 cd $GITHUB_WORKSPACE
 echo "DATABASE=xepdb1" > src/test/resources/config.properties
 echo "HOST=localhost" >> src/test/resources/config.properties

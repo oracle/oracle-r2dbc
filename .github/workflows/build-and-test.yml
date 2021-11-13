@@ -51,11 +51,19 @@ jobs:
         java-version: 11
     - name: Build with Maven
       run: mvn -B package --file pom.xml -DskipTests=true
-  # Tests the Oracle R2DBC Driver with an Oracle Database
-  test:
+  # Tests the Oracle R2DBC Driver with an 18 XE Oracle Database
+  test-18-xe:
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Test with Oracle Database
-        run: cd $GITHUB_WORKSPACE/.github/workflows && bash test.sh
+      - name: Test with Oracle Database 18 XE
+        run: cd $GITHUB_WORKSPACE/.github/workflows && bash test.sh 18.4.0
+  # Tests the Oracle R2DBC Driver with a 21.3 XE Oracle Database
+  test-21.3-xe:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Test with Oracle Database 21.3 XE
+        run: cd $GITHUB_WORKSPACE/.github/workflows && bash test.sh 21.3.0
