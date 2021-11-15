@@ -296,8 +296,10 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
     Nullability nullability = getNullability(fromJdbc(() ->
       resultSetMetaData.isNullable(jdbcIndex)));
 
-    if (type == R2dbcType.BLOB || type == R2dbcType.CLOB
-      || type == R2dbcType.NCLOB) {
+    if (type == R2dbcType.BLOB
+      || type == R2dbcType.CLOB
+      || type == R2dbcType.NCLOB
+      || type == OracleR2dbcTypes.JSON) {
       // For LOB types, use null as the precision. The actual maximum length
       // is (4GB x database-block-size), which can not be stored as an Integer
       return new OracleColumnMetadataImpl(type, name, nullability, null, null);
@@ -352,10 +354,10 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
 
       return new OracleColumnMetadataImpl(
         type, name, nullability,
-        // The getPrecision and getScale methods return 0 or -1 for types where
+        // The getPrecision and getScale methods return 0 for types where
         // precision and scale are not applicable.
-        precision < 1 ? null : precision,
-        scale < 1 ? null : scale);
+        precision == 0 ? null : precision,
+        scale == 0 ? null : scale);
     }
   }
 
