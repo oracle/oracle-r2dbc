@@ -28,7 +28,7 @@ import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
-import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingSupplier;
+import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcSupplier;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -154,6 +154,12 @@ final class OracleStatementImpl implements Statement {
    */
   private static final Object NULL_BIND = new Object();
 
+  /**
+   * Lock that guards access to the {@link #jdbcConnection} and any object
+   * created by that connection
+   */
+  private final AsyncLock jdbcLock;
+
   /** A JDBC connection that executes this statement's {@link #sql}. */
   private final Connection jdbcConnection;
 
@@ -220,8 +226,11 @@ final class OracleStatementImpl implements Statement {
    * {@code Statement}. Not null. Not negative.
    * @param jdbcConnection JDBC connection to an Oracle Database.
    * @param adapter Adapts JDBC calls into reactive streams.
+   * @param jdbcLock
    */
-  OracleStatementImpl(String sql, Duration timeout, Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
+  OracleStatementImpl(
+    String sql, Duration timeout, Connection jdbcConnection,
+    ReactiveJdbcAdapter adapter, AsyncLock jdbcLock) {
     this.sql = sql;
     this.timeout = timeout;
     this.jdbcConnection = jdbcConnection;
@@ -230,6 +239,7 @@ final class OracleStatementImpl implements Statement {
     // The SQL string is parsed to identify parameter markers and allocate the
     // bindValues array accordingly
     this.parameterNames = SqlParameterParser.parse(sql);
+    this.jdbcLock = jdbcLock;
     this.bindValues = new Object[parameterNames.size()];
   }
 
@@ -860,12 +870,25 @@ final class OracleStatementImpl implements Statement {
           // If no result is a ResultSet, then the cursor can be closed now.
           // Otherwise, PreparedStatement.closeOnCompletion() will close the
           // cursor after the ResultSet emits the last row
+          return Mono.from(jdbcLock.run(() -> {
+              if (!isResultSet)
+                preparedStatement.close();
+              else
+                preparedStatement.closeOnCompletion();
+            }))
+            .thenMany(resultPublisher);
+          /*
+          // If no result is a ResultSet, then the cursor can be closed now.
+          // Otherwise, PreparedStatement.closeOnCompletion() will close the
+          // cursor after the ResultSet emits the last row
           if (!isResultSet)
             runJdbc(preparedStatement::close);
           else
             runJdbc(preparedStatement::closeOnCompletion);
 
           return resultPublisher;
+
+           */
         }
         else {
           // If at least one Result is an implicit ResultSet, then
@@ -1486,7 +1509,7 @@ final class OracleStatementImpl implements Statement {
    */
   private static <T extends PreparedStatement> Publisher<OracleResultImpl>
   execute(
-    ThrowingSupplier<T> statementSupplier,
+    JdbcSupplier<T> statementSupplier,
     BiFunction<T, Queue<Publisher<Void>>, Publisher<Void>> bindFunction,
     Function<T, Publisher<OracleResultImpl>> resultFunction) {
 

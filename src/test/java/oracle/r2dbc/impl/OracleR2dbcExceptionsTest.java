@@ -64,7 +64,7 @@ public class OracleR2dbcExceptionsTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleR2dbcExceptions#fromJdbc(OracleR2dbcExceptions.ThrowingSupplier)} ()}
+   * {@link OracleR2dbcExceptions#fromJdbc(OracleR2dbcExceptions.JdbcSupplier)} ()}
    */
   @Test
   public void testGetOrHandleSqlException() {
@@ -99,7 +99,7 @@ public class OracleR2dbcExceptionsTest {
 
   /**
    * Verifies the implementation of
-   * {@link OracleR2dbcExceptions#runJdbc(OracleR2dbcExceptions.ThrowingRunnable)}
+   * {@link OracleR2dbcExceptions#runJdbc(OracleR2dbcExceptions.JdbcRunnable)}
    */
   @Test
   public void testRunOrHandleSqlException() {

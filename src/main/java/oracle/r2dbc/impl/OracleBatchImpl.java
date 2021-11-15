@@ -64,6 +64,12 @@ final class OracleBatchImpl implements Batch {
   private final Connection jdbcConnection;
 
   /**
+   * Lock that guards access to the {@link #jdbcConnection} and any object
+   * created by that connection
+   */
+  private final AsyncLock jdbcLock;
+
+  /**
    * Timeout applied to each statement this {@code Batch} executes;
    */
   private final Duration timeout;
@@ -83,11 +89,13 @@ final class OracleBatchImpl implements Batch {
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   OracleBatchImpl(
-    Duration timeout, Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
+    Duration timeout, Connection jdbcConnection, ReactiveJdbcAdapter adapter,
+    AsyncLock jdbcLock) {
     this.timeout = timeout;
     this.jdbcConnection =
       requireNonNull(jdbcConnection, "jdbcConnection is null");
     this.adapter = requireNonNull(adapter, "adapter is null");
+    this.jdbcLock = jdbcLock;
   }
 
   /**
@@ -102,7 +110,7 @@ final class OracleBatchImpl implements Batch {
     requireOpenConnection(jdbcConnection);
     requireNonNull(sql, "sql is null");
     statements.add(
-      new OracleStatementImpl(sql, timeout, jdbcConnection, adapter));
+      new OracleStatementImpl(sql, timeout, jdbcConnection, adapter, jdbcLock));
     return this;
   }
 

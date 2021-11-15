@@ -238,7 +238,7 @@ final class OracleR2dbcExceptions {
    *   null.
    * @throws R2dbcException If the supplier throws a {@code SQLException}.
    */
-  static void runJdbc(ThrowingRunnable runnable)
+  static void runJdbc(JdbcRunnable runnable)
     throws R2dbcException {
     try {
       runnable.runOrThrow();
@@ -271,7 +271,7 @@ final class OracleR2dbcExceptions {
    * @return The output of the specified {@code supplier}.
    * @throws R2dbcException If the supplier throws a {@code SQLException}.
    */
-  static <T> T fromJdbc(ThrowingSupplier<T> supplier)
+  static <T> T fromJdbc(JdbcSupplier<T> supplier)
     throws R2dbcException {
     try {
       return supplier.getOrThrow();
@@ -306,7 +306,7 @@ final class OracleR2dbcExceptions {
    * </p>
    */
   @FunctionalInterface
-  interface ThrowingRunnable extends Runnable {
+  interface JdbcRunnable extends Runnable {
     /**
      * Runs to completion and returns normally, or throws a {@code SQLException}
      * if an error is encountered.
@@ -319,8 +319,7 @@ final class OracleR2dbcExceptions {
      * R2dbcException} if an error is encountered.
      * @throws R2dbcException If the run does not complete due to an error.
      * @implNote The default implementation invokes
-     * {@link #runJdbc(ThrowingRunnable)} with this {@code
-     * ThrowingRunnable}.
+     * {@link #runJdbc(JdbcRunnable)} with this {@code JdbcRunnable}.
      */
     @Override
     default void run() throws R2dbcException {
@@ -338,7 +337,7 @@ final class OracleR2dbcExceptions {
    * @param <T> the type of values supplied by this supplier.
    */
   @FunctionalInterface
-  interface ThrowingSupplier<T> extends Supplier<T> {
+  interface JdbcSupplier<T> extends Supplier<T> {
     /**
      * Returns a value, or throws a {@code SQLException} if an error is
      * encountered.
@@ -352,8 +351,7 @@ final class OracleR2dbcExceptions {
      * encountered.
      * @throws R2dbcException If a value is not returned due to an error.
      * @implNote The default implementation invokes
-     * {@link #fromJdbc(ThrowingSupplier)} (ThrowingRunnable)}
-     * with this {@code ThrowingSupplier}.
+     * {@link #fromJdbc(JdbcSupplier)} with this {@code JdbcSupplier}.
      */
     @Override
     default T get() throws R2dbcException {
