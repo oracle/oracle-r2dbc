@@ -80,7 +80,7 @@ public class OracleRowMetadataImplTest {
           "INSERT INTO testGetColumnMetadataByIndex (x,y) VALUES (0,0)"));
 
         // Expect IllegalArgumentException for an index less than 0
-        awaitError(ArrayIndexOutOfBoundsException.class,
+        awaitError(IndexOutOfBoundsException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByIndex")
             .execute())
@@ -90,7 +90,7 @@ public class OracleRowMetadataImplTest {
 
         // Expect IllegalArgumentException for an index greater than or equal
         // to the number of columns
-        awaitError(ArrayIndexOutOfBoundsException.class,
+        awaitError(IndexOutOfBoundsException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetColumnMetadataByIndex")
             .execute())

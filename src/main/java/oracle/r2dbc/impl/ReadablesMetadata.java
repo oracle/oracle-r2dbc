@@ -123,7 +123,7 @@ class ReadablesMetadata<T extends ReadableMetadata> {
    * @param index the value index starting at 0
    * @return the {@link ReadableMetadata} for one value in this result. Not
    * null.
-   * @throws ArrayIndexOutOfBoundsException if the {@code index} is less than
+   * @throws IndexOutOfBoundsException if the {@code index} is less than
    * zero or greater than the number of available values.
    * @implSpec This method implements common behavior specified for both
    * {@link RowMetadata#getColumnMetadata(int)} and
@@ -131,10 +131,10 @@ class ReadablesMetadata<T extends ReadableMetadata> {
    */
   protected final T get(int index) {
     if (index < 0) {
-      throw new ArrayIndexOutOfBoundsException("Negative index: " + index);
+      throw new IndexOutOfBoundsException("Negative index: " + index);
     }
     else if (index >= metadataList.size()) {
-      throw new ArrayIndexOutOfBoundsException(
+      throw new IndexOutOfBoundsException(
         "Index " + index + " exceeds the maximum index: "
           + metadataList.size());
     }

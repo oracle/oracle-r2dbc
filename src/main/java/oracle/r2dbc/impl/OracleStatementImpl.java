@@ -25,6 +25,7 @@ import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcNonTransientException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
@@ -45,6 +46,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -543,7 +545,7 @@ final class OracleStatementImpl implements Statement {
    * {@code name}. The match is case-sensitive.
    * @param name A parameter name. Not null.
    * @param value A value to bind. May be null.
-   * @throws IllegalArgumentException if no named parameter matches the
+   * @throws NoSuchElementException if no named parameter matches the
    *   {@code identifier}
    */
   private void bindNamedParameter(String name, Object value) {
@@ -557,7 +559,7 @@ final class OracleStatementImpl implements Statement {
     }
 
     if (! isMatched) {
-      throw new IllegalArgumentException(
+      throw new NoSuchElementException(
         "Unrecognized parameter identifier: " + name);
     }
   }
@@ -1114,10 +1116,9 @@ final class OracleStatementImpl implements Statement {
   /**
    * <p>
    * Executes this {@code Statement} as a batch DML command. The returned
-   * {@code Publisher} emits 1 {@code Result} for each set of bind values in
-   * this {@code Statement}'s {@link #batch}. Each {@code Result} has an
-   * update count and no row data. Update counts are floored to a maximum of
-   * {@link Integer#MAX_VALUE}.
+   * {@code Publisher} emits 1 {@code Result} having a
+   * {@link io.r2dbc.spi.Result.UpdateCount} segment for each set of bind
+   * values in the {@link #batch}.
    * </p><p>
    * This method copies any mutable state of this {@code Statement} needed to
    * execute the batch; Any mutations that occur after this method returns will
@@ -1130,14 +1131,14 @@ final class OracleStatementImpl implements Statement {
    * subscriber subscribes, before the subscriber emits a {@code request}
    * signal.
    * </p>
-   * @return {@code Publisher} that the {@code Result}s of executing this
+   * @return {@code Publisher} that emits the {@code Result}s of executing this
    * {@code Statement} as a batch DML command.
    * @throws IllegalStateException If this {@code Statement} has been
    * configured to return generated values with
    * {@link #returnGeneratedValues(String...)}. Oracle JDBC does not support
    * batch execution that returns generated keys.
-   * @throws IllegalStateException If at least one parameter has been set
-   * since the last call to {@link #add()}, but not all parameters have been set
+   * @throws IllegalStateException If not all parameters have been set since the
+   * last call to {@link #add()}
    * @throws IllegalStateException If all parameters have been set since the
    * last call to {@link #add()}, and an out parameter is present. JDBC does
    * not support batch execution with out parameters.
@@ -1149,7 +1150,19 @@ final class OracleStatementImpl implements Statement {
         "Batch execution with generated values is not supported");
     }
 
-    addImplicit();
+    // If parameters are not set, then capture the error and then emit it after
+    // the result of executing with all previously added binds
+    IllegalStateException missingParameters = null;
+    try {
+      add();
+    }
+    catch (IllegalStateException illegalStateException) {
+      missingParameters = illegalStateException;
+    }
+    Mono<OracleResultImpl> missingParametersMono = missingParameters == null
+      ? Mono.empty()
+      : Mono.error(missingParameters);
+
     Queue<Object[]> currentBatch = batch;
     int batchSize = batch.size();
     batch = new LinkedList<>();
@@ -1193,7 +1206,8 @@ final class OracleStatementImpl implements Statement {
             // Close the cursor before emitting the Result
             runJdbc(preparedStatement::close);
             return resultPublisher;
-          });
+          })
+          .concatWith(missingParametersMono);
       });
   }
 

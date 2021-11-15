@@ -296,8 +296,10 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
     Nullability nullability = getNullability(fromJdbc(() ->
       resultSetMetaData.isNullable(jdbcIndex)));
 
-    if (type == R2dbcType.BLOB || type == R2dbcType.CLOB
-      || type == R2dbcType.NCLOB) {
+    if (type == R2dbcType.BLOB
+      || type == R2dbcType.CLOB
+      || type == R2dbcType.NCLOB
+      || type == OracleR2dbcTypes.JSON) {
       // For LOB types, use null as the precision. The actual maximum length
       // is (4GB x database-block-size), which can not be stored as an Integer
       return new OracleColumnMetadataImpl(type, name, nullability, null, null);
@@ -320,7 +322,7 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
     else if (type == R2dbcType.TIMESTAMP_WITH_TIME_ZONE) {
       // For the TIMESTAMP WITH TIMEZONE types, use the length of
       // OffsetDateTime.toString() as the precision. Use the scale from JDBC,
-      // even if it's 0 because a  TIMESTAMP may 0 decimal digits.
+      // even if it's 0 because a TIMESTAMP may have 0 decimal digits.
       return new OracleColumnMetadataImpl(type, name, nullability,
         OFFSET_DATE_TIME_PRECISION,
         fromJdbc(() -> resultSetMetaData.getScale(jdbcIndex)));

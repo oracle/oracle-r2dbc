@@ -543,7 +543,7 @@ public class TypeMappingTest {
       awaitUpdate(asList(1,1), connection.createStatement(
         "INSERT INTO "+table+"(javaValue) VALUES(:javaValue)")
         .bind("javaValue", javaValue).add()
-        .bindNull("javaValue", javaValue.getClass()).add());
+        .bindNull("javaValue", javaValue.getClass()));
 
       verifyEquals.accept(javaValue,
         awaitOne(Flux.from(connection.createStatement(
