@@ -1162,12 +1162,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * @return A Publisher that
    */
   private <T> Publisher<T> usingConnection(Publisher<T> publisher) {
-
     return subscriber ->
       asyncLock.lock(() ->
         publisher.subscribe(
           new UsingConnectionSubscriber<>(subscriber)));
-
   }
 
   /**

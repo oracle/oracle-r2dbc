@@ -1,6 +1,7 @@
 package oracle.r2dbc.impl;
 
 import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcRunnable;
+import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcSupplier;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
@@ -73,11 +74,11 @@ final class AsyncLock {
   }
 
   /**
-   * Returns a {@code Publisher} that acquires this lock and runs a
+   * Returns a {@code Publisher} that acquires this lock and executes a
    * {@code jdbcRunnable} when a subscriber subscribes. The {@code Publisher}
    * emits {@code onComplete} if the runnable completes normally, or emits
    * {@code onError} if the runnable throws an exception.
-   * @param jdbcRunnable Runnable to run. Not null.
+   * @param jdbcRunnable Runnable to execute. Not null.
    * @return A publisher that emits the result of the {@code jdbcRunnable}.
    */
   Publisher<Void> run(JdbcRunnable jdbcRunnable) {
@@ -86,6 +87,30 @@ final class AsyncLock {
         try {
           jdbcRunnable.runOrThrow();
           monoSink.success();
+        }
+        catch (Throwable throwable) {
+          monoSink.error(throwable);
+        }
+        finally {
+          unlock();
+        }
+      }));
+  }
+
+  /**
+   * Returns a {@code Publisher} that acquires this lock and executes a
+   * {@code jdbcSupplier} when a subscriber subscribes. The {@code Publisher}
+   * emits {@code onNext} and {@code onComplete} if the runnable completes
+   * normally, or emits {@code onError} if the runnable throws an exception.
+   * The {@code onNext} signal emits the output of the {@code jdbcSupplier}.
+   * @param jdbcSupplier Supplier to execute. Not null.
+   * @return A publisher that emits the result of the {@code jdbcSupplier}.
+   */
+  <T> Publisher<T> get(JdbcSupplier<T> jdbcSupplier) {
+    return Mono.create(monoSink ->
+      lock(() -> {
+        try {
+          monoSink.success(jdbcSupplier.getOrThrow());
         }
         catch (Throwable throwable) {
           monoSink.error(throwable);
