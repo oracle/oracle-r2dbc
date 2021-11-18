@@ -158,6 +158,11 @@ public class OracleReadableMetadataImplTest {
         connection, "NUMBER(5,3)", JDBCType.NUMERIC, R2dbcType.NUMERIC, 5, 3,
         BigDecimal.class, BigDecimal.valueOf(12.345));
 
+      // Expect getScale() to return 0 for NUMBER .
+      verifyColumnMetadata(
+        connection, "NUMBER(5,0)", JDBCType.NUMERIC, R2dbcType.NUMERIC, 5, 0,
+        BigDecimal.class, BigDecimal.valueOf(12345));
+
       // Expect FLOAT and Double to map.
       verifyColumnMetadata(
         connection, "FLOAT(6)", JDBCType.FLOAT, R2dbcType.FLOAT, 6, null,

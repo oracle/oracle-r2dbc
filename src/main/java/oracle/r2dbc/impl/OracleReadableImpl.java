@@ -39,6 +39,7 @@ import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
 import java.nio.ByteBuffer;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.NoSuchElementException;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 
@@ -121,8 +122,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * into the specified {@code type}.
    * </p>
    * @throws IllegalArgumentException {@inheritDoc}
-   * @throws IllegalArgumentException If the {@code index} is less than 0,
-   * or greater than the maximum value index.
    * @throws IllegalArgumentException If conversion to the specified
    * {@code type} is not supported.
    */
@@ -163,14 +162,14 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * matching values.
    * @param name The name of a value
    * @return The index of the named value within this {@code Readable}
-   * @throws IllegalArgumentException If no column has a matching name.
+   * @throws NoSuchElementException If no column has a matching name.
    */
   private int indexOf(String name) {
     int columnIndex = readablesMetadata.getColumnIndex(name);
     if (columnIndex != -1)
       return columnIndex;
     else
-      throw new IllegalArgumentException("Unrecognized name: " + name);
+      throw new NoSuchElementException("Unrecognized name: " + name);
   }
 
   /**
@@ -206,7 +205,13 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       value = getLocalDateTime(index);
     }
     else if (Object.class.equals(type)) {
-      value = convert(index, readablesMetadata.get(index).getJavaType());
+      // Use the default type mapping if Object.class has been specified.
+      // This method is invoked recursively with the default mapping, so long
+      // as Object.class is not also the default mapping.
+      Class<?> defaultType = readablesMetadata.get(index).getJavaType();
+      value = Object.class.equals(defaultType)
+        ? jdbcReadable.getObject(index, Object.class)
+        : convert(index, defaultType);
     }
     else {
       value = jdbcReadable.getObject(index, type);
@@ -323,14 +328,14 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * for this row. This method is used to verify index value parameters
    * supplied by user code.
    * @param index 0-based column index
-   * @throws IllegalStateException if the index is not valid.
+   * @throws IndexOutOfBoundsException if the index is not valid.
    */
   private void requireValidIndex(int index) {
     if (index < 0) {
-      throw new IllegalArgumentException("Index is less than zero: " + index);
+      throw new IndexOutOfBoundsException("Index is less than zero: " + index);
     }
     else if (index >= readablesMetadata.getList().size()) {
-      throw new IllegalArgumentException(
+      throw new IndexOutOfBoundsException(
         "Index " + index + " is greater than or equal to column count: "
           + readablesMetadata.getList().size());
     }

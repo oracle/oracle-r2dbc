@@ -55,6 +55,7 @@ final class SqlTypeMap {
    */
   private static final Map<SQLType, Type> JDBC_TO_R2DBC_TYPE_MAP =
     Map.ofEntries(
+      entry(JDBCType.ARRAY, R2dbcType.COLLECTION),
       entry(JDBCType.BIGINT, R2dbcType.BIGINT),
       entry(JDBCType.BINARY, R2dbcType.BINARY),
       entry(OracleType.BINARY_DOUBLE, OracleR2dbcTypes.BINARY_DOUBLE),
@@ -63,7 +64,6 @@ final class SqlTypeMap {
       entry(JDBCType.BOOLEAN, R2dbcType.BOOLEAN),
       entry(JDBCType.CHAR, R2dbcType.CHAR),
       entry(JDBCType.CLOB, R2dbcType.CLOB),
-      entry(JDBCType.ARRAY, R2dbcType.COLLECTION),
       entry(JDBCType.DATE, R2dbcType.DATE),
       entry(JDBCType.DECIMAL, R2dbcType.DECIMAL),
       entry(JDBCType.DOUBLE, R2dbcType.DOUBLE),
@@ -75,6 +75,7 @@ final class SqlTypeMap {
       entry(
         OracleType.INTERVAL_YEAR_TO_MONTH,
         OracleR2dbcTypes.INTERVAL_YEAR_TO_MONTH),
+      entry(OracleType.JSON, OracleR2dbcTypes.JSON),
       entry(JDBCType.LONGVARBINARY, OracleR2dbcTypes.LONG_RAW),
       entry(JDBCType.LONGVARCHAR, OracleR2dbcTypes.LONG),
       entry(JDBCType.NCHAR, R2dbcType.NCHAR),
