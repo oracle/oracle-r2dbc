@@ -29,6 +29,8 @@ import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcSupplier;
+import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
+import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -57,11 +59,15 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
+import static oracle.r2dbc.impl.OracleReadableImpl.createOutParameters;
+import static oracle.r2dbc.impl.OracleReadableMetadataImpl.createParameterMetadata;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createUpdateCountResult;
+import static oracle.r2dbc.impl.ReadablesMetadata.createOutParametersMetadata;
 import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
 
 /**
@@ -1008,19 +1014,19 @@ final class OracleStatementImpl implements Statement {
       .filter(i -> bindValues[i] instanceof Parameter.Out)
       .toArray();
 
-    return OracleReadableImpl.createOutParameters(
-      new ReactiveJdbcAdapter.JdbcReadable() {
+    return createOutParameters(
+      new JdbcReadable() {
         @Override
         public <T> T getObject(int index, Class<T> type) {
           // TODO: Throw IllegalArgumentException or IndexOutOfBoundsException
           //  based on the error code of any SQLException thrown
-          return OracleR2dbcExceptions.fromJdbc(() ->
+          return fromJdbc(() ->
             callableStatement.getObject(1 + outBindIndexes[index], type));
         }
       },
-      ReadablesMetadata.createOutParametersMetadata(
+      createOutParametersMetadata(
         IntStream.range(0, outBindIndexes.length)
-          .mapToObj(i -> OracleReadableMetadataImpl.createParameterMetadata(
+          .mapToObj(i -> createParameterMetadata(
             Objects.requireNonNullElse(
               parameterNames.get(outBindIndexes[i]), String.valueOf(i)),
             ((Parameter)bindValues[outBindIndexes[i]]).getType()))
@@ -1577,4 +1583,134 @@ final class OracleStatementImpl implements Statement {
     }
   }
 
+  private static class JdbcStatement {
+
+    protected final AsyncLock jdbcLock;
+
+    protected final ReactiveJdbcAdapter adapter;
+
+    protected final PreparedStatement preparedStatement;
+
+    protected final Object[] binds;
+
+    protected final Publisher<Void> deallocatePublisher = Mono.empty();
+
+    private JdbcStatement(
+      AsyncLock jdbcLock, ReactiveJdbcAdapter adapter,
+      PreparedStatement preparedStatement, Object[] binds) {
+      this.jdbcLock = jdbcLock;
+      this.adapter = adapter;
+      this.preparedStatement = preparedStatement;
+      this.binds = binds;
+    }
+
+    final Publisher<Void> deallocate() {
+      return deallocatePublisher;
+    }
+
+    protected Publisher<OracleResultImpl> execute() {
+      return null;
+    }
+
+    protected Publisher<Void> bind(Object[] values) {
+      return null;
+    }
+  }
+
+  private static class JdbcCall extends JdbcStatement {
+
+    private final int[] outBindIndexes;
+
+    private final OutParametersMetadataImpl metadata;
+
+    private JdbcCall(AsyncLock jdbcLock,
+      ReactiveJdbcAdapter adapter, PreparedStatement preparedStatement,
+      Object[] bindValues, List<String> parameterNames) {
+      super(jdbcLock, adapter, preparedStatement, bindValues);
+
+      outBindIndexes = IntStream.range(0, bindValues.length)
+        .filter(i -> bindValues[i] instanceof Parameter.Out)
+        .toArray();
+
+
+      OutParameterMetadata[] metadataArray =
+        new OutParameterMetadata[outBindIndexes.length];
+
+      for (int i = 0; i < metadataArray.length; i++) {
+        int bindIndex = outBindIndexes[i];
+        String name = parameterNames.get(bindIndex);
+        metadataArray[i] = createParameterMetadata(
+          name == null ? String.valueOf(i) : name,
+          ((Parameter)bindValues[bindIndex]).getType());
+      }
+
+      this.metadata = createOutParametersMetadata(metadataArray);
+    }
+
+    @Override
+    protected Publisher<Void> bind(Object[] values) {
+      return Flux.concat(
+        super.bind(values),
+        registerOutParameters(values));
+    }
+
+    private Publisher<Void> registerOutParameters(Object[] values) {
+      return jdbcLock.run(() -> {
+        for (int i : outBindIndexes) {
+          Type type = ((Parameter) values[i]).getType();
+          SQLType jdbcType = toJdbcType(type);
+          preparedStatement.unwrap(CallableStatement.class)
+            .registerOutParameter(i + 1, jdbcType);
+        }
+      });
+    }
+
+    @Override
+    protected Publisher<OracleResultImpl> execute() {
+      return Flux.concat(
+        super.execute(),
+        Mono.just(createCallResult(createOutParameters(
+          new JdbcOutParameters(), metadata, adapter))));
+    }
+
+    private final class JdbcOutParameters implements JdbcReadable {
+      @Override
+      public <T> T getObject(int index, Class<T> type) {
+        // TODO: Throw IllegalArgumentException or IndexOutOfBoundsException
+        //  based on the error code of any SQLException thrown
+        return fromJdbc(() ->
+          preparedStatement.unwrap(CallableStatement.class)
+            .getObject(outBindIndexes[index] + 1, type));
+      }
+    }
+
+  }
+
+  private static final class JdbcBatch extends JdbcStatement {
+
+    private final Queue<Object[]> batch;
+
+    private JdbcBatch(AsyncLock jdbcLock, PreparedStatement preparedStatement,
+      Queue<Object[]> batch) {
+      super(jdbcLock, preparedStatement, batch.remove());
+      this.batch = batch;
+    }
+
+    @Override
+    protected Publisher<Void> bind(Object[] values) {
+      return Flux.concat(
+        super.bind(values),
+        bindBatch());
+    }
+
+    private Publisher<Void> bindBatch() {
+      if (batch.isEmpty()) {
+        return Mono.empty();
+      }
+      else {
+        return Mono.from(jdbcLock.run(preparedStatement::addBatch))
+          .thenEmpty(bind(batch.remove()));
+      }
+    }
+  }
 }
