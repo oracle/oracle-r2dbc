@@ -38,6 +38,7 @@ import java.sql.SQLWarning;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -89,6 +90,14 @@ abstract class OracleResultImpl implements Result {
    */
   private final CompletableFuture<Void> consumedFuture =
     new CompletableFuture<>();
+
+  /**
+   * Reference to a publisher that must be subscribed to after all segments of
+   * this result have been consumed. The reference is updated to {@code null}
+   * after the publisher has been subscribed to.
+   */
+  private AtomicReference<Publisher<Void>> onConsumed =
+    new AtomicReference<>(Mono.empty());
 
   /** Private constructor invoked by inner subclasses */
   private OracleResultImpl() { }
@@ -144,15 +153,19 @@ abstract class OracleResultImpl implements Result {
     // they are thrown and emitted as onError signals. Any other Segment type
     // is mapped to the FILTERED object, which is then filtered by a downstream
     // operator.
-    return Flux.from(publishSegments(segment -> {
-        if (type.isInstance(segment))
-          return mappingFunction.apply(type.cast(segment));
-        else if (segment instanceof Message)
-          throw ((Message)segment).exception();
-        else
-          return (U)FILTERED;
-      }))
-      .filter(object -> object != FILTERED)
+    return Flux.usingWhen(
+      Mono.just(onConsumed),
+      ignored ->
+        Flux.from(publishSegments(segment -> {
+          if (type.isInstance(segment))
+            return mappingFunction.apply(type.cast(segment));
+          else if (segment instanceof Message)
+            throw ((Message)segment).exception();
+          else
+            return (U)FILTERED;
+        }))
+        .filter(object -> object != FILTERED),
+      onConsumed -> onConsumed.getAndSet(null))
       .doOnTerminate(() -> consumedFuture.complete(null))
       .doOnCancel(() -> consumedFuture.complete(null));
   }
@@ -282,6 +295,27 @@ abstract class OracleResultImpl implements Result {
    */
   final Publisher<Void> onConsumed() {
     return Mono.fromCompletionStage(consumedFuture);
+  }
+
+  /**
+   * <p>
+   * Sets a publisher that is subscribed to when all segments of this result
+   * have been consumed.
+   * </p><p>
+   * If this result has already been consumed, then the publisher is not
+   * subscribed to.
+   * </p><p>
+   * A subsequent call to this method overwrites the publisher that has been
+   * set by the current call.
+   * </p>
+   * @param onConsumed Publisher to subscribe to when consumed
+   * @return true if this result has not already been consumed, and the
+   * publisher will be subscribed to. Returns false if the publisher will not
+   * be subscribed to because this result is already consumed.
+   */
+  final boolean onConsumed(Publisher<Void> onConsumed) {
+    return null != this.onConsumed.getAndUpdate(
+      current -> current == null ? null : onConsumed);
   }
 
   /**
