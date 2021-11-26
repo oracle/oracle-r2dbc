@@ -65,7 +65,9 @@ import static oracle.r2dbc.impl.OracleReadableMetadataImpl.createParameterMetada
 import static oracle.r2dbc.impl.OracleResultImpl.createBatchUpdateErrorResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createErrorResult;
+import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createQueryResult;
+import static oracle.r2dbc.impl.OracleResultImpl.createUpdateCountResult;
 import static oracle.r2dbc.impl.ReadablesMetadata.createOutParametersMetadata;
 import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
 
@@ -559,7 +561,7 @@ final class OracleStatementImpl implements Statement {
    */
   private Publisher<JdbcStatement> createJdbcStatement() {
     int currentFetchSize = fetchSize;
-    Object[] currentBinds = copyBinds();
+    Object[] currentBinds = transferBinds();
 
     return jdbcLock.get(() -> {
       PreparedStatement preparedStatement =
@@ -612,7 +614,7 @@ final class OracleStatementImpl implements Statement {
    */
   private Publisher<JdbcStatement> createJdbcCall() {
     int currentFetchSize = fetchSize;
-    Object[] currentBinds = copyBinds();
+    Object[] currentBinds = transferBinds();
 
     return jdbcLock.get(() -> {
       CallableStatement callableStatement = jdbcConnection.prepareCall(sql);
@@ -630,7 +632,7 @@ final class OracleStatementImpl implements Statement {
    */
   private Publisher<JdbcStatement> createJdbcReturningGenerated() {
     int currentFetchSize = fetchSize;
-    Object[] currentBinds = copyBinds();
+    Object[] currentBinds = transferBinds();
     String[] currentGeneratedColumns = generatedColumns.clone();
 
     return jdbcLock.get(() -> {
@@ -713,7 +715,7 @@ final class OracleStatementImpl implements Statement {
   private void bindParameter(int index, Parameter parameter) {
 
     if (parameter instanceof Parameter.Out) {
-      if (batch.isEmpty())
+      if (! batch.isEmpty())
         throw outParameterWithBatch();
       if (generatedColumns != null)
         throw outParameterWithGeneratedValues();
@@ -804,7 +806,7 @@ final class OracleStatementImpl implements Statement {
    * execution.
    * @return A copy of the bind values
    */
-  private Object[] copyBinds() {
+  private Object[] transferBinds() {
     requireAllParametersSet();
     Object[] currentBinds = bindValues.clone();
     Arrays.fill(bindValues, null);
@@ -889,12 +891,12 @@ final class OracleStatementImpl implements Statement {
    * </p><p>
    * Subclasses may extend the base class to handle other types of results,
    * such as DML returning generated values, a procedural call that
-   * returns out-parameters, or a batch DML execution.
+   * returns out-parameters, or a batch of DML update counts.
    * </p><p>
    * The base class ensures that all resources allocated for the statement
    * execution are eventually deallocated. This includes the
-   * {@link #preparedStatement}, along with resources allocoated for bind
-   * values, such as {@code java.sql.Blob/Clob}.
+   * {@link #preparedStatement}, along with resources allocated for bind
+   * values, such as {@code java.sql.Blob/Clob} objects.
    * </p>
    */
   private class JdbcStatement {
@@ -943,12 +945,8 @@ final class OracleStatementImpl implements Statement {
      * @return A publisher that emits the result of executing this statement
      */
     final Publisher<OracleResultImpl> execute() {
-      // Results are collected into a list, and when every result in that
-      // list is consumedthe PreparedStatement is
-      // closed
-      // after every result in the list is consumed.
-      return Flux.using(
-        () -> new ArrayList<>(1),
+      return Flux.usingWhen(
+        Mono.just(new ArrayList<>(1)),
         results ->
           Mono.from(bind())
             .thenMany(getResults())
@@ -974,6 +972,10 @@ final class OracleStatementImpl implements Statement {
      * {@code binds} have been set.
      */
     protected Publisher<Void> bind() {
+      return bind(binds);
+    }
+
+    protected final Publisher<Void> bind(Object[] binds) {
       return Flux.concat(jdbcLock.get(() -> {
         List<Publisher<Void>> bindPublishers = new ArrayList<>(0);
         for (int i = 0; i < binds.length; i++) {
@@ -998,7 +1000,7 @@ final class OracleStatementImpl implements Statement {
             bindPublishers.add(bindPublisher);
           }
           else {
-            setBind(i + 1, jdbcValue, jdbcType);
+            setBind(i, jdbcValue, jdbcType);
           }
         }
         return Flux.concat(bindPublishers);
@@ -1017,14 +1019,37 @@ final class OracleStatementImpl implements Statement {
         .flatMap(isResultSet ->
           Mono.from(jdbcLock.get(() -> {
             ArrayList<OracleResultImpl> results = new ArrayList<>(1);
+
             OracleResultImpl result = getCurrentResult(isResultSet);
-            while (result != null) {
+            if (result != null)
               results.add(result);
-              result = getCurrentResult(
-                preparedStatement.getMoreResults(KEEP_CURRENT_RESULT));
+
+            // Implicit results may follow, even if the first result is null
+            while ((result = getCurrentResult(
+              preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))) != null) {
+              results.add(result);
             }
             return results;
           })))
+        .flatMapMany(Flux::fromIterable);
+    }
+
+    protected final Publisher<OracleResultImpl> getSqlResults(
+      boolean isResultSet) {
+      return Mono.from(jdbcLock.get(() -> {
+          ArrayList<OracleResultImpl> results = new ArrayList<>(1);
+
+          OracleResultImpl result = getCurrentResult(isResultSet);
+          if (result != null)
+            results.add(result);
+
+          // Implicit results may follow, even if the first result is null
+          while ((result = getCurrentResult(
+            preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))) != null) {
+            results.add(result);
+          }
+          return results;
+        }))
         .flatMapMany(Flux::fromIterable);
     }
 
@@ -1043,16 +1068,15 @@ final class OracleStatementImpl implements Statement {
      * @implNote This method invokes JDBC methods, and should only be called
      * when holding ownership of the {@link #jdbcLock}
      */
-    private OracleResultImpl getCurrentResult(boolean isResultSet)
+    protected final OracleResultImpl getCurrentResult(boolean isResultSet)
       throws SQLException {
       if (isResultSet) {
-        return OracleResultImpl.createQueryResult(
-          preparedStatement.getResultSet(), adapter);
+        return createQueryResult(preparedStatement.getResultSet(), adapter);
       }
       else {
         long updateCount = preparedStatement.getLargeUpdateCount();
         return updateCount >= 0
-          ? OracleResultImpl.createUpdateCountResult(updateCount)
+          ? createUpdateCountResult(updateCount)
           : null;
       }
     }
@@ -1124,7 +1148,7 @@ final class OracleStatementImpl implements Statement {
      * specified as the SQL type for the bind. Otherwise, if the
      * {@code type} is {@code null}, then the JDBC driver infers the SQL type
      * of the bind.
-     * @param index 1-based parameter index
+     * @param index 0-based parameter index
      * @param value Value. May be null.
      * @param type SQL type. May be null.
      * @implNote This method invokes JDBC methods, and should only be called
@@ -1132,10 +1156,11 @@ final class OracleStatementImpl implements Statement {
      */
     private void setBind(int index, Object value, SQLType type)
       throws SQLException {
+      int jdbcIndex = index + 1;
       if (type != null)
-        preparedStatement.setObject(index, value, type);
+        preparedStatement.setObject(jdbcIndex, value, type);
       else
-        preparedStatement.setObject(index, value);
+        preparedStatement.setObject(jdbcIndex, value);
     }
 
     /**
@@ -1363,39 +1388,14 @@ final class OracleStatementImpl implements Statement {
     /** Batch of bind values. */
     private final Queue<Object[]> batch;
 
+    /** Number of batched bind values */
+    private final int batchSize;
+
     private JdbcBatch(
       PreparedStatement preparedStatement, Queue<Object[]> batch) {
       super(preparedStatement, null);
       this.batch = batch;
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * The returned {@code Publisher} emits 1 {@code Result} having an
-     * {@link io.r2dbc.spi.Result.UpdateCount} segment for each set of bind
-     * values in the {@link #batch}.
-     * </p>
-     */
-    @Override
-    protected Publisher<OracleResultImpl> getResults() {
-      int batchSize = batch.size();
-      AtomicInteger index = new AtomicInteger(0);
-
-      return Mono.from(bind())
-        .thenMany(adapter.publishBatchUpdate(preparedStatement))
-        .collect(
-          () -> new long[batchSize],
-          (updateCounts, updateCount) ->
-            updateCounts[index.getAndIncrement()] = updateCount)
-        .map(OracleResultImpl::createBatchUpdateResult)
-        .onErrorResume(
-          error ->
-            error instanceof R2dbcException
-              && error.getCause() instanceof BatchUpdateException,
-          error ->
-            Mono.just(createBatchUpdateErrorResult(
-              (BatchUpdateException) error.getCause())));
+      this.batchSize = batch.size();
     }
 
     /**
@@ -1409,14 +1409,50 @@ final class OracleStatementImpl implements Statement {
      */
     @Override
     protected Publisher<Void> bind() {
+
+      @SuppressWarnings("unchecked")
+      Publisher<Void>[] bindPublishers = new Publisher[batchSize];
+      for (int i = 0; i < batchSize; i++) {
+        bindPublishers[i] = Mono.from(bind(batch.remove()))
+          .thenEmpty(jdbcLock.run(preparedStatement::addBatch));
+      }
+      return Flux.concat(bindPublishers);
+      /*
       return Flux.concat(
-        super.bind(),
-        Flux.fromIterable(batch)
-          .concatMap(nextBinds -> {
-            System.arraycopy(nextBinds, 0, binds, 0, binds.length);
-            return Mono.from(jdbcLock.run(preparedStatement::addBatch))
-              .thenEmpty(bind());
-          }));
+        bind(batch.remove()),
+        Flux.fromStream(Stream.generate(batch::poll)
+          .takeWhile(Objects::nonNull))
+          .concatMap(nextBinds ->
+            Mono.from(jdbcLock.run(preparedStatement::addBatch))
+              .thenEmpty(bind(nextBinds))));
+       */
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The returned {@code Publisher} emits 1 {@code Result} having an
+     * {@link io.r2dbc.spi.Result.UpdateCount} segment for each set of bind
+     * values in the {@link #batch}.
+     * </p>
+     */
+    @Override
+    protected Publisher<OracleResultImpl> getResults() {
+      AtomicInteger index = new AtomicInteger(0);
+
+      return Flux.from(adapter.publishBatchUpdate(preparedStatement))
+        .collect(
+          () -> new long[batchSize],
+          (updateCounts, updateCount) ->
+            updateCounts[index.getAndIncrement()] = updateCount)
+        .map(OracleResultImpl::createBatchUpdateResult)
+        .onErrorResume(
+          error ->
+            error instanceof R2dbcException
+              && error.getCause() instanceof BatchUpdateException,
+          error ->
+            Mono.just(createBatchUpdateErrorResult(
+              (BatchUpdateException) error.getCause())));
     }
   }
 
@@ -1445,7 +1481,7 @@ final class OracleStatementImpl implements Statement {
      */
     @Override
     protected Publisher<OracleResultImpl> getResults() {
-      return Flux.from(super.execute())
+      return Flux.from(super.getResults())
         .concatWithValues(createErrorResult(
           newNonTransientException(
             "One or more binds not set after calling add()", sql,
@@ -1468,17 +1504,24 @@ final class OracleStatementImpl implements Statement {
     /**
      * {@inheritDoc}
      * <p>
-     * Executes the statement as normal, and then concatenates a result with
-     * generated values from {@link PreparedStatement#getGeneratedKeys()}.
+     * Executes the statement as normal to obtain an update count from the
+     * first result. The update count is mapped to a
+     * {@}and then maps the update
+     * count of the
+     * first result into another {@code Result} having {@code Row}
+     * segments for
+     * each generated value, along with an {@code UpdateCount} segment.
      * </p>
      * @return
      */
     @Override
     protected Publisher<OracleResultImpl> getResults() {
-      return Flux.concat(
-        super.execute(),
-        jdbcLock.get(() ->
-          createQueryResult(preparedStatement.getGeneratedKeys(), adapter)));
+      return Mono.from(super.getResults())
+        .flatMap(result -> Mono.from(result.getRowsUpdated()))
+        .flatMap(updateCount ->
+          Mono.from(jdbcLock.get(() ->
+            createGeneratedValuesResult(
+              updateCount, preparedStatement.getGeneratedKeys(), adapter))));
     }
   }
 }

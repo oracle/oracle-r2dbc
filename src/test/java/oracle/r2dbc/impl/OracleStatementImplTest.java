@@ -822,7 +822,7 @@ public class OracleStatementImplTest {
       assertEquals(2, signals.size());
       assertEquals(1, signals.get(0).get());
       assertTrue(
-        signals.get(1).getThrowable() instanceof IllegalStateException);
+        signals.get(1).getThrowable() instanceof R2dbcNonTransientException);
 
     }
     finally {
@@ -1031,14 +1031,8 @@ public class OracleStatementImplTest {
           .returnGeneratedValues("x")
           .execute());
 
-      // TODO: Uncomment this test when the Oracle JDBC Team fixes a bug where
-      //   ResultSet.isBeforeFirst() returns true for an empty ResultSet
-      //   returned by Statement.getGeneratedKeys(). The team is aware of the
-      //   bug and is working on a fix. For now, this test will result in:
-      //   ORA-17023 Unsupported feature: getMetaData
       // Expect the column names to be ignored if the SQL is not an INSERT or
       // UPDATE
-      /*
       awaitQuery(asList(
         asList(1, "TEST1"),
         asList(2, "TEST2"),
@@ -1049,7 +1043,6 @@ public class OracleStatementImplTest {
           "DELETE FROM testReturnGeneratedValues WHERE x < :old_x")
           .bind("old_x", 10)
           .returnGeneratedValues("x", "y"));
-       */
     }
     finally {
       tryAwaitExecution(connection.createStatement(
