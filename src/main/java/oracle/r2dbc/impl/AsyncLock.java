@@ -100,9 +100,9 @@ final class AsyncLock {
   /**
    * Returns a {@code Publisher} that acquires this lock and executes a
    * {@code jdbcSupplier} when a subscriber subscribes. The {@code Publisher}
-   * emits {@code onNext} and {@code onComplete} if the runnable completes
-   * normally, or emits {@code onError} if the runnable throws an exception.
-   * The {@code onNext} signal emits the output of the {@code jdbcSupplier}.
+   * emits {@code onNext} if the supplier returns a non-null value, and then
+   * emits {@code onComplete}. Or, the {@code Publisher} emits {@code onError}
+   * with any {@code Throwable} thrown by the supplier.
    * @param jdbcSupplier Supplier to execute. Not null.
    * @return A publisher that emits the result of the {@code jdbcSupplier}.
    */

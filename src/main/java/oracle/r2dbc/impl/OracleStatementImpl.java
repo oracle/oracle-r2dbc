@@ -1016,41 +1016,24 @@ final class OracleStatementImpl implements Statement {
      */
     protected Publisher<OracleResultImpl> getResults() {
       return Mono.from(adapter.publishSQLExecution(preparedStatement))
-        .flatMap(isResultSet ->
-          Mono.from(jdbcLock.get(() -> {
-            ArrayList<OracleResultImpl> results = new ArrayList<>(1);
-
-            OracleResultImpl result = getCurrentResult(isResultSet);
-            if (result != null)
-              results.add(result);
-
-            // Implicit results may follow, even if the first result is null
-            while ((result = getCurrentResult(
-              preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))) != null) {
-              results.add(result);
-            }
-            return results;
-          })))
-        .flatMapMany(Flux::fromIterable);
+        .flatMapMany(this::getSqlResults);
     }
 
-    protected final Publisher<OracleResultImpl> getSqlResults(
-      boolean isResultSet) {
-      return Mono.from(jdbcLock.get(() -> {
-          ArrayList<OracleResultImpl> results = new ArrayList<>(1);
+    protected Publisher<OracleResultImpl> getSqlResults(boolean isResultSet) {
+      return Flux.concat(jdbcLock.get(() -> {
+        ArrayList<OracleResultImpl> results = new ArrayList<>(1);
 
-          OracleResultImpl result = getCurrentResult(isResultSet);
-          if (result != null)
-            results.add(result);
+        OracleResultImpl result = getCurrentResult(isResultSet);
+        if (result != null)
+          results.add(result);
 
-          // Implicit results may follow, even if the first result is null
-          while ((result = getCurrentResult(
-            preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))) != null) {
-            results.add(result);
-          }
-          return results;
-        }))
-        .flatMapMany(Flux::fromIterable);
+        // Implicit results may follow, even if the first result is null
+        while ((result = getCurrentResult(
+          preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))) != null) {
+          results.add(result);
+        }
+        return Flux.fromIterable(results);
+      }));
     }
 
     /**
@@ -1514,6 +1497,7 @@ final class OracleStatementImpl implements Statement {
      * </p>
      * @return
      */
+    /*
     @Override
     protected Publisher<OracleResultImpl> getResults() {
       return Mono.from(super.getResults())
@@ -1522,6 +1506,45 @@ final class OracleStatementImpl implements Statement {
           Mono.from(jdbcLock.get(() ->
             createGeneratedValuesResult(
               updateCount, preparedStatement.getGeneratedKeys(), adapter))));
+    }
+     */
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Overrides the base implementation to include
+     * {@link PreparedStatement#getGeneratedKeys()} with the first result, if
+     * the first result is a non-zero update count. If the first result is
+     * not a non-zero update count, then {@code getGeneratedKeys} is never
+     * called, and this method behaves the same as the base implementation.
+     * </p><p>
+     * Implicit results, if any, follow the first result.
+     * </p>
+     */
+    @Override
+    protected Publisher<OracleResultImpl> getSqlResults(boolean isResultSet) {
+      if (isResultSet) {
+        return super.getSqlResults(isResultSet);
+      }
+      else {
+        return Flux.concat(jdbcLock.get(() -> {
+          final OracleResultImpl result;
+          long updateCount = preparedStatement.getLargeUpdateCount();
+          if (updateCount > 0) {
+            result = createGeneratedValuesResult(
+              updateCount, preparedStatement.getGeneratedKeys(), adapter);
+          }
+          else if (updateCount == 0) {
+            result = createUpdateCountResult(updateCount);
+          }
+          else {
+            result = null;
+          }
+          return Mono.justOrEmpty(result)
+            .concatWith(super.getSqlResults(
+              preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
+        }));
+      }
     }
   }
 }
