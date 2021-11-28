@@ -534,6 +534,8 @@ interface ReactiveJdbcAdapter {
    */
   Publisher<Void> publishClobFree(Clob clob) throws R2dbcException;
 
+  AsyncLock getLock();
+
   /** 
    * Accessor of column values within a single row from a table of data that
    * a {@link ResultSet} represents. Instances of {@code JdbcRow} are

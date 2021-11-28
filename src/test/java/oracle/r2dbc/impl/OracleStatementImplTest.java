@@ -1037,16 +1037,15 @@ public class OracleStatementImplTest {
 
       // Expect the column names to be ignored if the SQL is not an INSERT or
       // UPDATE
-      awaitQuery(asList(
-        asList(1, "TEST1"),
-        asList(2, "TEST2"),
-        asList(3, "TEST3"),
-        asList(4, "TEST4")),
-        row -> asList(row.get("x", Integer.class), row.get("y", String.class)),
-        connection.createStatement(
-          "DELETE FROM testReturnGeneratedValues WHERE x < :old_x")
-          .bind("old_x", 10)
-          .returnGeneratedValues("x", "y"));
+      awaitUpdate(4, connection.createStatement(
+        "DELETE FROM testReturnGeneratedValues WHERE x < :old_x")
+        .bind("old_x", 10)
+        .returnGeneratedValues("x", "y"));
+
+      // Expect no generated values if an UPDATE doesn't effect any rows.
+      awaitUpdate(0, connection.createStatement(
+        "UPDATE testReturnGeneratedValues SET y = 'effected' WHERE x IS NULL")
+        .returnGeneratedValues("y"));
     }
     finally {
       tryAwaitExecution(connection.createStatement(

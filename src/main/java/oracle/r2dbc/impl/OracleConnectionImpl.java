@@ -87,7 +87,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * Lock that guards access to the {@link #jdbcConnection} and any object
    * created by that connection
    */
-  private final AsyncLock jdbcLock = new AsyncLock();
+  private final AsyncLock jdbcLock;
 
   /**
    * Timeout applied to the execution of {@link Statement} and {@link Batch}
@@ -139,6 +139,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   OracleConnectionImpl(
     java.sql.Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
     this.adapter = adapter;
+    this.jdbcLock = adapter.getLock();
     this.jdbcConnection = jdbcConnection;
   }
 

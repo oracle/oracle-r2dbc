@@ -38,6 +38,7 @@ import java.sql.BatchUpdateException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.SQLWarning;
@@ -1514,11 +1515,20 @@ final class OracleStatementImpl implements Statement {
      * <p>
      * Overrides the base implementation to include
      * {@link PreparedStatement#getGeneratedKeys()} with the first result, if
-     * the first result is a non-zero update count. If the first result is
-     * not a non-zero update count, then {@code getGeneratedKeys} is never
-     * called, and this method behaves the same as the base implementation.
+     * the generated keys {@code ResultSet} is not empty.
      * </p><p>
-     * Implicit results, if any, follow the first result.
+     * Oracle JDBC throws a {@code SQLException} when invoking
+     * {@code getMetadata()} on an empty {@code ResultSet}, so Oracle R2DBC
+     * should not even attempt to map an empty {@code ResultSet} into a
+     * {@code Result} of {@code Row} segments.
+     * </p><p>
+     * If the generated keys {@code ResultSet} is empty, then this method
+     * behaves as if {@link Statement#returnGeneratedValues(String...)} had
+     * never been called at all; It will return whatever results are available
+     * from executing the statement, even if there are no generated values to
+     * return. The generated keys {@code ResultSet} will be empty if the
+     * SQL was not an UPDATE or INSERT, because Oracle Database does not
+     * support returning generated values for any other type of statement.
      * </p>
      */
     @Override
@@ -1528,21 +1538,17 @@ final class OracleStatementImpl implements Statement {
       }
       else {
         return Flux.concat(jdbcLock.get(() -> {
-          final OracleResultImpl result;
-          long updateCount = preparedStatement.getLargeUpdateCount();
-          if (updateCount > 0) {
-            result = createGeneratedValuesResult(
-              updateCount, preparedStatement.getGeneratedKeys(), adapter);
-          }
-          else if (updateCount == 0) {
-            result = createUpdateCountResult(updateCount);
+          ResultSet generatedValues = preparedStatement.getGeneratedKeys();
+          if (generatedValues.isBeforeFirst()) {
+            return Mono.just(createGeneratedValuesResult(
+              preparedStatement.getLargeUpdateCount(), generatedValues,
+              adapter))
+              .concatWith(super.getSqlResults(
+                preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
           }
           else {
-            result = null;
+            return super.getSqlResults(isResultSet);
           }
-          return Mono.justOrEmpty(result)
-            .concatWith(super.getSqlResults(
-              preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
         }));
       }
     }

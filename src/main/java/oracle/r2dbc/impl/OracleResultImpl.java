@@ -96,7 +96,7 @@ abstract class OracleResultImpl implements Result {
    * this result have been consumed. The reference is updated to {@code null}
    * after the publisher has been subscribed to.
    */
-  private AtomicReference<Publisher<Void>> onConsumed =
+  private final AtomicReference<Publisher<Void>> onConsumed =
     new AtomicReference<>(Mono.empty());
 
   /** Private constructor invoked by inner subclasses */
@@ -118,11 +118,18 @@ abstract class OracleResultImpl implements Result {
    * of this {@code Result}, where the {@code Segment} is an instance of the
    * specified {@code type}.
    * </p><p>
-   * This method updates the state of this {@code Result} to prevent multiple
-   * consumptions and to complete the {@link #consumedFuture} after the
-   * returned {@code Publisher} terminates. For this state to be updated
-   * correctly, any {@code Publisher} returned to user code must one that is
-   * returned by this method.
+   * This method sets {@link #isPublished} to prevent multiple consumptions
+   * of this {@code Result}. In case this is a {@link FilteredResult}, this
+   * method must invoke {@link #publishSegments(Function)}, before returning,
+   * in order to update {@code isPublished} of the {@link FilteredResult#result}
+   * as well.
+   * </p><p>
+   * When the returned publisher terminates with {@code onComplete},
+   * {@code onError}, or {@code cancel}, the {@link #consumedFuture} is
+   * completed and the {@link #onConsumed} publisher is subscribed to. The
+   * {@code onConsumed} reference is update to {@code null} so that
+   * post-consumption calls to {@link #onConsumed(Publisher)} can detect that
+   * this result is already consumed.
    * </p><p>
    * The returned {@code Publisher} emits {@code onError} with an
    * {@link R2dbcException} if this {@code Result} has a {@link Message} segment
@@ -143,31 +150,26 @@ abstract class OracleResultImpl implements Result {
 
     setPublished();
 
-    // In the case of Row publishing, the mapping function must be passed down
-    // to the JDBC driver, as it will deallocate row data storage once the
-    // mapping function returns a value. The mapping function provided to JDBC
-    // must be one that invokes the user-defined mapping function before row
-    // data is deallocated.
-    // Instances of the desired Segment type are input to the user-defined
-    // mapping function. If Message Segments are not a desired type, then
-    // they are thrown and emitted as onError signals. Any other Segment type
-    // is mapped to the FILTERED object, which is then filtered by a downstream
-    // operator.
-    return Flux.usingWhen(
-      Mono.just(onConsumed),
-      ignored ->
-        Flux.from(publishSegments(segment -> {
-          if (type.isInstance(segment))
-            return mappingFunction.apply(type.cast(segment));
-          else if (segment instanceof Message)
-            throw ((Message)segment).exception();
-          else
-            return (U)FILTERED;
-        }))
-        .filter(object -> object != FILTERED),
-      onConsumed -> onConsumed.getAndSet(null))
-      .doOnTerminate(() -> consumedFuture.complete(null))
-      .doOnCancel(() -> consumedFuture.complete(null));
+    Mono<U> whenConsumed = Mono.defer(() -> {
+      consumedFuture.complete(null);
+      Publisher<Void> consumedPublisher = onConsumed.getAndSet(null);
+      return consumedPublisher == null
+        ? Mono.empty()
+        : Mono.from((Publisher<U>)consumedPublisher);
+    });
+
+    return Flux.concatDelayError(
+      Flux.from(publishSegments(segment -> {
+        if (type.isInstance(segment))
+          return mappingFunction.apply(type.cast(segment));
+        else if (segment instanceof Message)
+          throw ((Message)segment).exception();
+        else
+          return (U)FILTERED;
+      }))
+      .filter(object -> object != FILTERED),
+      whenConsumed)
+      .doOnCancel(whenConsumed::subscribe);
   }
 
   /**
@@ -267,22 +269,13 @@ abstract class OracleResultImpl implements Result {
    * </p>
    */
   @Override
-  @SuppressWarnings("unchecked")
   public OracleResultImpl filter(Predicate<Segment> filter) {
     requireNonNull(filter, "filter is null");
 
     if (isPublished)
       throw multipleConsumptionException();
 
-    return new OracleResultImpl() {
-      @Override
-      <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-        return OracleResultImpl.this.publishSegments(Segment.class, segment ->
-          filter.test(segment)
-            ? mappingFunction.apply(segment)
-            : (T)FILTERED);
-      }
-    };
+    return new FilteredResult(this, filter);
   }
 
   /**
@@ -325,7 +318,7 @@ abstract class OracleResultImpl implements Result {
    * once.
    * @throws IllegalStateException If this result has already been consumed.
    */
-  private void setPublished() {
+  protected void setPublished() {
     if (! isPublished)
       isPublished = true;
     else
@@ -653,6 +646,35 @@ abstract class OracleResultImpl implements Result {
     }
   }
 
+  /**
+   * A result that filters out {@code Segment} of another result. Filtered
+   * segments are emitted as the {@link #FILTERED} object.
+   */
+  private static final class FilteredResult extends OracleResultImpl {
+
+    /** Result of segments to publish after applying the {@link #filter} */
+    private final OracleResultImpl result;
+
+    /** Returns {@code false} for segments that should be filtered */
+    private final Predicate<Segment> filter;
+
+    /**
+     * Constructs a new result that applies a {@code filter} when publishing
+     * segments of a {@code result}
+     */
+    private FilteredResult(OracleResultImpl result, Predicate<Segment> filter) {
+      this.result = result;
+      this.filter = filter;
+    }
+
+    @Override
+    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
+      return result.publishSegments(Segment.class, segment ->
+        filter.test(segment)
+          ? mappingFunction.apply(segment)
+          : (T)FILTERED);
+    }
+  }
 
   /**
    * Common interface for instances of {@link Segment} with a {@link Readable}

@@ -1150,6 +1150,11 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     return errorCode == 17004;
   }
 
+  @Override
+  public AsyncLock getLock() {
+    return asyncLock;
+  }
+
   /**
    * Returns a {@code Publisher} that proxies signals to and from a
    * provided {@code publisher} in order to guards access to the JDBC
