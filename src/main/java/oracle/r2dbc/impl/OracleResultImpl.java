@@ -99,8 +99,12 @@ abstract class OracleResultImpl implements Result {
   private final AtomicReference<Publisher<Void>> onConsumed =
     new AtomicReference<>(Mono.empty());
 
+  private final AsyncLock jdbcLock;
+
   /** Private constructor invoked by inner subclasses */
-  private OracleResultImpl() { }
+  private OracleResultImpl(AsyncLock jdbcLock) {
+    this.jdbcLock = jdbcLock;
+  }
 
   /**
    * Publishes the output of a {@code mappingFunction} for each {@code Segment}
@@ -169,7 +173,8 @@ abstract class OracleResultImpl implements Result {
       }))
       .filter(object -> object != FILTERED),
       whenConsumed)
-      .doOnCancel(whenConsumed::subscribe);
+      .doOnCancel(() ->
+        Mono.from(whenConsumed).subscribe());
   }
 
   /**
@@ -275,7 +280,7 @@ abstract class OracleResultImpl implements Result {
     if (isPublished)
       throw multipleConsumptionException();
 
-    return new FilteredResult(this, filter);
+    return new FilteredResult(this, filter, jdbcLock);
   }
 
   /**
@@ -345,8 +350,8 @@ abstract class OracleResultImpl implements Result {
    * @return A {@code Result} for a ResultSet
    */
   public static OracleResultImpl createQueryResult(
-     ResultSet resultSet, ReactiveJdbcAdapter adapter) {
-    return new ResultSetResult(resultSet, adapter);
+     ResultSet resultSet, ReactiveJdbcAdapter adapter, AsyncLock jdbcLock) {
+    return new ResultSetResult(resultSet, adapter, jdbcLock);
   }
 
   /**
@@ -355,8 +360,9 @@ abstract class OracleResultImpl implements Result {
    * @param outParameters {@code OutParameters} to publish
    * @return A {@code Result} for {@code OutParameters}
    */
-  static OracleResultImpl createCallResult(OutParameters outParameters) {
-    return new CallResult(outParameters);
+  static OracleResultImpl createCallResult(
+    OutParameters outParameters, AsyncLock jdbcLock) {
+    return new CallResult(outParameters, jdbcLock);
   }
 
   /**
@@ -369,8 +375,10 @@ abstract class OracleResultImpl implements Result {
    * @param adapter Adapts JDBC calls into reactive streams.
    */
   static OracleResultImpl createGeneratedValuesResult(
-    long updateCount, ResultSet generatedKeys, ReactiveJdbcAdapter adapter) {
-    return new GeneratedKeysResult(updateCount, generatedKeys, adapter);
+    long updateCount, ResultSet generatedKeys, ReactiveJdbcAdapter adapter,
+    AsyncLock jdbcLock) {
+    return new GeneratedKeysResult(
+      updateCount, generatedKeys, adapter, jdbcLock);
   }
 
   /**
@@ -379,8 +387,9 @@ abstract class OracleResultImpl implements Result {
    * @return A {@code Result} for a DML update
    * @param updateCount Update count to publish
    */
-  static OracleResultImpl createUpdateCountResult(long updateCount) {
-    return new UpdateCountResult(updateCount);
+  static OracleResultImpl createUpdateCountResult(
+    long updateCount, AsyncLock jdbcLock) {
+    return new UpdateCountResult(updateCount, jdbcLock);
   }
 
   /**
@@ -389,8 +398,9 @@ abstract class OracleResultImpl implements Result {
    * @return A {@code Result} for a batch DML update
    * @param updateCounts Update counts to publish
    */
-  static OracleResultImpl createBatchUpdateResult(long[] updateCounts) {
-    return new BatchUpdateResult(updateCounts);
+  static OracleResultImpl createBatchUpdateResult(
+    long[] updateCounts, AsyncLock jdbcLock) {
+    return new BatchUpdateResult(updateCounts, jdbcLock);
   }
 
   /**
@@ -402,8 +412,8 @@ abstract class OracleResultImpl implements Result {
    * @return A {@code Result} for a failed DML batch update
    */
   static OracleResultImpl createBatchUpdateErrorResult(
-    BatchUpdateException batchUpdateException) {
-    return new BatchUpdateErrorResult(batchUpdateException);
+    BatchUpdateException batchUpdateException, AsyncLock jdbcLock) {
+    return new BatchUpdateErrorResult(batchUpdateException, jdbcLock);
   }
 
   /**
@@ -412,8 +422,9 @@ abstract class OracleResultImpl implements Result {
    * @param r2dbcException Error to publish
    * @return A {@code Result} for failed {@code Statement} execution
    */
-  static OracleResultImpl createErrorResult(R2dbcException r2dbcException) {
-    return new ErrorResult(r2dbcException);
+  static OracleResultImpl createErrorResult(
+    R2dbcException r2dbcException, AsyncLock jdbcLock) {
+    return new ErrorResult(r2dbcException, jdbcLock);
   }
 
   /**
@@ -426,8 +437,8 @@ abstract class OracleResultImpl implements Result {
    * completed with a warning.
    */
   static OracleResultImpl createWarningResult(
-    SQLWarning warning, OracleResultImpl result) {
-    return new WarningResult(warning, result);
+    SQLWarning warning, OracleResultImpl result, AsyncLock jdbcLock) {
+    return new WarningResult(warning, result, jdbcLock);
   }
 
   /**
@@ -439,7 +450,8 @@ abstract class OracleResultImpl implements Result {
 
     private final long updateCount;
 
-    private UpdateCountResult(long updateCount) {
+    private UpdateCountResult(long updateCount, AsyncLock jdbcLock) {
+      super(jdbcLock);
       this.updateCount = updateCount;
     }
 
@@ -484,7 +496,9 @@ abstract class OracleResultImpl implements Result {
     private final RowMetadataImpl metadata;
     private final ReactiveJdbcAdapter adapter;
 
-    private ResultSetResult(ResultSet resultSet, ReactiveJdbcAdapter adapter) {
+    private ResultSetResult(
+      ResultSet resultSet, ReactiveJdbcAdapter adapter, AsyncLock jdbcLock) {
+      super(jdbcLock);
       this.resultSet = resultSet;
       this.metadata = createRowMetadata(fromJdbc(resultSet::getMetaData));
       this.adapter = adapter;
@@ -510,9 +524,11 @@ abstract class OracleResultImpl implements Result {
     private final OracleResultImpl generatedKeysResult;
 
     private GeneratedKeysResult(
-      long updateCount, ResultSet generatedKeys, ReactiveJdbcAdapter adapter) {
-      updateCountResult = createUpdateCountResult(updateCount);
-      generatedKeysResult = createQueryResult(generatedKeys, adapter);
+      long updateCount, ResultSet generatedKeys, ReactiveJdbcAdapter adapter,
+      AsyncLock jdbcLock) {
+      super(jdbcLock);
+      updateCountResult = createUpdateCountResult(updateCount, jdbcLock);
+      generatedKeysResult = createQueryResult(generatedKeys, adapter, jdbcLock);
     }
 
     @Override
@@ -530,12 +546,15 @@ abstract class OracleResultImpl implements Result {
 
     private final OutParameters outParameters;
 
-    private CallResult(OutParameters outParameters) {
+    private CallResult(OutParameters outParameters, AsyncLock jdbcLock) {
+      super(jdbcLock);
       this.outParameters = outParameters;
     }
 
     @Override
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
+      // TODO: Acquire lock before invoking mappingFunction. The
+      //  outparameters will invoke CallableStatement APIs that block
       return Mono.fromSupplier(() ->
         mappingFunction.apply(new OutSegmentImpl(outParameters)));
     }
@@ -549,7 +568,8 @@ abstract class OracleResultImpl implements Result {
 
     private final long[] updateCounts;
 
-    private BatchUpdateResult(long[] updateCounts) {
+    private BatchUpdateResult(long[] updateCounts, AsyncLock jdbcLock) {
+      super(jdbcLock);
       this.updateCounts = updateCounts;
     }
 
@@ -573,10 +593,13 @@ abstract class OracleResultImpl implements Result {
     private final BatchUpdateResult batchUpdateResult;
     private final ErrorResult errorResult;
 
-    private BatchUpdateErrorResult(BatchUpdateException batchUpdateException) {
-      batchUpdateResult =
-        new BatchUpdateResult(batchUpdateException.getLargeUpdateCounts());
-      errorResult = new ErrorResult(toR2dbcException(batchUpdateException));
+    private BatchUpdateErrorResult(
+      BatchUpdateException batchUpdateException, AsyncLock jdbcLock) {
+      super(jdbcLock);
+      batchUpdateResult = new BatchUpdateResult(
+        batchUpdateException.getLargeUpdateCounts(), jdbcLock);
+      errorResult =
+        new ErrorResult(toR2dbcException(batchUpdateException), jdbcLock);
     }
 
     @Override
@@ -595,7 +618,8 @@ abstract class OracleResultImpl implements Result {
 
     private final R2dbcException r2dbcException;
 
-    private ErrorResult(R2dbcException r2dbcException) {
+    private ErrorResult(R2dbcException r2dbcException, AsyncLock jdbcLock) {
+      super(jdbcLock);
       this.r2dbcException = r2dbcException;
     }
 
@@ -625,7 +649,9 @@ abstract class OracleResultImpl implements Result {
      * @param warning Warning to publish
      * @param result Result of segments to publish after the warning
      */
-    private WarningResult(SQLWarning warning, OracleResultImpl result) {
+    private WarningResult(
+      SQLWarning warning, OracleResultImpl result, AsyncLock jdbcLock) {
+      super(jdbcLock);
       this.warning = warning;
       this.result = result;
     }
@@ -662,12 +688,15 @@ abstract class OracleResultImpl implements Result {
      * Constructs a new result that applies a {@code filter} when publishing
      * segments of a {@code result}
      */
-    private FilteredResult(OracleResultImpl result, Predicate<Segment> filter) {
+    private FilteredResult(
+      OracleResultImpl result, Predicate<Segment> filter, AsyncLock jdbcLock) {
+      super(jdbcLock);
       this.result = result;
       this.filter = filter;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
       return result.publishSegments(Segment.class, segment ->
         filter.test(segment)

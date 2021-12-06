@@ -2088,7 +2088,7 @@ public class OracleStatementImplTest {
 
       for (int i = 0; i < publishers.length; i++) {
 
-        // Batch insert 100 values
+        // Each publisher batch inserts a range of 100 values
         Statement statement = connection.createStatement(
           "INSERT INTO testConcurrentFetch VALUES (?)");
         int start = i * 100;
@@ -2103,10 +2103,12 @@ public class OracleStatementImplTest {
           .collect(Collectors.summingInt(Integer::intValue))
           .cache();
 
+        // Execute in parallel, and retain the result for verification later
         mono.subscribe();
         publishers[i] = mono;
       }
 
+      // Expect each publisher to emit an update count of 100
       awaitMany(
         IntStream.range(0, publishers.length)
           .map(i -> 100)
@@ -2114,32 +2116,31 @@ public class OracleStatementImplTest {
           .collect(Collectors.toList()),
         Flux.merge(publishers));
 
-      // Fetch rows in parallel
+      // Create publishers that fetch rows in parallel
       Publisher<List<Integer>>[] fetchPublishers =
         new Publisher[publishers.length];
 
       for (int i = 0; i < publishers.length; i++) {
         Mono<List<Integer>> mono = Flux.from(connection.createStatement(
-          "SELECT value FROM testConcurrentFetch")
+          "SELECT value FROM testConcurrentFetch ORDER BY value")
           .execute())
           .flatMap(result ->
             result.map(row -> row.get(0, Integer.class)))
           .collect(Collectors.toList())
           .cache();
 
+        // Execute in parallel, and retain the result for verification later
         mono.subscribe();
         fetchPublishers[i] = mono;
       }
 
+      // Expect each fetch publisher to get the same result
       List<Integer> expected = IntStream.range(0, publishers.length * 100)
         .boxed()
         .collect(Collectors.toList());
 
-      awaitOne(IntStream.range(0, publishers.length)
-        .mapToObj(i -> expected)
-        .collect(Collectors.toSet()),
-        Flux.merge(fetchPublishers)
-          .collect(Collectors.toSet()));
+      for (Publisher<List<Integer>> publisher : fetchPublishers)
+        awaitOne(expected, publisher);
     }
     finally {
       tryAwaitExecution(connection.createStatement(

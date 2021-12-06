@@ -475,6 +475,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public ConnectionMetadata getMetadata() {
     requireOpenConnection(jdbcConnection);
+    // TODO: Initialize this on construction, to avoid lock contention
     return new OracleConnectionMetadataImpl(
       fromJdbc(jdbcConnection::getMetaData));
   }
@@ -576,6 +577,8 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Publisher<Void> setAutoCommit(boolean autoCommit) {
     requireOpenConnection(jdbcConnection);
+    // TODO: Replace defer with AsyncLock.get(...). It will defer execution
+    //  until a subscriber subscribes.
     return Mono.defer(() -> fromJdbc(() -> {
       if (autoCommit == jdbcConnection.getAutoCommit()) {
         return Mono.empty(); // No change
