@@ -66,7 +66,6 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleReadableImpl.createOutParameters;
 import static oracle.r2dbc.impl.OracleReadableMetadataImpl.createParameterMetadata;
 import static oracle.r2dbc.impl.OracleResultImpl.createBatchUpdateErrorResult;
-import static oracle.r2dbc.impl.OracleResultImpl.createBatchUpdateResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createErrorResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
@@ -81,9 +80,7 @@ import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
  * </p><p>
  * This implementation executes SQL using a {@link PreparedStatement}
  * from the Oracle JDBC Driver. JDBC API calls are adapted into Reactive
- * Streams APIs using a {@link ReactiveJdbcAdapter}. To avoid contention for
- * JDBC's internal lock, the {@link #jdbcLock} must be acquired before
- * executing any JDBC API call.
+ * Streams APIs using a {@link ReactiveJdbcAdapter}.
  * </p>
  *
  * <h3>Database Cursor Management</h3>
@@ -167,12 +164,6 @@ final class OracleStatementImpl implements Statement {
    */
   private static final Object NULL_BIND = new Object();
 
-  /**
-   * Lock that guards access to the {@link #jdbcConnection} and any object
-   * created by that connection
-   */
-  private final AsyncLock jdbcLock;
-
   /** A JDBC connection that executes this statement's {@link #sql}. */
   private final Connection jdbcConnection;
 
@@ -239,15 +230,13 @@ final class OracleStatementImpl implements Statement {
    * {@code Statement}. Not null. Not negative.
    * @param jdbcConnection JDBC connection to an Oracle Database.
    * @param adapter Adapts JDBC calls into reactive streams.
-   * @param jdbcLock
    */
   OracleStatementImpl(
     String sql, Duration timeout, Connection jdbcConnection,
-    ReactiveJdbcAdapter adapter, AsyncLock jdbcLock) {
+    ReactiveJdbcAdapter adapter) {
     this.sql = sql;
     this.jdbcConnection = jdbcConnection;
     this.adapter = adapter;
-    this.jdbcLock = jdbcLock;
 
     // The SQL string is parsed to identify parameter markers and allocate the
     // bindValues array accordingly
@@ -415,22 +404,6 @@ final class OracleStatementImpl implements Statement {
    * No reference to the {@code columns} array is retained after this method
    * returns.
    * </p>
-   *
-   * @implNote
-   * <p><b>
-   * Oracle R2DBC implements {@link Statement#execute()} to perform a blocking
-   * database call if this method is invoked with a non-empty {@code String[]}.
-   * </b></p><p>
-   * This is a known limitation stemming from the implementation of
-   * {@link Connection#prepareStatement(String, String[])} in the 21.1 Oracle
-   * JDBC Driver. This limitation will be resolved in a later release;
-   * The Oracle JDBC Team is aware of the issue and is working on a fix.
-   * </p><p>
-   * The blocking database call can be avoided by calling this method with an
-   * empty {@code String[]}. In this case, the Oracle JDBC Driver will not
-   * execute a blocking database call, however it will only return the
-   * generated value for the ROWID pseudo column.
-   * </p>
    * @throws IllegalStateException If one or more binds are out-parameters.
    * Returning generated values is not supported when executing a stored
    * procedure.
@@ -597,7 +570,7 @@ final class OracleStatementImpl implements Statement {
     int currentFetchSize = fetchSize;
     Object[] currentBinds = transferBinds();
 
-    return jdbcLock.get(() -> {
+    return adapter.getLock().get(() -> {
       PreparedStatement preparedStatement =
         jdbcConnection.prepareStatement(sql);
       preparedStatement.setFetchSize(currentFetchSize);
@@ -629,7 +602,7 @@ final class OracleStatementImpl implements Statement {
     Queue<Object[]> currentBatch = batch;
     batch = new LinkedList<>();
 
-    return jdbcLock.get(() -> {
+    return adapter.getLock().get(() -> {
       PreparedStatement preparedStatement =
         jdbcConnection.prepareStatement(sql);
       preparedStatement.setFetchSize(currentFetchSize);
@@ -650,7 +623,7 @@ final class OracleStatementImpl implements Statement {
     int currentFetchSize = fetchSize;
     Object[] currentBinds = transferBinds();
 
-    return jdbcLock.get(() -> {
+    return adapter.getLock().get(() -> {
       CallableStatement callableStatement = jdbcConnection.prepareCall(sql);
       callableStatement.setFetchSize(currentFetchSize);
       callableStatement.setQueryTimeout(timeout);
@@ -669,7 +642,7 @@ final class OracleStatementImpl implements Statement {
     Object[] currentBinds = transferBinds();
     String[] currentGeneratedColumns = generatedColumns.clone();
 
-    return jdbcLock.get(() -> {
+    return adapter.getLock().get(() -> {
       PreparedStatement preparedStatement =
         currentGeneratedColumns.length == 0
           ? jdbcConnection.prepareStatement(sql, RETURN_GENERATED_KEYS)
@@ -990,7 +963,7 @@ final class OracleStatementImpl implements Statement {
           .map(this::getWarnings)
           .doOnNext(results::add)
           .onErrorResume(R2dbcException.class, r2dbcException ->
-            Mono.just(createErrorResult(r2dbcException, jdbcLock))),
+            Mono.just(createErrorResult(r2dbcException))),
         deallocate)
         .doOnCancel(() ->
           Mono.from(deallocate).subscribe());
@@ -1015,7 +988,7 @@ final class OracleStatementImpl implements Statement {
     }
 
     protected final Publisher<Void> bind(Object[] binds) {
-      return jdbcLock.flatMap(() -> {
+      return adapter.getLock().flatMap(() -> {
         List<Publisher<Void>> bindPublishers = new ArrayList<>(0);
         for (int i = 0; i < binds.length; i++) {
 
@@ -1072,7 +1045,7 @@ final class OracleStatementImpl implements Statement {
     protected final Publisher<OracleResultImpl> getResults(
       boolean isResultSet) {
 
-      return jdbcLock.flatMap(() -> {
+      return adapter.getLock().flatMap(() -> {
         ArrayList<OracleResultImpl> results = new ArrayList<>(1);
 
         OracleResultImpl result = getCurrentResult(isResultSet);
@@ -1106,16 +1079,16 @@ final class OracleStatementImpl implements Statement {
      * otherwise false.
      * @return The current {@code Result} of the {@code preparedStatement}
      */
-    private final OracleResultImpl getCurrentResult(boolean isResultSet) {
+    private OracleResultImpl getCurrentResult(boolean isResultSet) {
       return fromJdbc(() -> {
         if (isResultSet) {
           return createQueryResult(
-            preparedStatement.getResultSet(), adapter, jdbcLock);
+            preparedStatement.getResultSet(), adapter);
         }
         else {
           long updateCount = preparedStatement.getLargeUpdateCount();
           return updateCount >= 0
-            ? createUpdateCountResult(updateCount, jdbcLock)
+            ? createUpdateCountResult(updateCount)
             : null;
         }
       });
@@ -1138,7 +1111,7 @@ final class OracleStatementImpl implements Statement {
         preparedStatement.clearWarnings();
         return warning == null
           ? result
-          : OracleResultImpl.createWarningResult(warning, result, jdbcLock);
+          : OracleResultImpl.createWarningResult(warning, result);
       });
     }
 
@@ -1166,21 +1139,22 @@ final class OracleStatementImpl implements Statement {
      */
     private Publisher<Void> deallocate(Collection<OracleResultImpl> results) {
 
+      // Close the statement after all results are consumed
       AtomicInteger unconsumed = new AtomicInteger(results.size());
+      Publisher<Void> closeStatement = adapter.getLock().run(() -> {
+        if (unconsumed.decrementAndGet() == 0)
+          preparedStatement.close();
+      });
+
       for (OracleResultImpl result : results) {
-
-        boolean isConsumed = !result.onConsumed(jdbcLock.run(() -> {
-          if (unconsumed.decrementAndGet() == 0)
-            preparedStatement.close();
-        }));
-
-        if (isConsumed)
+        if (!result.onConsumed(closeStatement))
           unconsumed.decrementAndGet();
       }
 
-      // Deallocate now if all results have already been consumed
+      // If all results have already been consumed, the returned
+      // publisher closes the statement
       if (unconsumed.get() == 0)
-        deallocations.add(jdbcLock.run(preparedStatement::close));
+        deallocations.add(adapter.getLock().run(preparedStatement::close));
 
       return Flux.concatDelayError(Flux.fromIterable(deallocations));
     }
@@ -1259,7 +1233,7 @@ final class OracleStatementImpl implements Statement {
     private Publisher<java.sql.Blob> convertBlobBind(
       io.r2dbc.spi.Blob r2dbcBlob) {
       return Mono.usingWhen(
-        jdbcLock.get(jdbcConnection::createBlob),
+        adapter.getLock().get(jdbcConnection::createBlob),
         jdbcBlob ->
           Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
             .thenReturn(jdbcBlob),
@@ -1286,7 +1260,7 @@ final class OracleStatementImpl implements Statement {
     private Publisher<java.sql.Clob> convertClobBind(
       io.r2dbc.spi.Clob r2dbcClob) {
       return Mono.usingWhen(
-        jdbcLock.get(jdbcConnection::createNClob),
+        adapter.getLock().get(jdbcConnection::createNClob),
         jdbcClob ->
           Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
             .thenReturn(jdbcClob),
@@ -1335,9 +1309,9 @@ final class OracleStatementImpl implements Statement {
     private final OutParametersMetadataImpl metadata;
 
     /**
-     * Constructs a new {@code JdbcCall} that synchronizes on the given
-     * {@code jdbcLock}, and executes a {@code callableStatement} with the given
-     * {@code bindValues} and {@code parameterNames}.
+     * Constructs a new {@code JdbcCall} that executes a
+     * {@code callableStatement} with the given {@code bindValues} and
+     * {@code parameterNames}.
      */
     private JdbcCall(
       CallableStatement callableStatement,
@@ -1378,7 +1352,7 @@ final class OracleStatementImpl implements Statement {
      * registered.
      */
     private Publisher<Void> registerOutParameters() {
-      return jdbcLock.run(() -> {
+      return adapter.getLock().run(() -> {
         CallableStatement callableStatement =
           preparedStatement.unwrap(CallableStatement.class);
 
@@ -1396,7 +1370,7 @@ final class OracleStatementImpl implements Statement {
         super.executeJdbc(),
         Mono.just(createCallResult(
           createOutParameters(new JdbcOutParameters(), metadata, adapter),
-          jdbcLock)));
+          adapter)));
     }
 
     /**
@@ -1466,7 +1440,7 @@ final class OracleStatementImpl implements Statement {
       for (int i = 0; i < batchSize; i++) {
         bindPublishers[i] = Flux.concat(
           bind(batch.remove()),
-          jdbcLock.run(preparedStatement::addBatch));
+          adapter.getLock().run(preparedStatement::addBatch));
       }
       return Flux.concat(bindPublishers);
     }
@@ -1488,14 +1462,14 @@ final class OracleStatementImpl implements Statement {
           () -> new long[batchSize],
           (updateCounts, updateCount) ->
             updateCounts[index.getAndIncrement()] = updateCount)
-        .map(updateCounts -> createBatchUpdateResult(updateCounts, jdbcLock))
+        .map(OracleResultImpl::createBatchUpdateResult)
         .onErrorResume(
           error ->
             error instanceof R2dbcException
               && error.getCause() instanceof BatchUpdateException,
           error ->
             Mono.just(createBatchUpdateErrorResult(
-              (BatchUpdateException) error.getCause(), jdbcLock)));
+              (BatchUpdateException) error.getCause())));
     }
   }
 
@@ -1528,8 +1502,7 @@ final class OracleStatementImpl implements Statement {
         .concatWithValues(createErrorResult(
           newNonTransientException(
             "One or more binds not set after calling add()", sql,
-            missingBinds),
-          jdbcLock));
+            missingBinds)));
     }
   }
 
@@ -1576,15 +1549,15 @@ final class OracleStatementImpl implements Statement {
             return super.getResults(true);
           }
           else {
-            return jdbcLock.flatMap(() -> {
+            return adapter.getLock().flatMap(() -> {
               ResultSet generatedKeys = preparedStatement.getGeneratedKeys();
 
               if (generatedKeys.isBeforeFirst()) {
                 return Mono.just(createGeneratedValuesResult(
                   preparedStatement.getLargeUpdateCount(), generatedKeys,
-                  adapter, jdbcLock))
-                  .concatWith(super.getResults(fromJdbc(() ->
-                    preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))));
+                  adapter))
+                  .concatWith(super.getResults(
+                    preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
               }
               else {
                 return super.getResults(false);

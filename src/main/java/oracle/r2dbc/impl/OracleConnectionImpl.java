@@ -84,12 +84,6 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   private final java.sql.Connection jdbcConnection;
 
   /**
-   * Lock that guards access to the {@link #jdbcConnection} and any object
-   * created by that connection
-   */
-  private final AsyncLock jdbcLock;
-
-  /**
    * Timeout applied to the execution of {@link Statement} and {@link Batch}
    * objects that this {@code Connection} creates. The value is never
    * null. The value is never a negative duration. A value of
@@ -139,7 +133,6 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   OracleConnectionImpl(
     java.sql.Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
     this.adapter = adapter;
-    this.jdbcLock = adapter.getLock();
     this.jdbcConnection = jdbcConnection;
   }
 
@@ -421,8 +414,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Batch createBatch() {
     requireOpenConnection(jdbcConnection);
-    return new OracleBatchImpl(
-      statementTimeout, jdbcConnection, adapter, jdbcLock);
+    return new OracleBatchImpl(statementTimeout, jdbcConnection, adapter);
   }
 
   /**
@@ -447,7 +439,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
     requireNonNull(sql, "sql is null");
     requireOpenConnection(jdbcConnection);
     return new OracleStatementImpl(
-      sql, statementTimeout, jdbcConnection, adapter, jdbcLock);
+      sql, statementTimeout, jdbcConnection, adapter);
   }
 
   /**

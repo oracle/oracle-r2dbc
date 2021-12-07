@@ -220,6 +220,21 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   /**
    * {@inheritDoc}
    * <p>
+   * Returns the lock that guards access to the Oracle JDBC connection by
+   * this adapter. Oracle JDBC implements nearly all API methods to block
+   * the caller if an asynchronous database call is in progress. The returned
+   * lock must be acquired before invoking any JDBC API to ensure that a
+   * pooled thread is available to complete any asynchronous call.
+   * </p>
+   */
+  @Override
+  public AsyncLock getLock() {
+    return asyncLock;
+  }
+
+  /**
+   * {@inheritDoc}
+   * <p>
    * Implements the ReactiveJdbcAdapter API by returning an instance of
    * {@link OracleDataSource} that implements the Reactive Extensions APIs for
    * creating connections.
@@ -1192,11 +1207,6 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static boolean isTypeConversionError(int errorCode) {
     // ORA-17004 is raised for an unsupported type conversion
     return errorCode == 17004;
-  }
-
-  @Override
-  public AsyncLock getLock() {
-    return asyncLock;
   }
 
   /**
