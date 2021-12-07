@@ -27,7 +27,6 @@ import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
-import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcSupplier;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import org.reactivestreams.Publisher;
@@ -53,7 +52,7 @@ import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
-import java.util.function.Supplier;
+import java.util.function.Function;
 import java.util.stream.IntStream;
 
 import static java.sql.Statement.KEEP_CURRENT_RESULT;
@@ -82,7 +81,9 @@ import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
  * </p><p>
  * This implementation executes SQL using a {@link PreparedStatement}
  * from the Oracle JDBC Driver. JDBC API calls are adapted into Reactive
- * Streams APIs using a {@link ReactiveJdbcAdapter}.
+ * Streams APIs using a {@link ReactiveJdbcAdapter}. To avoid contention for
+ * JDBC's internal lock, the {@link #jdbcLock} must be acquired before
+ * executing any JDBC API call.
  * </p>
  *
  * <h3>Database Cursor Management</h3>
@@ -91,14 +92,14 @@ import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
  * Database session. If a session never closes it's cursors, it will
  * eventually exceed the maximum number of open cursors allowed by the Oracle
  * Database and an ORA-01000 error will be raised. The Oracle R2DBC Driver
- * will close cursors after each {@link Result} emitted by the
- * {@link #execute()} publisher has been fully consumed.
+ * closes cursors after all {@link Result}s emitted by the {@link #execute()}
+ * publisher has been fully consumed.
  * </p><p id="fully-consumed-result">
  * To ensure that cursors are eventually closed, application code MUST
- * fully consume {@link Result} objects emitted by the {@link #execute()}
- * {@code Publisher}. A {@code Result} is fully consumed by subscribing to its
- * {@linkplain Result#getRowsUpdated() update count} or
- * {@linkplain Result#map(BiFunction) row data} {@code Publisher} and then
+ * fully consume every {@link Result} object emitted by the {@link #execute()}
+ * {@code Publisher}. A {@code Result} is fully consumed by first subscribing
+ * to {@link Result#getRowsUpdated()}, {@link Result#map(BiFunction)},
+ * {@link Result#map(Function)}, or {@link Result#flatMap(Function)}, and then
  * requesting items until the {@code Publisher} emits {@code onComplete/onError}
  * or its {@code Subscription} is cancelled.
  * </p><p>
@@ -430,6 +431,12 @@ final class OracleStatementImpl implements Statement {
    * execute a blocking database call, however it will only return the
    * generated value for the ROWID pseudo column.
    * </p>
+   * @throws IllegalStateException If one or more binds are out-parameters.
+   * Returning generated values is not supported when executing a stored
+   * procedure.
+   * @throws IllegalStateException If one or more binds have been added with
+   * {@link #add()}. Returning generated values is not supported when
+   * executing a batch DML command.
    */
   @Override
   public Statement returnGeneratedValues(String... columns) {
@@ -473,27 +480,60 @@ final class OracleStatementImpl implements Statement {
    * {@inheritDoc}
    * <p>
    * Implements the R2DBC SPI method by returning a publisher that publishes the
-   * result of executing a JDBC PreparedStatement. If a batch of bind values
-   * have been {@linkplain #add() added} to this statement, the returned
-   * publisher emits a {@code Result} for each parameterized update in the
-   * batch.
+   * result of executing a JDBC PreparedStatement. For typical
+   * {@code SELECT, INSERT, UPDATE, and DELETE} commands, a single
+   * {@code Result} is published. The {@code Result} will either have
+   * zero or more {@link Result.RowSegment}s, or a single
+   * {@link Result.UpdateCount} segment, or a single {@link Result.Message}
+   * segment if an error occurs. The sections that follow will describe the
+   * {@code Result}s published for additional types of SQL that might be
+   * executed.
    * </p><p>
+   * When this method returns, any bind values previously set on this
+   * statement are cleared, and any sets of bind values saved with
+   * {@link #add()} are also cleared. Any
+   * {@linkplain #fetchSize(int) fetch size} or
+   * {@linkplain #returnGeneratedValues(String...) generated values} will be
+   * retained between executions.
+   * </p>
+   * <h3>Executing Batch DML</h3>
+   * <p>
+   * If a batch of bind values have been {@linkplain #add() added} to this
+   * statement, then a single {@code Result} is published. The {@code Result}
+   * has an {@link Result.UpdateCount} for each set of added parameters, with
+   * the count providing the number of rows effected by those parameters. The
+   * order in which {@code UpdateCount}s are published corresponds to the
+   * order in which parameters that produced the count were added: The first
+   * count is the number of rows effected by the first set of added
+   * parameters, the second count is number of rows effected by
+   * the second set of added parameters, and so on.
+   * </p>
+   * <h3>Executing Value Generating DML</h3>
+   * <p>
+   * If this statement was created with an {@code INSERT} or {@code UPDATE}
+   * command, and {@link #returnGeneratedValues(String...)} has configured this
+   * statement to return generated values, then a single {@code Result} is
+   * published. The {@code Result} has an {@link Result.UpdateCount} segment
+   * and one or more {@link Result.RowSegment}s. The update count provides
+   * the number of rows effected by the statement, and the row segments provide
+   * the values generated for each row that was created or updated.
+   * </p><p>
+   * If this statement was created with a SQL command that does not return
+   * generated values, such as a {@code SELECT} or {@code DELETE}, then the
+   * columns specified with {@link #returnGeneratedValues(String...)} are
+   * ignored, and {@code Result}s are published as normal, as if
+   * {@code returnGeneratedValues} had never been called.
+   * </p>
+   * <h3>Executing a Stored Procedure</h3>
+   * <p>
+   * If this statement was created with a stored procedure call (ie: PL/SQL),
+   * then a {@code Result} is published for any cursors returned by
+   * {@code DBMS_SQL.RETURN_RESULT}, followed by a {@code Result} having an
+   * {@link Result.OutSegment} for any out-parameters of the call.
    * When this method returns, any bind values previously set on this
    * statement are cleared, and any sets of bind values saved with
    * {@link #add()} are also cleared.
    * </p><p>
-   * If at least one set of bind values has been saved with {@link #add()},
-   * and a new set of bind values has been set without calling {@link #add()},
-   * then the new set of bind values are implicitly added when this method is
-   * called. For example, the following code executes a statement that inserts
-   * two rows even though {@code add()} is only called once:
-   * </p><pre>
-   * connection.createStatement(
-   *   "INSERT INTO pets (species, age) VALUES (:species, :age)")
-   *   .bind("species", "Cat").bind("age", 9).add()
-   *   .bind("species", "Dog").bind("age", 10)
-   *   .execute();
-   * </pre><p>
    * The returned publisher initiates SQL execution <i>the first time</i> a
    * subscriber subscribes, before the subscriber emits a {@code request}
    * signal. The returned publisher does not support multiple subscribers. After
@@ -502,32 +542,21 @@ final class OracleStatementImpl implements Statement {
    * </p>
    *
    * @implNote
-   * <p><b>
-   * This method executes a blocking database call when generated column
-   * names have been specified by invoking
-   * {@link #returnGeneratedValues(String...)} with a non-empty
-   * {@code String[]}.
-   * </b></p><p>
-   * This is a known limitation stemming from the implementation of
-   * {@link Connection#prepareStatement(String, String[])} in the 21.1 Oracle
-   * JDBC Driver. This limitation will be resolved in a later release;
-   * The Oracle JDBC Team is aware of the issue and is working on a fix.
-   * </p><p>
-   * The blocking database call can be avoided by specifying an empty {@code
-   * String[]} to {@link #returnGeneratedValues(String...)}. In this case, the
-   * Oracle JDBC Driver will not execute a blocking database call, however it
-   * will only return the generated value for the ROWID pseudo column.
-   * </p><p><b>
+   * <p>
+   * <b>
    * The 21.1 Oracle JDBC Driver does not determine a fetch size based on demand
-   * signalled with {@link org.reactivestreams.Subscription#request(long)}.</b>
-   * Oracle JDBC will use a fixed fetch size specified to
+   * signalled with {@link org.reactivestreams.Subscription#request(long)}.
+   * </b>
+   * Oracle JDBC will use a fixed fetch size specified with
    * {@link #fetchSize(int)}. If no fetch size is specified, Oracle JDBC will
-   * use a default fixed fetch size. A later release of Oracle JDBC may
-   * implement dynamic fetch sizes that are adjusted to based on
-   * {@code request} signals from the subscriber. When executing queries that
-   * return a large number of rows, programmers are advised to set
-   * {@link #fetchSize(int)} to configure the amount of rows that Oracle
-   * JDBC should fetch and buffer.
+   * use a default fixed fetch size.
+   * </p><p>
+   * When executing queries that return a large number of rows, programmers
+   * are advised to configure the amount of rows that Oracle JDBC should
+   * fetch and buffer by calling {@link #fetchSize(int)}.
+   * </p><p>
+   * A later release of Oracle JDBC may implement dynamic fetch sizes that are
+   * adjusted to based on {@code request} signals from the subscriber.
    * </p>
    */
   @Override
@@ -934,7 +963,7 @@ final class OracleStatementImpl implements Statement {
      * Executes this statement and returns a publisher that emits the results.
      * </p><p>
      * This method first subscribes to the {@link #bind()} publisher, and then
-     * subscribes to the {@link #getResults()} publisher after the bind
+     * subscribes to the {@link #executeJdbc()} publisher after the bind
      * publisher has completed. Subclasses may override the {@code bind} and
      * {@code getResults} methods as needed for different types of binds and
      * results.
@@ -957,7 +986,7 @@ final class OracleStatementImpl implements Statement {
 
       return Flux.concatDelayError(
         Mono.from(bind())
-          .thenMany(getResults())
+          .thenMany(executeJdbc())
           .map(this::getWarnings)
           .doOnNext(results::add)
           .onErrorResume(R2dbcException.class, r2dbcException ->
@@ -986,7 +1015,7 @@ final class OracleStatementImpl implements Statement {
     }
 
     protected final Publisher<Void> bind(Object[] binds) {
-      return Flux.concat(jdbcLock.get(() -> {
+      return jdbcLock.flatMap(() -> {
         List<Publisher<Void>> bindPublishers = new ArrayList<>(0);
         for (int i = 0; i < binds.length; i++) {
 
@@ -1014,40 +1043,55 @@ final class OracleStatementImpl implements Statement {
           }
         }
         return Flux.concat(bindPublishers);
-      }));
+      });
     }
 
     /**
-     * Get results from executing the {@link #preparedStatement}. The base
-     * class implements this method to get results of update count, row data,
-     * or implicit results (ie: DBMS_SQL.RETURN_RESULT). Subclasses
-     * may override this method to produce different types of results.
+     * Executes the JDBC {@link #preparedStatement} and maps the
+     * results into R2DBC {@link Result} objects. The base class implements
+     * this method to get results of update count, row data, or implicit
+     * results (ie: DBMS_SQL.RETURN_RESULT). Subclasses may override this
+     * method to produce different types of results.
      * @return A publisher that emits the results.
      */
-    protected Publisher<OracleResultImpl> getResults() {
+    protected Publisher<OracleResultImpl> executeJdbc() {
       return Mono.from(adapter.publishSQLExecution(preparedStatement))
-        .flatMapMany(this::getSqlResults);
+        .flatMapMany(this::getResults);
     }
 
-    protected Publisher<OracleResultImpl> getSqlResults(boolean isResultSet) {
-      ArrayList<OracleResultImpl> results = new ArrayList<>(1);
+    /**
+     * Publishes the current result of the {@link #preparedStatement}, along
+     * with any results that follow after calling
+     * {@link PreparedStatement#getMoreResults()}
+     *
+     * @param isResultSet {@code true} if the current result is a
+     * {@code ResultSet}, otherwise {@code false}.
+     * @return A publisher that emits all results of the
+     * {@code preparedStatement}
+     */
+    protected final Publisher<OracleResultImpl> getResults(
+      boolean isResultSet) {
 
-      OracleResultImpl result = getCurrentResult(isResultSet);
-      if (result != null)
-        results.add(result);
+      return jdbcLock.flatMap(() -> {
+        ArrayList<OracleResultImpl> results = new ArrayList<>(1);
 
-      // Implicit results may follow, even if the first result is null
-      do {
-        result = getCurrentResult(fromJdbc(() ->
-          preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
+        OracleResultImpl result = getCurrentResult(isResultSet);
+        if (result != null)
+          results.add(result);
 
-        if (result == null)
-          break;
+        // Implicit results may follow, even if the first result is null
+        do {
+          result = getCurrentResult(fromJdbc(() ->
+            preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
 
-        results.add(result);
-      } while (true);
+          if (result == null)
+            break;
 
-      return Flux.fromIterable(results);
+          results.add(result);
+        } while (true);
+
+        return Flux.fromIterable(results);
+      });
     }
 
     /**
@@ -1062,7 +1106,7 @@ final class OracleStatementImpl implements Statement {
      * otherwise false.
      * @return The current {@code Result} of the {@code preparedStatement}
      */
-    protected final OracleResultImpl getCurrentResult(boolean isResultSet) {
+    private final OracleResultImpl getCurrentResult(boolean isResultSet) {
       return fromJdbc(() -> {
         if (isResultSet) {
           return createQueryResult(
@@ -1100,21 +1144,20 @@ final class OracleStatementImpl implements Statement {
 
     /**
      * <p>
-     * Returns a publisher that deallocates all resources allocated by this
-     * statement. The returned publisher is subscribed to after this
-     * statement has executed, or its execution is cancelled.
-     * </p><p>
-     * The returned publisher subscribes to each publisher in
-     * {@link #deallocations} is subscribed to, and may close the
-     * {@link #preparedStatement} if all {@code results} have been consumed
-     * when this method is called.
-     * </p><p>
-     * Closing the {@link #preparedStatement} must only occur after
-     * consuming results, because a result may be backed by a
-     * {@link java.sql.ResultSet} or by {@link CallableStatement}.
-     * </p><p>
+     * Deallocates all resources that have been allocated by this statement.
      * If the deallocation of any resource results in an error, an attempt is
      * made to deallocate any remaining resources before emitting the error.
+     * </p><p>
+     * The returned publisher subscribes to each publisher in
+     * {@link #deallocations}, and may close the {@link #preparedStatement}
+     * if all {@code results} have been consumed when this method is called.
+     * </p><p>
+     * If one or more {@code results} have yet to be consumed, then this method
+     * arranges for the {@link #preparedStatement} to be closed after all
+     * results have been consumed. A result may be backed by a
+     * {@link java.sql.ResultSet} or by {@link CallableStatement}, so the
+     * {@link #preparedStatement} must remain open until all results have
+     * been consumed.
      * </p>
      * @param results Results that must be consumed before closing the
      * {@link #preparedStatement}
@@ -1348,9 +1391,9 @@ final class OracleStatementImpl implements Statement {
     }
 
     @Override
-    protected Publisher<OracleResultImpl> getResults() {
+    protected Publisher<OracleResultImpl> executeJdbc() {
       return Flux.concat(
-        super.getResults(),
+        super.executeJdbc(),
         Mono.just(createCallResult(
           createOutParameters(new JdbcOutParameters(), metadata, adapter),
           jdbcLock)));
@@ -1437,7 +1480,7 @@ final class OracleStatementImpl implements Statement {
      * </p>
      */
     @Override
-    protected Publisher<OracleResultImpl> getResults() {
+    protected Publisher<OracleResultImpl> executeJdbc() {
       AtomicInteger index = new AtomicInteger(0);
 
       return Flux.from(adapter.publishBatchUpdate(preparedStatement))
@@ -1480,8 +1523,8 @@ final class OracleStatementImpl implements Statement {
      * </p>
      */
     @Override
-    protected Publisher<OracleResultImpl> getResults() {
-      return Flux.from(super.getResults())
+    protected Publisher<OracleResultImpl> executeJdbc() {
+      return Flux.from(super.executeJdbc())
         .concatWithValues(createErrorResult(
           newNonTransientException(
             "One or more binds not set after calling add()", sql,
@@ -1526,26 +1569,30 @@ final class OracleStatementImpl implements Statement {
      * </p>
      */
     @Override
-    protected Publisher<OracleResultImpl> getSqlResults(boolean isResultSet) {
-      if (isResultSet) {
-        return super.getSqlResults(isResultSet);
-      }
-      else {
-        return Flux.concat(jdbcLock.get(() -> {
-          ResultSet generatedKeys = preparedStatement.getGeneratedKeys();
-
-          if (generatedKeys.isBeforeFirst()) {
-            return Mono.just(createGeneratedValuesResult(
-              preparedStatement.getLargeUpdateCount(), generatedKeys,
-              adapter, jdbcLock))
-              .concatWith(super.getSqlResults(fromJdbc(() ->
-                preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))));
+    protected Publisher<OracleResultImpl> executeJdbc() {
+      return Mono.from(adapter.publishSQLExecution(preparedStatement))
+        .flatMapMany(isResultSet -> {
+          if (isResultSet) {
+            return super.getResults(true);
           }
           else {
-            return super.getSqlResults(isResultSet);
+            return jdbcLock.flatMap(() -> {
+              ResultSet generatedKeys = preparedStatement.getGeneratedKeys();
+
+              if (generatedKeys.isBeforeFirst()) {
+                return Mono.just(createGeneratedValuesResult(
+                  preparedStatement.getLargeUpdateCount(), generatedKeys,
+                  adapter, jdbcLock))
+                  .concatWith(super.getResults(fromJdbc(() ->
+                    preparedStatement.getMoreResults(KEEP_CURRENT_RESULT))));
+              }
+              else {
+                return super.getResults(false);
+              }
+            });
           }
-        }));
-      }
+        });
     }
+
   }
 }

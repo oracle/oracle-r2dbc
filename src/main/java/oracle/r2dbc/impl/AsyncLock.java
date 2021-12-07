@@ -11,6 +11,7 @@ import reactor.core.publisher.Mono;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 /**
  * <p>
@@ -152,7 +153,7 @@ final class AsyncLock {
 
   <T> Publisher<T> flatMap(JdbcSupplier<Publisher<T>> publisherSupplier) {
     return Mono.from(get(publisherSupplier))
-      .flatMapMany(Flux::from);
+      .flatMapMany(Function.identity());
   }
 
   /**
