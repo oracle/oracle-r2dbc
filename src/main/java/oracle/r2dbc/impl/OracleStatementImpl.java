@@ -915,10 +915,10 @@ final class OracleStatementImpl implements Statement {
     protected final Object[] binds;
 
     /**
-     * Publishers that deallocate resources after the
+     * Publisher that deallocate resources after the
      * {@link #preparedStatement} is executed
      */
-    protected final List<Publisher<Void>> deallocations = new ArrayList<>(1);
+    private Publisher<Void> deallocators = Mono.empty();
 
     /**
      * Constructs a new {@code JdbcStatement} that executes a
@@ -1046,25 +1046,46 @@ final class OracleStatementImpl implements Statement {
       boolean isResultSet) {
 
       return adapter.getLock().flatMap(() -> {
-        ArrayList<OracleResultImpl> results = new ArrayList<>(1);
 
         OracleResultImpl result = getCurrentResult(isResultSet);
-        if (result != null)
-          results.add(result);
+        OracleResultImpl nextResult = getCurrentResult(
+          preparedStatement.getMoreResults(KEEP_CURRENT_RESULT));
 
-        // Implicit results may follow, even if the first result is null
-        do {
-          result = getCurrentResult(fromJdbc(() ->
-            preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
+        // Don't allocate a list unless there are multiple results. Multiple
+        // results should only happen when using DBMS_SQL.RETURN_RESULT
+        // within a PL/SQL call
+        if (nextResult == null) {
+          return Mono.justOrEmpty(result);
+        }
+        else {
+          ArrayList<OracleResultImpl> results = new ArrayList<>();
 
-          if (result == null)
-            break;
+          // The first result may be null if additional results follow
+          if (result != null)
+            results.add(result);
 
-          results.add(result);
-        } while (true);
+          while (nextResult != null) {
+            results.add(nextResult);
 
-        return Flux.fromIterable(results);
+            nextResult = getCurrentResult(
+              preparedStatement.getMoreResults(KEEP_CURRENT_RESULT));
+          }
+          return Flux.fromIterable(results);
+        }
       });
+    }
+
+    /**
+     * Adds a {@code publisher} for deallocating a resource that this
+     * statement has allocated. The {@code publisher} is subscribed to after
+     * this statement has executed, possibly before all results have been
+     * consumed. If multiple dealloaction publishers are added, each one is
+     * subscribed to sequentially, and errors emitted by the publishers are
+     * suppressed until all publishers have been subscribed to.
+     * @param publisher Resource deallocation publisher
+     */
+    protected void addDeallocation(Publisher<Void> publisher) {
+      deallocators = Flux.concatDelayError(deallocators, publisher);
     }
 
     /**
@@ -1121,9 +1142,9 @@ final class OracleStatementImpl implements Statement {
      * If the deallocation of any resource results in an error, an attempt is
      * made to deallocate any remaining resources before emitting the error.
      * </p><p>
-     * The returned publisher subscribes to each publisher in
-     * {@link #deallocations}, and may close the {@link #preparedStatement}
-     * if all {@code results} have been consumed when this method is called.
+     * The returned publisher subscribes to the {@link #deallocators}
+     * publisher, and may close the {@link #preparedStatement} if all {@code
+     * results} have been consumed when this method is called.
      * </p><p>
      * If one or more {@code results} have yet to be consumed, then this method
      * arranges for the {@link #preparedStatement} to be closed after all
@@ -1154,9 +1175,9 @@ final class OracleStatementImpl implements Statement {
       // If all results have already been consumed, the returned
       // publisher closes the statement
       if (unconsumed.get() == 0)
-        deallocations.add(adapter.getLock().run(preparedStatement::close));
+        addDeallocation(adapter.getLock().run(preparedStatement::close));
 
-      return Flux.concatDelayError(Flux.fromIterable(deallocations));
+      return deallocators;
     }
 
     /**
@@ -1238,7 +1259,7 @@ final class OracleStatementImpl implements Statement {
           Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
             .thenReturn(jdbcBlob),
         jdbcBlob -> {
-          deallocations.add(adapter.publishBlobFree(jdbcBlob));
+          addDeallocation(adapter.publishBlobFree(jdbcBlob));
           return r2dbcBlob.discard();
         });
     }
@@ -1265,7 +1286,7 @@ final class OracleStatementImpl implements Statement {
           Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
             .thenReturn(jdbcClob),
         jdbcClob -> {
-          deallocations.add(adapter.publishClobFree(jdbcClob));
+          addDeallocation(adapter.publishClobFree(jdbcClob));
           return r2dbcClob.discard();
         });
     }

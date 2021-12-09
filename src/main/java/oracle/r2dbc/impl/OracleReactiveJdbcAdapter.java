@@ -764,8 +764,8 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
         @Override
         public void onNext(T t) {
-          subscriber.onNext(t);
           runJdbc(connection::isClosed);
+          subscriber.onNext(t);
         }
 
         @Override
