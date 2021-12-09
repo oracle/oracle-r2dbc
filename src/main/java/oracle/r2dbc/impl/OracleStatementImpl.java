@@ -952,6 +952,17 @@ final class OracleStatementImpl implements Statement {
      * @return A publisher that emits the result of executing this statement
      */
     final Publisher<OracleResultImpl> execute() {
+
+      if(true)return Flux.usingWhen(Mono.just(new ArrayList<>(1)),
+        results ->
+          Mono.from(bind())
+            .thenMany(executeJdbc())
+            .map(this::getWarnings)
+            .doOnNext(results::add)
+            .onErrorResume(R2dbcException.class, r2dbcException ->
+              Mono.just(createErrorResult(r2dbcException))),
+        this::deallocate);
+
       List<OracleResultImpl> results = new ArrayList<>(1);
       Publisher<OracleResultImpl> deallocate =
         Mono.defer(() -> Mono.from(deallocate(results)))
@@ -989,7 +1000,7 @@ final class OracleStatementImpl implements Statement {
 
     protected final Publisher<Void> bind(Object[] binds) {
       return adapter.getLock().flatMap(() -> {
-        List<Publisher<Void>> bindPublishers = new ArrayList<>(0);
+        List<Publisher<Void>> bindPublishers = null;
         for (int i = 0; i < binds.length; i++) {
 
           if (binds[i] instanceof Parameter.Out
@@ -1009,13 +1020,20 @@ final class OracleStatementImpl implements Statement {
                 .doOnSuccess(allocatedValue ->
                   setBind(indexFinal, allocatedValue, jdbcType))
                 .then();
+
+            if (bindPublishers == null)
+              bindPublishers = new LinkedList<>();
+
             bindPublishers.add(bindPublisher);
           }
           else {
             setBind(i, jdbcValue, jdbcType);
           }
         }
-        return Flux.concat(bindPublishers);
+
+        return bindPublishers == null
+          ? Mono.empty()
+          : Flux.concat(bindPublishers);
       });
     }
 
