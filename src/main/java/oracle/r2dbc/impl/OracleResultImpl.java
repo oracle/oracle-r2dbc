@@ -495,9 +495,36 @@ abstract class OracleResultImpl implements Result {
 
     @Override
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return adapter.publishRows(resultSet, jdbcReadable ->
-        mappingFunction.apply(
-          new RowSegmentImpl(createRow(jdbcReadable, metadata, adapter))));
+
+      // Avoiding object allocating by reusing the same Row object
+      ReusableJdbcReadable reusableJdbcReadable = new ReusableJdbcReadable();
+      Row row = createRow(reusableJdbcReadable, metadata, adapter);
+
+      return adapter.publishRows(resultSet, jdbcReadable -> {
+        reusableJdbcReadable.current = jdbcReadable;
+        return mappingFunction.apply(new RowSegmentImpl(row));
+      });
+    }
+
+    /**
+     * Wraps an actual
+     * {@link oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable}. The actual
+     * readable is set to {@link #current}. A single instance of
+     * {@code OracleReadableImpl.RowImpl} can retain an instance of this class,
+     * and the instance can read multiple rows by changing the value of
+     * {@link #current} between invocations of a user defined row mapping
+     * function. This is done to avoid allocating an object for each row of a
+     * query result.
+     */
+    private static final class ReusableJdbcReadable
+      implements ReactiveJdbcAdapter.JdbcReadable {
+
+      ReactiveJdbcAdapter.JdbcReadable current = null;
+
+      @Override
+      public <T> T getObject(int index, Class<T> type) {
+        return current.getObject(index, type);
+      }
     }
   }
 
