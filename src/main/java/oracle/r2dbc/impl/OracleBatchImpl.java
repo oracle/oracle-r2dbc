@@ -22,6 +22,7 @@
 package oracle.r2dbc.impl;
 
 import java.sql.Connection;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.LinkedList;
 import java.util.Queue;
@@ -114,18 +115,6 @@ final class OracleBatchImpl implements Batch {
    * are executed in the order they were added. Calling this method clears all
    * statements that have been added to the current batch.
    * </p><p>
-   * A {@code Result} emitted by the returned {@code Publisher} must be
-   * <a href="OracleStatementImpl.html#fully-consumed-result">
-   *   fully-consumed
-   * </a>
-   * before the next {@code Result} is emitted. This ensures that a command in
-   * the batch can not be executed while the {@code Result} of a previous
-   * command is consumed concurrently. It is a known limitation of the Oracle
-   * R2DBC Driver that concurrent operations on a single {@code Connection}
-   * will result in blocked threads. Deferring {@code Statement} execution
-   * until full consumption of the previous {@code Statement}'s {@code Result}
-   * is necessary in order to avoid blocked threads.
-   * </p><p>
    * If the execution of any statement in the sequence results in a failure,
    * then the returned publisher emits {@code onError} with an
    * {@link R2dbcException} that describes the failure, and all subsequent
@@ -147,42 +136,8 @@ final class OracleBatchImpl implements Batch {
     requireOpenConnection(jdbcConnection);
     Queue<OracleStatementImpl> currentStatements = statements;
     statements = new LinkedList<>();
-    return publishBatch(currentStatements);
-  }
-
-  /**
-   * <p>
-   * Publish a batch of {@code Result}s from {@code statements}. Each
-   * {@code Result} is published serially with the consumption of the
-   * previous {@code Result}.
-   * </p><p>
-   * This method returns an empty {@code Publisher} if {@code statements} is
-   * empty. Otherwise, this method dequeues the next {@code Statement} and
-   * executes it for a {@code Result}. After the {@code Result} has been
-   * fully consumed, this method is invoked recursively to publish the {@code
-   * Result}s of remaining {@code statements}.
-   * </p>
-   * @param statements A batch to executed.
-   * @return {@code Publisher} of {@code statements} {@code Result}s
-   */
-  private static Publisher<OracleResultImpl> publishBatch(
-    Queue<OracleStatementImpl> statements) {
-
-    OracleStatementImpl next = statements.poll();
-
-    if (next != null) {
-      AtomicReference<OracleResultImpl> lastResult =
-        new AtomicReference<>(null);
-
-      return Flux.from(next.execute())
-        .doOnNext(lastResult::set)
-        .concatWith(Flux.defer(() ->
-          Mono.from(lastResult.get().onConsumed())
-            .thenMany(publishBatch(statements))));
-    }
-    else {
-      return Mono.empty();
-    }
+    return Flux.fromIterable(currentStatements)
+      .concatMap(OracleStatementImpl::execute);
   }
 
 }

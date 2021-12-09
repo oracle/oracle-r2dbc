@@ -36,7 +36,6 @@ import java.sql.BatchUpdateException;
 import java.sql.ResultSet;
 import java.sql.SQLWarning;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -83,15 +82,6 @@ abstract class OracleResultImpl implements Result {
   private boolean isPublished = false;
 
   /**
-   * Future that is completed when this {@code Result} has been
-   * <a href="OracleStatementImpl.html#fully-consumed-result">
-   *   fully-consumed
-   * </a>.
-   */
-  private final CompletableFuture<Void> consumedFuture =
-    new CompletableFuture<>();
-
-  /**
    * Reference to a publisher that must be subscribed to after all segments of
    * this result have been consumed. The reference is updated to {@code null}
    * after the publisher has been subscribed to.
@@ -125,11 +115,10 @@ abstract class OracleResultImpl implements Result {
    * as well.
    * </p><p>
    * When the returned publisher terminates with {@code onComplete},
-   * {@code onError}, or {@code cancel}, the {@link #consumedFuture} is
-   * completed and the {@link #onConsumed} publisher is subscribed to. The
-   * {@code onConsumed} reference is update to {@code null} so that
-   * post-consumption calls to {@link #onConsumed(Publisher)} can detect that
-   * this result is already consumed.
+   * {@code onError}, or {@code cancel}, the {@link #onConsumed} publisher is
+   * subscribed to. The {@code onConsumed} reference is updated to {@code null}
+   * so that post-consumption calls to {@link #onConsumed(Publisher)} can detect
+   * that this result is already consumed.
    * </p><p>
    * The returned {@code Publisher} emits {@code onError} with an
    * {@link R2dbcException} if this {@code Result} has a {@link Message} segment
@@ -151,7 +140,6 @@ abstract class OracleResultImpl implements Result {
     setPublished();
 
     Mono<U> whenConsumed = Mono.defer(() -> {
-      consumedFuture.complete(null);
       Publisher<Void> consumedPublisher = onConsumed.getAndSet(null);
       return consumedPublisher == null
         ? Mono.empty()
@@ -277,18 +265,6 @@ abstract class OracleResultImpl implements Result {
       throw multipleConsumptionException();
 
     return new FilteredResult(this, filter);
-  }
-
-  /**
-   * Returns a {@code Publisher} that emits {@code onComplete} when this
-   * {@code Result} has been
-   * <a href="OracleStatementImpl.html#fully-consumed-result">
-   *   fully-consumed
-   * </a>.
-   * @return {@code Publisher} of this {@code Result}'s consumption
-   */
-  final Publisher<Void> onConsumed() {
-    return Mono.fromCompletionStage(consumedFuture);
   }
 
   /**
