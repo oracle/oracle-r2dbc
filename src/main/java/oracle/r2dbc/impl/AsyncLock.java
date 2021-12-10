@@ -5,7 +5,6 @@ import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcSupplier;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -15,33 +14,52 @@ import java.util.function.Function;
 
 /**
  * <p>
- * A lock that is acquired asynchronously. Acquiring threads invoke {@link
- * #lock(Runnable)} with a {@code Runnable} that will access a guarded resource.
- * The {@code Runnable} <i>MUST</i> ensure that a single invocation of {@link
- * #unlock()} will occur after its {@code run()} method has been invoked. The
- * call to {@code unlock} may occur asynchronously on a thread other than the
- * one invoking {@code run}.
- * </p><p>
- * An instance of this lock is used to guard access to the Oracle JDBC
- * Connection, without blocking threads that contend for it.
- * </p><p>
- * Any time Oracle R2DBC creates a publisher that is implemented by the
- * Oracle JDBC driver, it will acquire an instance of this lock before
- * subscribing to that publisher, and before signalling demand to the publisher.
- * The lock is released at any point in time when it is known that neither
- * onNext nor onSubscribe signals are pending. If these signals are not
- * pending, then the driver should not be executing any database call; As
- * long as no database call is in progress, JDBC should not block threads
- * that call any method of its API.
+ * A lock that is acquired and unlocked asynchronously. An instance of this lock
+ * is used to guard access to the Oracle JDBC Connection, without blocking
+ * threads that contend for it.
  * </p><p>
  * Any time Oracle R2DBC invokes a synchronous API of Oracle JDBC, it will
  * acquire an instance of this lock before doing so. Synchronous method calls
- * will block a thread if JDBC has a database call in progress.
+ * will block a thread if JDBC has a database call in progress, and this can
+ * lead a starvation of the thread pool. If no pooled threads are available,
+ * then JDBC can not execute callbacks that complete the database call, and
+ * so JDBC will never release it's blocking lock.
  * </p><p>
- * The {@link #get(JdbcSupplier)} and {@link #run(JdbcRunnable)} methods of
- * this class return a publisher that completes a synchronous method call has
- * completed. Because the lock may not be available when these methods are
- * called, the completion must be signalled asynchronously.
+ * Any time Oracle R2DBC creates a publisher that is implemented by the
+ * Oracle JDBC driver, it will acquire an instance of this lock before
+ * subscribing to that publisher. The lock is only released if it is known
+ * that neither onNext nor onSubscribe signals are pending. If these signals
+ * are not pending, then the driver should not be executing any database
+ * call; As long as no database call is in progress, JDBC should not block
+ * threads that call any method of its API.
+ * </p>
+ * <h3>Locking for Asynchronous JDBC Calls</h3>
+ * <p>
+ * Wrapping a JDBC Publisher with {@link #lock(Publisher)} will have signals
+ * from a downstream subscriber proxied, such that the lock is held whenever
+ * {@code onSubscribe} or {@code onNext} signals are pending.
+ * </p><p>
+ * Invoking {@link #lock(Runnable)} will have a {@code Runnable} executed
+ * after the lock becomes available. The {@code Runnable} is executed
+ * immediately, before {@code lock(Runnable)} returns if the lock is
+ * available. Otherwise, the {@code Runnable} is executed asynchronously
+ * after the lock becomes available.
+ * </p><p>
+ * The {@code Runnable} provided to {@link #lock(Runnable)} <i>MUST</i> ensure
+ * that a single invocation of {@link #unlock()} will occur after its
+ * {@code run()} method is invoked. The call to {@code unlock} may occur
+ * within the scope of the {@code Runnable.run()} method. It may also occur
+ * asynchronously, after the {@code run()} method has returned.
+ * </p>
+ * <h3>Locking for Synchronous JDBC Calls</h3>
+ * <p>
+ * If the lock simply needs to be acquired before making a synchronous call,
+ * and then released after that call returns, then methods
+ * {@link #run(JdbcRunnable)}, {@link #get(JdbcSupplier)}, or
+ * {@link #flatMap(JdbcSupplier)} may be used. These methods return a
+ * {@code Publisher} that completes after the lock is acquired and the provided
+ * task has been run. These methods will automatically release the lock after
+ * the provided task has run.
  * </p><p>
  * Rather than invoke the {@code get/run} methods for each and every JDBC
  * method call, it is preferable to invoke them with a single task that
@@ -151,6 +169,18 @@ final class AsyncLock {
       }));
   }
 
+  /**
+   * Returns a {@code Publisher} that acquires this lock and executes a
+   * {@code publisherSupplier} when a subscriber subscribes. The
+   * {@code Publisher} output by the {@code publisherSupplier} is flat mapped
+   * into the {@code Publisher} returned by this method. If the supplier outputs
+   * {@code null}, the returned publisher just emits {@code onComplete}. If the
+   * supplier throws an error, the returned publisher emits that as
+   * {@code onError}.
+   * @param publisherSupplier Supplier to execute. Not null.
+   * @return A flat-mapping of the publisher output by the {
+   * @code publisherSupplier}.
+   */
   <T> Publisher<T> flatMap(JdbcSupplier<Publisher<T>> publisherSupplier) {
     return Mono.from(get(publisherSupplier))
       .flatMapMany(Function.identity());
@@ -175,7 +205,7 @@ final class AsyncLock {
 
   /**
    * <p>
-   * A {@code Subscriber} that uses the {@link #asyncLock} to ensure that
+   * A {@code Subscriber} that uses this {@link AsyncLock} to ensure that
    * threads do not become blocked when contending for this adapter's JDBC
    * {@code Connection}. Any time a {@code Subscriber} subscribes to a
    * {@code Publisher} that uses the JDBC {@code Connection}, an instance of
@@ -261,7 +291,7 @@ final class AsyncLock {
    * attempt to use it when an asynchronous database call is in-flight. The
    * potential for an in-flight call exists whenever there is a pending signal
    * from the upstream {@code Publisher}. Instances of
-   * {@code UsingConnectionSubscriber} acquire the {@link #asyncLock}
+   * {@code UsingConnectionSubscriber} acquire this {@link AsyncLock}
    * before requesting a signal from the publisher, and release the
    * {@code asyncLock} once that signal is received. This ensures that no other
    * thread will be able to acquire the {@code asyncLock} when a pending signal
@@ -270,7 +300,7 @@ final class AsyncLock {
    * An {@code onSubscribe} signal is pending between an invocation of
    * {@link Publisher#subscribe(Subscriber)} and an invocation of
    * {@link Subscriber#onSubscribe(Subscription)}. Accordingly, the
-   * {@link #asyncLock} <i>MUST</i> be acquired before invoking
+   * {@link AsyncLock} <i>MUST</i> be acquired before invoking
    * {@code subscribe} with an instance of {@code UsingConnectionSubscriber}.
    * When that instance receives an {@code onSubscribe} signal, it will release
    * the {@code asyncLock}.
@@ -279,14 +309,14 @@ final class AsyncLock {
    * {@link Subscription#request(long)} and a number of invocations of
    * {@link Subscriber#onNext(Object)} equal to the number of
    * values requested. Accordingly, instances of
-   * {@code UsingConnectionSubscriber} acquire the {@link #asyncLock} before
+   * {@code UsingConnectionSubscriber} acquire the {@link AsyncLock} before
    * emitting a {@code request} signal, and release the {@code asyncLock} when
    * a corresponding number of {@code onNext} signals have been received.
    * </p><p>
    * When a {@code cancel} signal is emitted to the upstream {@code Publisher},
    * that publisher will not emit any further signals to the downstream
    * {@code Subscriber}. If an instance {@code UsingConnectionSubscriber}
-   * has acquired the {@link #asyncLock} for a pending {@code onNext} signal,
+   * has acquired the {@link AsyncLock} for a pending {@code onNext} signal,
    * then it will defer sending a {@code cancel} signal until the pending
    * {@code onNext} signal has been received. Deferring cancellation until the
    * the publisher invokes {@code onNext} ensures that the cancellation happens
@@ -388,38 +418,6 @@ final class AsyncLock {
         else //if (currentDemand == TERMINATED)
           unlock();
       });
-
-
-
-      /* No guarantee that lock is already held in the else/non-zero case.
-      Only guarantee is that request call has been enqueued for lock ownership
-      Above this is fixed. All requests enqueued then, so that they may only
-      happen when lock is owned.
-      The update of demand may occur before terminate() is called, and
-      terminate will then unlock the lock. But there is no guarantee that the
-       lock has actually been acquired after demand is updated. The only
-       guarantee is that the request call has been enqueued for lock ownership.
-       Above this is fixed. The demand is updated only when the lock has been
-        acquired:
-        If terminate reads a demand greater than, then it knows the
-          lock must be released, because no onNext signal will follow.
-        If the update of demand reads negative number, then it unlocks the
-        lock, because no onNext signal will follow.
-      long currentDemand = demand.getAndUpdate(current ->
-        current < 0L
-          ? current // Leave negative values as is
-          : (Long.MAX_VALUE - current) < n // Check for overflow
-            ? Long.MAX_VALUE
-            : current + n);
-      If multiple request calls are made to this subscription, the first is
-      sent and then onNext is received until the first demand is met, and then
-      the lock is unlocked, and then the next request is sent, and so.
-      if (currentDemand == 0)
-        lock(() -> upstream.request(n));
-      else if (currentDemand > 0)
-        upstream.request(n);
-       */
-      // else: Do nothing if terminated or cancelled
     }
 
     /**
