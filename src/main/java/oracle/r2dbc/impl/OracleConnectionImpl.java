@@ -27,13 +27,16 @@ import io.r2dbc.spi.ConnectionMetadata;
 import io.r2dbc.spi.IsolationLevel;
 import io.r2dbc.spi.Lifecycle;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.TransactionDefinition;
 import io.r2dbc.spi.ValidationDepth;
 import org.reactivestreams.Publisher;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.time.Duration;
 
 import static io.r2dbc.spi.IsolationLevel.READ_COMMITTED;
@@ -475,21 +478,23 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   /**
    * {@inheritDoc}
    * <p>
-   * This SPI method is not yet implemented.
+   * This SPI method is implemented to execute a "SAVEPOINT ..." command.
+   * This is the same as how Oracle JDBC implements
+   * {@link java.sql.Connection#setSavepoint(String)}, except that JDBC uses a
+   * blocking call to {@code java.sql.Statement.executeUpdate(String)}. This
+   * method uses a non-blocking call.
    * </p>
-   * @throws UnsupportedOperationException In this release of Oracle
-   * R2DBC
    * @throws IllegalStateException If this {@code Connection} is closed
    */
   @Override
   public Publisher<Void> createSavepoint(String name) {
     requireNonNull(name, "name is null");
     requireOpenConnection(jdbcConnection);
-    // TODO: Execute SQL to create a savepoint. Examine and understand the
-    // Oracle JDBC driver's implementation of
-    // OracleConnection.oracleSetSavepoint(), and replicate it without
-    // blocking a thread. Consider adding a ReactiveJDBCAdapter API to do this.
-    throw new UnsupportedOperationException("createSavepoint not supported");
+    return Mono.from(setAutoCommit(false))
+      .then(Flux.from(createStatement("SAVEPOINT " + name)
+      .execute())
+      .flatMap(Result::getRowsUpdated)
+      .then());
   }
 
   /**
@@ -535,20 +540,22 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   /**
    * {@inheritDoc}
    * <p>
-   * This SPI method is not yet implemented.
+   * This SPI method is implemented to execute a "ROLLBACK TO " command. This
+   * is the same as how Oracle JDBC implements
+   * {@link java.sql.Connection#rollback(Savepoint)}, except that JDBC uses a
+   * blocking call to {@code java.sql.Statement.executeUpdate(String)}. This
+   * method uses a non-blocking call.
    * </p>
    * @throws IllegalStateException If this {@code Connection} is closed
-   * @throws UnsupportedOperationException In version this release of Oracle
-   * R2DBC
    */
   @Override
   public Publisher<Void> rollbackTransactionToSavepoint(String name) {
     requireNonNull(name, "name is null");
     requireOpenConnection(jdbcConnection);
-    // TODO: Use the JDBC connection to rollback to a savepoint without blocking
-    // a thread.
-    throw new UnsupportedOperationException(
-      "rollbackTransactionToSavepoint not supported");
+    return Flux.from(createStatement("ROLLBACK TO " + name)
+      .execute())
+      .flatMap(Result::getRowsUpdated)
+      .then();
   }
 
   /**

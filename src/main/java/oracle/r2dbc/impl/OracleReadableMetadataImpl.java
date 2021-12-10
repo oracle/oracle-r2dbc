@@ -296,6 +296,12 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
     Nullability nullability = getNullability(fromJdbc(() ->
       resultSetMetaData.isNullable(jdbcIndex)));
 
+    if (type == R2dbcType.NUMERIC) {
+      // For NUMBER, allow the scale to be 0
+      return new OracleColumnMetadataImpl(type, name, nullability,
+        fromJdbc(() -> resultSetMetaData.getPrecision(jdbcIndex)),
+        fromJdbc(() -> resultSetMetaData.getScale(jdbcIndex)));
+    }
     if (type == R2dbcType.BLOB
       || type == R2dbcType.CLOB
       || type == R2dbcType.NCLOB

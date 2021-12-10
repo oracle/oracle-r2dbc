@@ -307,16 +307,6 @@ public class OracleTestKit implements TestKit<Integer> {
   @Override
   public void compoundStatement() {}
 
-  @Disabled("Disabled until savepoint is implemented")
-  @Test
-  @Override
-  public void savePoint() {}
-
-  @Disabled("Disabled until savepoint is implemented")
-  @Test
-  @Override
-  public void savePointStartsTransaction() {}
-
   static <T> Mono<T> close(Connection connection) {
     return Mono.from(connection.close())
       .then(Mono.empty());
