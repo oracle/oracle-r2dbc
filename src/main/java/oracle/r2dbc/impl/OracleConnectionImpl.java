@@ -470,6 +470,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public ConnectionMetadata getMetadata() {
     requireOpenConnection(jdbcConnection);
+    // TODO: Initialize this on construction, to avoid lock contention
     return new OracleConnectionMetadataImpl(
       fromJdbc(jdbcConnection::getMetaData));
   }
@@ -575,7 +576,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Publisher<Void> setAutoCommit(boolean autoCommit) {
     requireOpenConnection(jdbcConnection);
-    return Mono.defer(() -> fromJdbc(() -> {
+    return Mono.from(adapter.getLock().flatMap(() -> {
       if (autoCommit == jdbcConnection.getAutoCommit()) {
         return Mono.empty(); // No change
       }
@@ -589,7 +590,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
         // Changing auto-commit from disabled to enabled. Commit in case
         // there is an active transaction.
         return Mono.from(commitTransaction())
-          .doOnSuccess(nil -> runJdbc(() ->
+          .concatWith(adapter.getLock().run(() ->
             jdbcConnection.setAutoCommit(true)));
       }
     }))
