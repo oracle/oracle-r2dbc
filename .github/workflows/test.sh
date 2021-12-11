@@ -65,7 +65,7 @@ docker run --name test_db --detach --rm -p 1521:1521 -v $startUpScripts:$startUp
 # version number. When that file exists, it means the database is ready for 
 # testing.
 echo "Waiting for database to start..."
-until [ -f $startUpScripts/$dbReady]
+until [ -f $startUpScripts/$dbReady ]
 do
   docker logs --since 3s test_db
   sleep 3
