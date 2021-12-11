@@ -35,13 +35,13 @@
 # it finds under /opt/oracle/scripts/startup. The startup scripts are run
 # after the database instance is active.A numeric prefix on the script name
 # determines the order in which scripts are run. The final script, prefixed
-# with "99_" will create a file named "done" in the mounted volumn. When the
-# "done" file exists, this signals that the database is active and that all
-# startup scripts have completed.
+# with "99_" will create a file named "$1-ready" in the mounted volume, where
+# $1 is the database version number.. When that file exists, this signals that
+# the database is active and that all startup scripts have completed.
 startUpScripts=$PWD/startup
 startUpMount=/opt/oracle/scripts/startup
-echo "touch $startUpMount/done" > $startUpScripts/99_done.sh
-
+dbReady=$1-ready
+echo "touch $startUpMount/$dbReady" > $startUpScripts/99_done.sh
 
 # The oracle/docker-images repo is cloned. This repo provides Dockerfiles along
 # with a handy script to build images of Oracle Database. For now, this script
@@ -61,10 +61,11 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 docker run --name test_db --detach --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
-# a file named "done" in the startup directory. When that file exists, it means
-# the database is ready for testing.
+# a file named "$1-ready" in the startup directory, where $1 is the database 
+# version number. When that file exists, it means the database is ready for 
+# testing.
 echo "Waiting for database to start..."
-until [ -f $startUpScripts/done ]
+until [ -f $startUpScripts/$dbReady]
 do
   docker logs --since 3s test_db
   sleep 3
