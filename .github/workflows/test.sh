@@ -35,13 +35,23 @@
 # it finds under /opt/oracle/scripts/startup. The startup scripts are run
 # after the database instance is active.A numeric prefix on the script name
 # determines the order in which scripts are run. The final script, prefixed
-# with "99_" will create a file named "$1-ready" in the mounted volume, where
-# $1 is the database version number.. When that file exists, this signals that
-# the database is active and that all startup scripts have completed.
-startUpScripts=$PWD/startup
+# with "99_" will create a file named "ready" in the mounted volume, indicating
+# that all scripts have completed and the database is ready for testing. 
+
+# Create directory with the startup scripts. Naming the directory with the
+# version number should isolate it from database container that is running 
+# concurrently, assuming multiple containers are not running the same database
+# version.
+startUp=$PWD/$1/startup
+mkdir -p $startUp
+cp $PWD/startup/* $startUp
+
+# Create the 99_ready.sh script. It will touch a file in the mounted startup
+# directory.
 startUpMount=/opt/oracle/scripts/startup
-dbReady=$1-ready
-echo "touch $startUpMount/$dbReady" > $startUpScripts/99_done.sh
+readyFile=ready
+echo "touch $startUpMount/$readyFile" > $startUp/99_ready.sh
+
 
 # The oracle/docker-images repo is cloned. This repo provides Dockerfiles along
 # with a handy script to build images of Oracle Database. For now, this script
@@ -58,14 +68,14 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # database has started.
 # The database port number, 1521, is mapped to the host system. The Oracle
 # R2DBC test suite is configured to connect with this port.
-docker run --name test_db --detach --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database:$1-xe
+docker run --name test_db --detach --rm -p 1521:1521 -v $startUp:$startUpMount oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "$1-ready" in the startup directory, where $1 is the database 
 # version number. When that file exists, it means the database is ready for 
 # testing.
 echo "Waiting for database to start..."
-until [ -f $startUpScripts/$dbReady ]
+until [ -f $startUp/$readyFile ]
 do
   docker logs --since 3s test_db
   sleep 3
