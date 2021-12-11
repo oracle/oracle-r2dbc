@@ -22,13 +22,13 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.OutParameterMetadata;
-import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
-import oracle.r2dbc.impl.OracleR2dbcExceptions.ThrowingSupplier;
+import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
+import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -38,30 +38,40 @@ import java.sql.BatchUpdateException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLType;
 import java.sql.SQLWarning;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Objects;
+import java.util.NoSuchElementException;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
+import static java.sql.Statement.KEEP_CURRENT_RESULT;
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
+import static java.util.Objects.requireNonNullElse;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.newNonTransientException;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
+import static oracle.r2dbc.impl.OracleReadableImpl.createOutParameters;
+import static oracle.r2dbc.impl.OracleReadableMetadataImpl.createParameterMetadata;
+import static oracle.r2dbc.impl.OracleResultImpl.createBatchUpdateErrorResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createCallResult;
+import static oracle.r2dbc.impl.OracleResultImpl.createErrorResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createGeneratedValuesResult;
+import static oracle.r2dbc.impl.OracleResultImpl.createQueryResult;
 import static oracle.r2dbc.impl.OracleResultImpl.createUpdateCountResult;
+import static oracle.r2dbc.impl.ReadablesMetadata.createOutParametersMetadata;
 import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
 
 /**
@@ -79,14 +89,14 @@ import static oracle.r2dbc.impl.SqlTypeMap.toJdbcType;
  * Database session. If a session never closes it's cursors, it will
  * eventually exceed the maximum number of open cursors allowed by the Oracle
  * Database and an ORA-01000 error will be raised. The Oracle R2DBC Driver
- * will close cursors after each {@link Result} emitted by the
- * {@link #execute()} publisher has been fully consumed.
+ * closes cursors after all {@link Result}s emitted by the {@link #execute()}
+ * publisher has been fully consumed.
  * </p><p id="fully-consumed-result">
  * To ensure that cursors are eventually closed, application code MUST
- * fully consume {@link Result} objects emitted by the {@link #execute()}
- * {@code Publisher}. A {@code Result} is fully consumed by subscribing to its
- * {@linkplain Result#getRowsUpdated() update count} or
- * {@linkplain Result#map(BiFunction) row data} {@code Publisher} and then
+ * fully consume every {@link Result} object emitted by the {@link #execute()}
+ * {@code Publisher}. A {@code Result} is fully consumed by first subscribing
+ * to {@link Result#getRowsUpdated()}, {@link Result#map(BiFunction)},
+ * {@link Result#map(Function)}, or {@link Result#flatMap(Function)}, and then
  * requesting items until the {@code Publisher} emits {@code onComplete/onError}
  * or its {@code Subscription} is cancelled.
  * </p><p>
@@ -167,9 +177,9 @@ final class OracleStatementImpl implements Statement {
   private final String sql;
 
   /**
-   * Timeout applied to the execution of this {@code Statement}
+   * Timeout, in seconds, applied to the execution of this {@code Statement}
    */
-  private final Duration timeout;
+  private final int timeout;
 
   /**
    * Parameter names recognized in this statement's SQL. This list contains
@@ -221,9 +231,10 @@ final class OracleStatementImpl implements Statement {
    * @param jdbcConnection JDBC connection to an Oracle Database.
    * @param adapter Adapts JDBC calls into reactive streams.
    */
-  OracleStatementImpl(String sql, Duration timeout, Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
+  OracleStatementImpl(
+    String sql, Duration timeout, Connection jdbcConnection,
+    ReactiveJdbcAdapter adapter) {
     this.sql = sql;
-    this.timeout = timeout;
     this.jdbcConnection = jdbcConnection;
     this.adapter = adapter;
 
@@ -231,6 +242,12 @@ final class OracleStatementImpl implements Statement {
     // bindValues array accordingly
     this.parameterNames = SqlParameterParser.parse(sql);
     this.bindValues = new Object[parameterNames.size()];
+
+    // Round the timeout up to the nearest whole second, so that it may be
+    // set with PreparedStatement.setQueryTimeout(int)
+    this.timeout = (int)Math.min(
+      Integer.MAX_VALUE,
+      timeout.toSeconds() + (timeout.getNano() == 0 ? 0 : 1));
   }
 
   /**
@@ -387,22 +404,12 @@ final class OracleStatementImpl implements Statement {
    * No reference to the {@code columns} array is retained after this method
    * returns.
    * </p>
-   *
-   * @implNote
-   * <p><b>
-   * Oracle R2DBC implements {@link Statement#execute()} to perform a blocking
-   * database call if this method is invoked with a non-empty {@code String[]}.
-   * </b></p><p>
-   * This is a known limitation stemming from the implementation of
-   * {@link Connection#prepareStatement(String, String[])} in the 21.1 Oracle
-   * JDBC Driver. This limitation will be resolved in a later release;
-   * The Oracle JDBC Team is aware of the issue and is working on a fix.
-   * </p><p>
-   * The blocking database call can be avoided by calling this method with an
-   * empty {@code String[]}. In this case, the Oracle JDBC Driver will not
-   * execute a blocking database call, however it will only return the
-   * generated value for the ROWID pseudo column.
-   * </p>
+   * @throws IllegalStateException If one or more binds are out-parameters.
+   * Returning generated values is not supported when executing a stored
+   * procedure.
+   * @throws IllegalStateException If one or more binds have been added with
+   * {@link #add()}. Returning generated values is not supported when
+   * executing a batch DML command.
    */
   @Override
   public Statement returnGeneratedValues(String... columns) {
@@ -413,6 +420,12 @@ final class OracleStatementImpl implements Statement {
       if (columns[i] == null)
         throw new IllegalArgumentException("Null column name at index: " + i);
     }
+
+    if (isOutParameterPresent())
+      throw outParameterWithGeneratedValues();
+
+    if (! batch.isEmpty())
+      throw generatedValuesWithBatch();
 
     generatedColumns = columns.clone();
     return this;
@@ -440,27 +453,60 @@ final class OracleStatementImpl implements Statement {
    * {@inheritDoc}
    * <p>
    * Implements the R2DBC SPI method by returning a publisher that publishes the
-   * result of executing a JDBC PreparedStatement. If a batch of bind values
-   * have been {@linkplain #add() added} to this statement, the returned
-   * publisher emits a {@code Result} for each parameterized update in the
-   * batch.
+   * result of executing a JDBC PreparedStatement. For typical
+   * {@code SELECT, INSERT, UPDATE, and DELETE} commands, a single
+   * {@code Result} is published. The {@code Result} will either have
+   * zero or more {@link Result.RowSegment}s, or a single
+   * {@link Result.UpdateCount} segment, or a single {@link Result.Message}
+   * segment if an error occurs. The sections that follow will describe the
+   * {@code Result}s published for additional types of SQL that might be
+   * executed.
    * </p><p>
+   * When this method returns, any bind values previously set on this
+   * statement are cleared, and any sets of bind values saved with
+   * {@link #add()} are also cleared. Any
+   * {@linkplain #fetchSize(int) fetch size} or
+   * {@linkplain #returnGeneratedValues(String...) generated values} will be
+   * retained between executions.
+   * </p>
+   * <h3>Executing Batch DML</h3>
+   * <p>
+   * If a batch of bind values have been {@linkplain #add() added} to this
+   * statement, then a single {@code Result} is published. The {@code Result}
+   * has an {@link Result.UpdateCount} for each set of added parameters, with
+   * the count providing the number of rows effected by those parameters. The
+   * order in which {@code UpdateCount}s are published corresponds to the
+   * order in which parameters that produced the count were added: The first
+   * count is the number of rows effected by the first set of added
+   * parameters, the second count is number of rows effected by
+   * the second set of added parameters, and so on.
+   * </p>
+   * <h3>Executing Value Generating DML</h3>
+   * <p>
+   * If this statement was created with an {@code INSERT} or {@code UPDATE}
+   * command, and {@link #returnGeneratedValues(String...)} has configured this
+   * statement to return generated values, then a single {@code Result} is
+   * published. The {@code Result} has an {@link Result.UpdateCount} segment
+   * and one or more {@link Result.RowSegment}s. The update count provides
+   * the number of rows effected by the statement, and the row segments provide
+   * the values generated for each row that was created or updated.
+   * </p><p>
+   * If this statement was created with a SQL command that does not return
+   * generated values, such as a {@code SELECT} or {@code DELETE}, then the
+   * columns specified with {@link #returnGeneratedValues(String...)} are
+   * ignored, and {@code Result}s are published as normal, as if
+   * {@code returnGeneratedValues} had never been called.
+   * </p>
+   * <h3>Executing a Stored Procedure</h3>
+   * <p>
+   * If this statement was created with a stored procedure call (ie: PL/SQL),
+   * then a {@code Result} is published for any cursors returned by
+   * {@code DBMS_SQL.RETURN_RESULT}, followed by a {@code Result} having an
+   * {@link Result.OutSegment} for any out-parameters of the call.
    * When this method returns, any bind values previously set on this
    * statement are cleared, and any sets of bind values saved with
    * {@link #add()} are also cleared.
    * </p><p>
-   * If at least one set of bind values has been saved with {@link #add()},
-   * and a new set of bind values has been set without calling {@link #add()},
-   * then the new set of bind values are implicitly added when this method is
-   * called. For example, the following code executes a statement that inserts
-   * two rows even though {@code add()} is only called once:
-   * </p><pre>
-   * connection.createStatement(
-   *   "INSERT INTO pets (species, age) VALUES (:species, :age)")
-   *   .bind("species", "Cat").bind("age", 9).add()
-   *   .bind("species", "Dog").bind("age", 10)
-   *   .execute();
-   * </pre><p>
    * The returned publisher initiates SQL execution <i>the first time</i> a
    * subscriber subscribes, before the subscriber emits a {@code request}
    * signal. The returned publisher does not support multiple subscribers. After
@@ -469,56 +515,43 @@ final class OracleStatementImpl implements Statement {
    * </p>
    *
    * @implNote
-   * <p><b>
-   * This method executes a blocking database call when generated column
-   * names have been specified by invoking
-   * {@link #returnGeneratedValues(String...)} with a non-empty
-   * {@code String[]}.
-   * </b></p><p>
-   * This is a known limitation stemming from the implementation of
-   * {@link Connection#prepareStatement(String, String[])} in the 21.1 Oracle
-   * JDBC Driver. This limitation will be resolved in a later release;
-   * The Oracle JDBC Team is aware of the issue and is working on a fix.
-   * </p><p>
-   * The blocking database call can be avoided by specifying an empty {@code
-   * String[]} to {@link #returnGeneratedValues(String...)}. In this case, the
-   * Oracle JDBC Driver will not execute a blocking database call, however it
-   * will only return the generated value for the ROWID pseudo column.
-   * </p><p><b>
+   * <p>
+   * <b>
    * The 21.1 Oracle JDBC Driver does not determine a fetch size based on demand
-   * signalled with {@link org.reactivestreams.Subscription#request(long)}.</b>
-   * Oracle JDBC will use a fixed fetch size specified to
+   * signalled with {@link org.reactivestreams.Subscription#request(long)}.
+   * </b>
+   * Oracle JDBC will use a fixed fetch size specified with
    * {@link #fetchSize(int)}. If no fetch size is specified, Oracle JDBC will
-   * use a default fixed fetch size. A later release of Oracle JDBC may
-   * implement dynamic fetch sizes that are adjusted to based on
-   * {@code request} signals from the subscriber. When executing queries that
-   * return a large number of rows, programmers are advised to set
-   * {@link #fetchSize(int)} to configure the amount of rows that Oracle
-   * JDBC should fetch and buffer.
+   * use a default fixed fetch size.
+   * </p><p>
+   * When executing queries that return a large number of rows, programmers
+   * are advised to configure the amount of rows that Oracle JDBC should
+   * fetch and buffer by calling {@link #fetchSize(int)}.
+   * </p><p>
+   * A later release of Oracle JDBC may implement dynamic fetch sizes that are
+   * adjusted to based on {@code request} signals from the subscriber.
    * </p>
    */
   @Override
   public Publisher<OracleResultImpl> execute() {
     requireOpenConnection(jdbcConnection);
 
-    final Publisher<OracleResultImpl> resultPublisher;
-    if (! batch.isEmpty()) {
-      resultPublisher = executeBatch();
-    }
-    else {
-      if (isOutParameterPresent())
-        resultPublisher = executeCall();
-      else if (generatedColumns != null)
-        resultPublisher = executeGeneratingValues();
-      else
-        resultPublisher = executeSql();
-    }
+    final Publisher<JdbcStatement> statementPublisher;
+    if (! batch.isEmpty())
+      statementPublisher = createJdbcBatch();
+    else if (isOutParameterPresent())
+      statementPublisher = createJdbcCall();
+    else if (generatedColumns != null)
+      statementPublisher = createJdbcReturningGenerated();
+    else
+      statementPublisher = createJdbcStatement();
 
     // Allow just one subscriber to the result publisher.
     AtomicBoolean isSubscribed = new AtomicBoolean(false);
     return Flux.defer(() -> {
       if (isSubscribed.compareAndSet(false, true)) {
-        return resultPublisher;
+        return Mono.from(statementPublisher)
+          .flatMapMany(JdbcStatement::execute);
       }
       else {
         return Mono.error(new IllegalStateException(
@@ -529,11 +562,103 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
+   * Creates a {@code JdbcStatement} that executes this statement as a DML
+   * statement returning generated values.
+   * @return A JDBC call statement publisher
+   */
+  private Publisher<JdbcStatement> createJdbcStatement() {
+    int currentFetchSize = fetchSize;
+    Object[] currentBinds = transferBinds();
+
+    return adapter.getLock().get(() -> {
+      PreparedStatement preparedStatement =
+        jdbcConnection.prepareStatement(sql);
+      preparedStatement.setFetchSize(currentFetchSize);
+      preparedStatement.setQueryTimeout(timeout);
+      return new JdbcStatement(preparedStatement, currentBinds);
+    });
+  }
+
+  /**
+   * Creates a {@code JdbcStatement} that executes this statement with a batch
+   * of bind values added by {@link #add()}. If one or more values are
+   * missing in the current set of binds, the statement executes with all
+   * previously added binds, and then emits an error.
+   * @return A JDBC batch statement publisher
+   */
+  private Publisher<JdbcStatement> createJdbcBatch() {
+
+    IllegalStateException invalidBinds;
+    try {
+      add();
+      invalidBinds = null;
+    }
+    catch (IllegalStateException illegalStateException) {
+      invalidBinds = illegalStateException;
+    }
+    final IllegalStateException finalInvalidBinds = invalidBinds;
+
+    int currentFetchSize = fetchSize;
+    Queue<Object[]> currentBatch = batch;
+    batch = new LinkedList<>();
+
+    return adapter.getLock().get(() -> {
+      PreparedStatement preparedStatement =
+        jdbcConnection.prepareStatement(sql);
+      preparedStatement.setFetchSize(currentFetchSize);
+      preparedStatement.setQueryTimeout(timeout);
+      return finalInvalidBinds == null
+        ? new JdbcBatch(preparedStatement, currentBatch)
+        : new JdbcBatchInvalidBinds(
+            preparedStatement, currentBatch, finalInvalidBinds);
+    });
+  }
+
+  /**
+   * Creates a {@code JdbcStatement} that executes this statement as a
+   * procedural call returning one or more out-parameters.
+   * @return A JDBC call statement publisher
+   */
+  private Publisher<JdbcStatement> createJdbcCall() {
+    int currentFetchSize = fetchSize;
+    Object[] currentBinds = transferBinds();
+
+    return adapter.getLock().get(() -> {
+      CallableStatement callableStatement = jdbcConnection.prepareCall(sql);
+      callableStatement.setFetchSize(currentFetchSize);
+      callableStatement.setQueryTimeout(timeout);
+      return new JdbcCall(callableStatement, currentBinds, parameterNames);
+    });
+  }
+
+
+  /**
+   * Creates a {@code JdbcStatement} that executes this statement as a DML
+   * statement returning generated values.
+   * @return A JDBC call statement publisher
+   */
+  private Publisher<JdbcStatement> createJdbcReturningGenerated() {
+    int currentFetchSize = fetchSize;
+    Object[] currentBinds = transferBinds();
+    String[] currentGeneratedColumns = generatedColumns.clone();
+
+    return adapter.getLock().get(() -> {
+      PreparedStatement preparedStatement =
+        currentGeneratedColumns.length == 0
+          ? jdbcConnection.prepareStatement(sql, RETURN_GENERATED_KEYS)
+          : jdbcConnection.prepareStatement(sql, currentGeneratedColumns);
+      preparedStatement.setFetchSize(currentFetchSize);
+      preparedStatement.setQueryTimeout(timeout);
+      return new JdbcReturningGenerated(preparedStatement, currentBinds);
+    });
+  }
+
+  /**
    * Binds a {@code value} to all named parameters matching the specified
    * {@code name}. The match is case-sensitive.
    * @param name A parameter name. Not null.
    * @param value A value to bind. May be null.
-   * @throws IllegalArgumentException if no named parameter matches the
+   * @throws NoSuchElementException if no named parameter matches the
    *   {@code identifier}
    */
   private void bindNamedParameter(String name, Object value) {
@@ -547,7 +672,7 @@ final class OracleStatementImpl implements Statement {
     }
 
     if (! isMatched) {
-      throw new IllegalArgumentException(
+      throw new NoSuchElementException(
         "Unrecognized parameter identifier: " + name);
     }
   }
@@ -596,12 +721,18 @@ final class OracleStatementImpl implements Statement {
    */
   private void bindParameter(int index, Parameter parameter) {
 
+    if (parameter instanceof Parameter.Out) {
+      if (! batch.isEmpty())
+        throw outParameterWithBatch();
+      if (generatedColumns != null)
+        throw outParameterWithGeneratedValues();
+    }
+
     // TODO: This method should check if Java type can be converted to the
     //  specified SQL type. If the conversion is unsupported, then JDBC
     //  setObject(...) will throw when this statement is executed. The correct
     //  behavior is to throw IllegalArgumentException here, and not from
     //  execute()
-
     Type r2dbcType =
       requireNonNull(parameter.getType(), "Parameter type is null");
     SQLType jdbcType = toJdbcType(r2dbcType);
@@ -646,15 +777,18 @@ final class OracleStatementImpl implements Statement {
    * @throws IllegalStateException If an out parameter has been set
    */
   private void addBatchValues() {
+    if (generatedColumns != null)
+      throw generatedValuesWithBatch();
+
     for (Object parameter : bindValues) {
       if (parameter == null) {
         throw parameterNotSet();
       }
       else if (parameter instanceof Parameter.Out) {
-        throw new IllegalStateException(
-          "Batch execution with out binds is not supported");
+        throw outParameterWithBatch();
       }
     }
+
     batch.add(bindValues.clone());
     Arrays.fill(bindValues, null);
   }
@@ -673,100 +807,17 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * <p>
-   * Executes this {@code Statement} as an arbitrary SQL command that may return
-   * an update count, row data, implicit results, or nothing. The SQL command
-   * is executed with the current set of {@link #bindValues}. The returned
-   * {@code Publisher} does not emit {@code Results} with out parameters or
-   * values generated by DML.
-   * </p><p>
-   * If the command returns an update count or row data, then the returned
-   * {@code Publisher} emits it as the first {@code Result}.
-   * </p><p>
-   * If the command returns implicit results, then the returned
-   * {@code Publisher} emits them as {@code Result}s following any initial
-   * {@code Result} with the update count or row data.
-   * </p><p>
-   * If the command returns no update count, row data, or implicit results,
-   * then the returned {@code Publisher} emits a single {@code Result} having
-   * no update count or row data.
-   * </p><p>
-   * This method copies any mutable state of this {@code Statement} needed to
-   * execute the command; Any mutations that occur after this method returns
-   * will not effect the returned {@code Publisher}.
-   * </p><p>
-   * When this method returns, {@link #bindValues} contains {@code null} at all
-   * positions.
-   * </p><p>
-   * The returned publisher initiates SQL execution <i>the first time</i> a
-   * subscriber subscribes, before the subscriber emits a {@code request}
-   * signal.
-   * </p>
-   * @return A publisher that emits the {@code Result} of executing this
-   * {@code Statement} as an arbitrary SQL command.
+   * Returns a copy of the current set of bind values. This method is called
+   * before executing with the current set of bind values, so it will verify
+   * that all values are set and then clear the current set for the next
+   * execution.
+   * @return A copy of the bind values
    */
-  private Publisher<OracleResultImpl> executeSql() {
-
+  private Object[] transferBinds() {
     requireAllParametersSet();
-    Object[] currentBindValues = bindValues.clone();
+    Object[] currentBinds = bindValues.clone();
     Arrays.fill(bindValues, null);
-    int currentFetchSize = fetchSize;
-
-    return execute(() ->
-        jdbcConnection.prepareStatement(sql),
-      (preparedStatement, discardQueue) ->
-        setBindValues(preparedStatement, currentBindValues, discardQueue),
-      preparedStatement ->
-        publishSqlResult(preparedStatement, currentFetchSize, true));
-  }
-
-  /**
-   * <p>
-   * Executes this {@code Statement} as a procedural call returning out
-   * parameters. The call is executed with the current set of
-   * {@link #bindValues}. The returned {@code Publisher} does not emit
-   * {@code Results} with values generated by DML.
-   * </p><p>
-   * If the command returns an update count or row data, then the returned
-   * {@code Publisher} emits it as the first {@code Result}.
-   * </p><p>
-   * If the command returns implicit results, then the returned
-   * {@code Publisher} emits them as {@code Result}s following any initial
-   * {@code Result} with the update count or row data.
-   * </p><p>
-   * The last {@code Result} emitted by the returned {@code Publisher} has no
-   * update count and a single row of out parameter values.
-   * </p><p>
-   * This method copies any mutable state of this {@code Statement} needed to
-   * execute the command; Any mutations that occur after this method returns
-   * will not effect the returned {@code Publisher}.
-   * </p><p>
-   * When this method returns, {@link #bindValues} contains {@code null} at all
-   * positions.
-   * </p><p>
-   * The returned publisher initiates call execution <i>the first time</i> a
-   * subscriber subscribes, before the subscriber emits a {@code request}
-   * signal.
-   * </p>
-   * @return A publisher that emits the {@code Result} of executing this
-   * {@code Statement} as a procedural call returning out parameters.
-   */
-  Publisher<OracleResultImpl> executeCall() {
-
-    requireAllParametersSet();
-    Object[] currentBindValues = bindValues.clone();
-    Arrays.fill(bindValues, null);
-    int currentFetchSize = fetchSize;
-
-    return execute(() -> jdbcConnection.prepareCall(sql),
-      (callableStatement, discardQueue) ->
-        Mono.from(setBindValues(
-          callableStatement, currentBindValues, discardQueue))
-          .doOnSuccess(nil ->
-            registerOutParameters(callableStatement, currentBindValues)),
-      callableStatement ->
-        publishCallResult(
-          callableStatement, currentBindValues, currentFetchSize));
+    return currentBinds;
   }
 
   /**
@@ -779,758 +830,6 @@ final class OracleStatementImpl implements Statement {
       if (parameter == null)
         throw parameterNotSet();
     }
-  }
-
-  /**
-   * <p>
-   * Publishes one or more {@code Result}s returned by executing a
-   * {@code preparedStatement}. This method handles results for queries, DML
-   * (not batched, and not returning generated values), DDL, and procedure
-   * calls having no out binds.
-   * </p><p>
-   * The returned {@code Publisher} emits 1 {@code Result} for each implicit
-   * result identified by {@link PreparedStatement#getMoreResults()}. The
-   * returned {@code Publisher} emits 0 {@code Result}s if the {@code
-   * preparedStatement} returns no update count, row data, or implicit results.
-   * </p>
-   * @param isCursorClosable {@code true} if the cursor can be closed if no
-   * result is a {@code ResultSet}
-   * @return A {@code Publisher} that emits the {@code Result}s of executing a
-   * {@code preparedStatement}.
-   */
-  private Publisher<OracleResultImpl> publishSqlResult(
-    PreparedStatement preparedStatement, int fetchSize,
-    boolean isCursorClosable) {
-
-    return Mono.from(publishSqlExecution(preparedStatement, fetchSize))
-      .flatMapMany(isResultSet -> {
-
-        // Retain Publishers that complete when an implicit ResultSet is
-        // consumed.
-        List<Publisher<Void>> implicitResultConsumptions = new ArrayList<>(0);
-
-        // Collect all Results into a List before any are emitted to user
-        // code. Ideally, no JDBC API calls should occur after the first
-        // Result is emitted; Once a Result has been emitted, user code may
-        // initiate a new Statement execution, and the JDBC connection
-        // becomes locked. If a JDBC call occurs while the connection is
-        // locked, it will block the calling thread. This can potentially
-        // cause a deadlock where all threads are blocked until the JDBC
-        // connection is unlocked, and the JDBC connection can not become
-        // unlocked until a thread is available.
-        List<OracleResultImpl> results = new ArrayList<>(1);
-        OracleResultImpl firstResult =
-          getSqlResult(adapter, preparedStatement, isResultSet);
-
-        if (firstResult != null)
-          results.add(firstResult);
-
-        do {
-          // Move the statement to the next result, if any
-          boolean isNextResultSet = fromJdbc(() ->
-            preparedStatement.getMoreResults(
-              PreparedStatement.KEEP_CURRENT_RESULT));
-
-          // Get the next result, if any
-          OracleResultImpl nextResult =
-            getSqlResult(adapter, preparedStatement, isNextResultSet);
-
-          // Break out of this loop if there is no next result
-          if (nextResult == null)
-            break;
-
-          // If the result is an implicit ResultSet, then retain it's
-          // consumption publisher
-          if (isNextResultSet)
-            implicitResultConsumptions.add(nextResult.onConsumed());
-
-          // Add the next result to the list of all results
-          results.add(nextResult);
-        } while (true);
-
-        Publisher<OracleResultImpl> resultPublisher =
-          Flux.fromIterable(results);
-
-        if (!isCursorClosable) {
-          // Don't attempt to close the cursor if the caller provided
-          // isCursorClosable as false
-          return resultPublisher;
-        }
-        else if (implicitResultConsumptions.isEmpty()) {
-          // If no result is a ResultSet, then the cursor can be closed now.
-          // Otherwise, PreparedStatement.closeOnCompletion() will close the
-          // cursor after the ResultSet emits the last row
-          if (!isResultSet)
-            runJdbc(preparedStatement::close);
-          else
-            runJdbc(preparedStatement::closeOnCompletion);
-
-          return resultPublisher;
-        }
-        else {
-          // If at least one Result is an implicit ResultSet, then
-          // PreparedStatement.closeOnCompletion()
-          return Flux.from(resultPublisher)
-            .concatWith(Flux.merge(implicitResultConsumptions)
-              .doFinally(signalType -> runJdbc(preparedStatement::close))
-              .cast(OracleResultImpl.class));
-        }
-      });
-  }
-
-  /**
-   * Publish the result of executing a {@code preparedStatement}. This method
-   * will configure the execution to use the specified {@code fetchSize} and
-   * {@link #timeout} specified to the constructor.
-   * @param preparedStatement Statement to execute
-   * @param fetchSize Fetch size to configure
-   * @return A {@code Publisher} that emits {@code true} if the
-   * first result is a ResultSet, otherwise {@code false}.
-   */
-  private Publisher<Boolean> publishSqlExecution(
-    PreparedStatement preparedStatement, int fetchSize) {
-    runJdbc(() -> preparedStatement.setFetchSize(fetchSize));
-    setQueryTimeout(preparedStatement);
-    return Mono.from(adapter.publishSQLExecution(preparedStatement));
-  }
-
-  private void setQueryTimeout(PreparedStatement preparedStatement) {
-    // Round the timeout up to the nearest whole second. JDBC supports
-    // an int valued timeout of seconds.
-    runJdbc(() ->
-      preparedStatement.setQueryTimeout((int)Math.min(
-        Integer.MAX_VALUE,
-        timeout.toSeconds() + (timeout.getNano() == 0 ? 0 : 1))));
-  }
-
-  /**
-   * Returns the current {@code Result} of a {@code preparedStatement}, which
-   * is row data if {@code isResultSet} is {@code true}, or an update count if
-   * {@link PreparedStatement#getUpdateCount()} returns a value of 0 or greater.
-   * This method returns {@code null} if current result is neither row data
-   * nor a update count.
-   * @param adapter Adapts JDBC calls into reactive streams.
-   * @param preparedStatement JDBC statement
-   * @param isResultSet {@code true} if the current result is row data,
-   * otherwise false.
-   * @return The current {@code Result} of the {@code preparedStatement}
-   */
-  private static OracleResultImpl getSqlResult(
-    ReactiveJdbcAdapter adapter, PreparedStatement preparedStatement,
-    boolean isResultSet) {
-
-    return getWarnings(preparedStatement, fromJdbc(() -> {
-      if (isResultSet) {
-        return OracleResultImpl.createQueryResult(
-          preparedStatement.getResultSet(), adapter);
-      }
-      else {
-        long updateCount = preparedStatement.getLargeUpdateCount();
-        if (updateCount >= 0) {
-          return OracleResultImpl.createUpdateCountResult(updateCount);
-        }
-        else {
-          return null;
-        }
-      }
-    }));
-  }
-
-  /**
-   * Publishes any implicit results generated by {@code DBMS_SQL.RETURN_RESULT}
-   * followed by a single {@code Result} of out parameters.
-   * @param callableStatement JDBC statement having out parameters
-   * @param bindValues Bind values of this {@code Statement}
-   * @return Publisher emitting implicit results and out parameters.
-   */
-  private Publisher<OracleResultImpl> publishCallResult(
-    CallableStatement callableStatement, Object[] bindValues,
-    int fetchSize) {
-
-    // Create a Result of OutParameters that are read from the
-    // CallableStatement.
-    OracleResultImpl callResult =
-      createCallResult(createOutParameterRow(callableStatement, bindValues));
-
-    return Flux.concat(
-      publishSqlResult(callableStatement, fetchSize, false),
-      Mono.just(callResult)
-        // Close the CallableStatement after the Result is consumed.
-        .concatWith(Mono.from(callResult.onConsumed())
-          .doOnTerminate(() -> runJdbc(callableStatement::close))
-          .cast(OracleResultImpl.class)));
-  }
-
-  /**
-   * <p>
-   * Creates a {@code Row} accessing out parameter values of a
-   * {@code callableStatement}.
-   * </p><p>
-   * Values may be accessed by their ordinal index relative to other out
-   * parameters, such that the index of the first out parameter is 0, and the
-   * indexes of the next out parameters are 1 greater than the index of the
-   * previous out parameter. Where {@code i} is an in {@code Parameter} in
-   * {@code parameters}, and {@code o} is an out or in-out {@code Parameter} in
-   * {@code parameters}, and {...} -> {...} expresses a mapping from
-   * {@code parameters} to the {@code callableStatement} index that is accessed
-   * for each ordinal index of the {@code Row}:
-   * </p><pre>
-   * {i,i,i} -> {}
-   * {o,i,i} -> {1}
-   * {i,o,i} -> {2}
-   * {o,o,i} -> {1,2}
-   * {i,i,o} -> {3}
-   * {o,i,o} -> {1,3}
-   * {i,o,o} -> {2,3}
-   * {o,o,o} -> {1,2,3}
-   * </pre><p>
-   * Values may be accessed by their parameter name, where the name is declared
-   * using a colon-prefixed named parameter marker in this {@code Statement}'s
-   * SQL. Values of unnamed parameter markers can not be accessed by name,
-   * only by index.
-   * </p><p>
-   * {@code RowMetadata} provides the {@link Type} of each {@code Parameter},
-   * and the name of each {@code Parameter} having named parameter marker.
-   * For {@code Parameter}s having an unnamed parameter marker, the name
-   * provided by {@code RowMetadata} is the ordinal index of that {@code
-   * Parameter}.
-   * </p>
-   *
-   *
-   * @param callableStatement JDBC statement having out parameters
-   * @param bindValues Bind values of this {@code Statement}
-   * @return A {@code Row} accessing the out parameters of {@code
-   * callableStatement}.
-   *
-   * @implNote Oracle JDBC does not implement
-   * {@link java.sql.ParameterMetaData}, so it can not be used to implement
-   * {@code RowMetaData}.
-   */
-  private OutParameters createOutParameterRow(
-    CallableStatement callableStatement, Object[] bindValues) {
-
-    int[] outBindIndexes = IntStream.range(0, bindValues.length)
-      .filter(i -> bindValues[i] instanceof Parameter.Out)
-      .toArray();
-
-    return OracleReadableImpl.createOutParameters(
-      new ReactiveJdbcAdapter.JdbcReadable() {
-
-        @Override
-        public <T> T getObject(int index, Class<T> type) {
-          return fromJdbc(() ->
-            callableStatement.getObject(1 + outBindIndexes[index], type));
-        }
-      },
-      ReadablesMetadata.createOutParametersMetadata(
-        IntStream.range(0, outBindIndexes.length)
-          .mapToObj(i -> OracleReadableMetadataImpl.createParameterMetadata(
-            Objects.requireNonNullElse(
-              parameterNames.get(outBindIndexes[i]), String.valueOf(i)),
-            ((Parameter)bindValues[outBindIndexes[i]]).getType()))
-          .toArray(OutParameterMetadata[]::new)),
-      adapter);
-  }
-
-  /**
-   * <p>
-   * Executes this {@code Statement} as a DML command that returns generated
-   * values. The DML command is executed with the current set of
-   * {@link #bindValues}. The returned {@code Publisher} does not emit
-   * {@code Results} with row data, out parameters, or implicit results.
-   * </p><p>
-   * The returned {@code Publisher} emits a single {@code Result} with an
-   * update count and generated values.
-   * </p><p>
-   * This method copies any mutable state of this {@code Statement} needed to
-   * execute the command; Any mutations that occur after this method returns
-   * will not effect the returned {@code Publisher}.
-   * </p><p>
-   * When this method returns, {@link #bindValues} contains {@code null} at all
-   * positions.
-   * </p><p>
-   * The returned publisher initiates SQL execution <i>the first time</i> a
-   * subscriber subscribes, before the subscriber emits a {@code request}
-   * signal.
-   * </p>
-   * @return A publisher that emits the {@code Result} of executing this
-   * {@code Statement} as a DML command returning generated values.
-   */
-  private Publisher<OracleResultImpl> executeGeneratingValues() {
-
-    requireAllParametersSet();
-    Object[] currentBindValues = bindValues.clone();
-    Arrays.fill(bindValues, null);
-    int currentFetchSize = fetchSize;
-    String[] currentGeneratedColumns = generatedColumns.clone();
-
-    return execute(
-      () -> generatedColumns.length == 0
-        ? jdbcConnection.prepareStatement(sql, RETURN_GENERATED_KEYS)
-        : jdbcConnection.prepareStatement(sql, currentGeneratedColumns),
-      (preparedStatement, discardQueue) ->
-        setBindValues(preparedStatement, currentBindValues, discardQueue),
-      preparedStatement ->
-        Mono.from(publishSqlExecution(preparedStatement, currentFetchSize))
-          .map(isResultSet -> {
-            if (isResultSet) {
-              throw new IllegalStateException(
-                "Statement configured to return values generated by DML" +
-                  " has executed a query that returns row data");
-            }
-            else {
-              runJdbc(preparedStatement::closeOnCompletion);
-              return createGeneratedValuesResult(
-                fromJdbc(preparedStatement::getUpdateCount),
-                fromJdbc(preparedStatement::getGeneratedKeys),
-                adapter);
-            }
-          }));
-  }
-
-  /**
-   * <p>
-   * Executes this {@code Statement} as a batch DML command. The returned
-   * {@code Publisher} emits 1 {@code Result} for each set of bind values in
-   * this {@code Statement}'s {@link #batch}. Each {@code Result} has an
-   * update count and no row data. Update counts are floored to a maximum of
-   * {@link Integer#MAX_VALUE}.
-   * </p><p>
-   * This method copies any mutable state of this {@code Statement} needed to
-   * execute the batch; Any mutations that occur after this method returns will
-   * not effect the returned {@code Publisher}.
-   * </p><p>
-   * When this method returns, the {@link #batch} is empty and
-   * {@link #bindValues} contains {@code null} at all positions.
-   * </p><p>
-   * The returned publisher initiates a batch execution <i>the first time</i> a
-   * subscriber subscribes, before the subscriber emits a {@code request}
-   * signal.
-   * </p>
-   * @return {@code Publisher} that the {@code Result}s of executing this
-   * {@code Statement} as a batch DML command.
-   * @throws IllegalStateException If this {@code Statement} has been
-   * configured to return generated values with
-   * {@link #returnGeneratedValues(String...)}. Oracle JDBC does not support
-   * batch execution that returns generated keys.
-   * @throws IllegalStateException If at least one parameter has been set
-   * since the last call to {@link #add()}, but not all parameters have been set
-   * @throws IllegalStateException If all parameters have been set since the
-   * last call to {@link #add()}, and an out parameter is present. JDBC does
-   * not support batch execution with out parameters.
-   */
-  Publisher<OracleResultImpl> executeBatch() {
-
-    if (generatedColumns != null) {
-      throw new IllegalStateException(
-        "Batch execution with generated values is not supported");
-    }
-
-    addImplicit();
-    Queue<Object[]> currentBatch = batch;
-    int batchSize = batch.size();
-    batch = new LinkedList<>();
-
-    // Index incremented with each update count
-    AtomicInteger index = new AtomicInteger(0);
-    return execute(
-      () -> jdbcConnection.prepareStatement(sql),
-      (preparedStatement, discardQueue) ->
-        setBatchBindValues(preparedStatement, currentBatch, discardQueue),
-      preparedStatement -> {
-        setQueryTimeout(preparedStatement);
-        return Flux.from(adapter.publishBatchUpdate(preparedStatement))
-          // All update counts are collected into a single long[]
-          .collect(
-            () -> new long[batchSize],
-            (updateCounts, updateCount) ->
-              updateCounts[index.getAndIncrement()] = updateCount)
-          .map(updateCounts -> {
-            // Map the long[] to a batch update count Result
-            OracleResultImpl result = getWarnings(
-              preparedStatement,
-              OracleResultImpl.createBatchUpdateResult(updateCounts));
-
-            // Close the cursor before emitting the Result
-            runJdbc(preparedStatement::close);
-            return result;
-          })
-          .onErrorResume(error -> {
-            final Mono<OracleResultImpl> resultPublisher;
-
-            if (error.getCause() instanceof BatchUpdateException) {
-              resultPublisher = Mono.just(
-                OracleResultImpl.createBatchUpdateErrorResult(
-                  (BatchUpdateException) error.getCause()));
-            }
-            else {
-              resultPublisher = Mono.error(error);
-            }
-
-            // Close the cursor before emitting the Result
-            runJdbc(preparedStatement::close);
-            return resultPublisher;
-          });
-      });
-  }
-
-  /**
-   * Adds the current set of {@link #bindValues} to the {@link #batch} if all
-   * positions are set with a value. A full set of bind values are implicitly
-   * {@link #add() added} when an R2DBC {@code Statement} is executed. This
-   * behavior is specified in "Section 7.2.2. Batching" of the R2DBC 0.8.2
-   * Specification. If this statement has no bind position, then this method
-   * does nothing. If at least one bind position is set with a value, but not
-   * all bind positions are set with a value, then this method throws an
-   * {@code IllegalStateException}.
-   *
-   * @throws IllegalStateException If user code has provided a value for one
-   * or more parameters, but not for all parameters.
-   */
-  private void addImplicit() {
-    if (bindValues.length != 0 && bindValues[0] != null) {
-      add();
-    }
-    else {
-      for (int i = 1; i < bindValues.length; i++) {
-        if (bindValues[i] != null) {
-          throw new IllegalStateException(
-            "One or more parameters are not set");
-        }
-      }
-    }
-  }
-
-  /**
-   * <p>
-   * Sets a {@code batch} of bind values for a {@code preparedStatement}. The
-   * returned {@code Publisher} completes after all values are materialized
-   * and added to the batch of the {@code preparedStatement}.
-   * </p><p>
-   * This method ignores any {@code Parameter} that is an instance of
-   * {@link Parameter.Out} and is not also an instance of {@link Parameter.In}.
-   * </p><p>
-   * Resources allocated for bind values are deallocated by {@code Publisher}s
-   * this method adds to the {@code discardQueue}.
-   * </p>
-   * @param preparedStatement JDBC statement
-   * @param batch Parameters to set on the {@code preparedStatement}
-   * @param discardQueue Resource deallocation queue
-   * @return A {@code Publisher} that emits {@code onComplete} when all
-   * {@code parameters} have been added to the batch.
-   */
-  private Publisher<Void> setBatchBindValues(
-    PreparedStatement preparedStatement, Queue<Object[]> batch,
-    Queue<Publisher<Void>> discardQueue) {
-    return Flux.fromStream(Stream.generate(batch::poll)
-      .takeWhile(Objects::nonNull))
-      .concatMap(parameters ->
-        Mono.from(setBindValues(preparedStatement, parameters, discardQueue))
-          .doOnSuccess(nil ->
-            runJdbc(preparedStatement::addBatch)));
-  }
-
-  /**
-   * <p>
-   * Sets input {@code bindValues} of a {@code preparedStatement}. The
-   * returned {@code Publisher} completes after all bind values have
-   * materialized and been set on the {@code preparedStatement}.
-   * </p><p>
-   * This method ignores any {@code Parameter} that is an instance of
-   * {@link Parameter.Out} and is not also an instance of {@link Parameter.In}.
-   * </p><p>
-   * Resources allocated for bind values are deallocated by {@code Publisher}s
-   * this method adds to the {@code discardQueue}.
-   * </p>
-   * @param preparedStatement JDBC statement
-   * @param bindValues Bind values of this {@code Statement}
-   * @param discardQueue Resource deallocation queue
-   * @return A {@code Publisher} that emits {@code onComplete} when all
-   * {@code bindValues} have been set.
-   */
-  private Publisher<Void> setBindValues(
-    PreparedStatement preparedStatement, Object[] bindValues,
-    Queue<Publisher<Void>> discardQueue) {
-
-    Mono<Void> bindPublisher = Mono.empty();
-
-    for (int i = 0; i < bindValues.length; i++) {
-
-      if (bindValues[i] instanceof Parameter.Out
-        && !(bindValues[i] instanceof Parameter.In))
-        continue;
-
-      int jdbcIndex = i + 1;
-      Object jdbcValue = convertToJdbcBindValue(bindValues[i], discardQueue);
-      SQLType jdbcType =
-        bindValues[i] instanceof Parameter
-          ? toJdbcType(((Parameter)bindValues[i]).getType())
-          : null; // JDBC infers the type
-
-      if (jdbcValue instanceof Publisher<?>) {
-        bindPublisher = bindPublisher.then(Mono.from((Publisher<?>)jdbcValue))
-          .doOnSuccess(allocatedValue ->
-            setJdbcBindValue(
-              preparedStatement, jdbcIndex, allocatedValue, jdbcType))
-          .then();
-      }
-      else {
-        setJdbcBindValue(
-          preparedStatement, jdbcIndex, jdbcValue, jdbcType);
-      }
-    }
-
-    return bindPublisher;
-  }
-
-  /**
-   * <p>
-   * Converts a {@code bindValue} of a type that is supported by R2DBC into an
-   * equivalent type that is supported by JDBC. The object returned by this
-   * method will express the same information as the original {@code bindValue}
-   * For instance, if this method is called with an {@code io.r2dbc.spi.Blob}
-   * type {@code bindValue}, it will convert it into an {@code java.sql.Blob}
-   * type value that stores the same content as the R2DBC {@code Blob}.
-   * </p><p>
-   * If no conversion is necessary, this method returns the original
-   * {@code bindValue}. If the conversion requires a database call, this
-   * method returns a {@code Publisher} that emits the converted value. If
-   * the conversion requires resource allocation, a {@code Publisher} that
-   * deallocates resources is added to the {@code discardQueue}.
-   * </p>
-   *
-   * @param bindValue Bind value to convert. May be null.
-   * @param discardQueue Resource deallocation queue
-   * @return Value to set as a bind on the JDBC statement. May be null.
-   * @throws IllegalArgumentException If the JDBC driver can not convert a
-   *   bind value into a SQL value.
-   */
-  private Object convertToJdbcBindValue(
-    Object bindValue, Queue<Publisher<Void>> discardQueue) {
-    if (bindValue == null || bindValue == NULL_BIND) {
-      return null;
-    }
-    else if (bindValue instanceof Parameter) {
-      return convertToJdbcBindValue(
-        ((Parameter) bindValue).getValue(), discardQueue);
-    }
-    else if (bindValue instanceof io.r2dbc.spi.Blob) {
-      return convertBlobBind((io.r2dbc.spi.Blob) bindValue, discardQueue);
-    }
-    else if (bindValue instanceof io.r2dbc.spi.Clob) {
-      return convertClobBind((io.r2dbc.spi.Clob) bindValue, discardQueue);
-    }
-    else if (bindValue instanceof ByteBuffer) {
-      return convertByteBufferBind((ByteBuffer) bindValue);
-    }
-    else {
-      return bindValue;
-    }
-  }
-
-  /**
-   * Converts an R2DBC Blob to a JDBC Blob. The returned {@code Publisher}
-   * asynchronously writes the {@code r2dbcBlob's} content to a JDBC Blob and
-   * then emits the JDBC Blob after all content has been written. The JDBC
-   * Blob allocates a temporary database BLOB that is freed by a {@code
-   * Publisher} added to the {@code discardQueue}.
-   * @param r2dbcBlob An R2DBC Blob. Not null. Retained.
-   * @return A JDBC Blob. Not null.
-   */
-  private Publisher<java.sql.Blob> convertBlobBind(
-    io.r2dbc.spi.Blob r2dbcBlob, Queue<Publisher<Void>> discardQueue) {
-
-    return Mono.using(() ->
-        fromJdbc(jdbcConnection::createBlob),
-      jdbcBlob -> {
-        discardQueue.add(adapter.publishBlobFree(jdbcBlob));
-        return Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
-          .thenReturn(jdbcBlob);
-      },
-      jdbcBlob -> r2dbcBlob.discard());
-  }
-
-  /**
-   * Converts an R2DBC Clob to a JDBC Clob. The returned {@code Publisher}
-   * asynchronously writes the {@code r2dbcClob} content to a JDBC Clob and
-   * then emits the JDBC Clob after all content has been written. The JDBC
-   * Clob allocates a temporary database Clob that is freed by a {@code
-   * Publisher} added to the {@code discardQueue}.
-   * @param r2dbcClob An R2DBC Clob. Not null. Retained.
-   * @return A JDBC Clob. Not null.
-   */
-  private Publisher<java.sql.Clob> convertClobBind(
-    io.r2dbc.spi.Clob r2dbcClob, Queue<Publisher<Void>> discardQueue) {
-
-    return Mono.using(() ->
-        // Always use NClob to support unicode characters
-        fromJdbc(jdbcConnection::createNClob),
-      jdbcClob -> {
-        discardQueue.add(adapter.publishClobFree(jdbcClob));
-        return Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
-          .thenReturn(jdbcClob);
-      },
-      jdbcClob -> r2dbcClob.discard());
-  }
-
-  /**
-   * Converts a ByteBuffer to a byte array. The {@code byteBuffer} contents,
-   * delimited by it's position and limit, are copied into the returned byte
-   * array. No state of the {@code byteBuffer} is mutated, including it's
-   * position, limit, or mark.
-   * @param byteBuffer A ByteBuffer. Not null. Not retained.
-   * @return A byte array storing the {@code byteBuffer's} content. Not null.
-   */
-  private static byte[] convertByteBufferBind(ByteBuffer byteBuffer) {
-    ByteBuffer slice = byteBuffer.slice(); // Don't mutate position/limit/mark
-    byte[] byteArray = new byte[slice.remaining()];
-    slice.get(byteArray);
-    return byteArray;
-  }
-
-  /**
-   * Sets the {@code value} of a {@code preparedStatement} parameter at the
-   * specified {@code index}. If a non-null {@code type} is provided, then it is
-   * specified as the SQL type for the bind. Otherwise, if the
-   * {@code type} is {@code null}, then the JDBC driver infers the SQL type
-   * of the bind.
-   * @param preparedStatement JDBC statement. Not null.
-   * @param index 1-based parameter index
-   * @param value Value. May be null.
-   * @param type SQL type. May be null.
-   */
-  private void setJdbcBindValue(
-    PreparedStatement preparedStatement, int index, Object value,
-    SQLType type) {
-    runJdbc(() -> {
-      if (type != null)
-        preparedStatement.setObject(index, value, type);
-      else
-        preparedStatement.setObject(index, value);
-    });
-  }
-
-  /**
-   * Registers instances of {@link Parameter.Out} in {@code bindValues}
-   * as output parameters of a {@code callableStatement}.
-   * @param callableStatement JDBC statement
-   * @param bindValues Bind values of this {@code Statement}
-   */
-  private static void registerOutParameters(
-    CallableStatement callableStatement, Object[] bindValues) {
-    for (int i = 0; i < bindValues.length; i++) {
-      if (bindValues[i] instanceof Parameter.Out) {
-        int jdbcIndex = i + 1;
-        SQLType jdbcType = toJdbcType(((Parameter)bindValues[i]).getType());
-        runJdbc(() ->
-          callableStatement.registerOutParameter(jdbcIndex, jdbcType));
-      }
-    }
-  }
-
-  /**
-   * <p>
-   * Executes a JDBC statement using functional abstractions that allow for
-   * various types of SQL execution, such as: queries, DML, DDL, batch DML,
-   * DML returning generated values, or procedural calls. The functional
-   * abstractions are:
-   * <dl>
-   *   <dt>{@code statementSupplier}</dt>
-   *   <dd>
-   *     Outputs a JDBC statement, which may be an instance of
-   *     {@code PreparedStatement} or {@code CallableStatement}
-   *   </dd>
-   *   <dt>{@code bindFunction}</dt>
-   *   <dd>
-   *     <p>
-   *     Outputs a {@code Publisher} that emits {@code onComplete} after
-   *     setting bind values on a JDBC statement, and pushing
-   *     {@code Publisher}s that deallocate bind values to a {@code Queue}.
-   *     </p><p>
-   *     Typical bind values do not require resource allocation and
-   *     deallocation using {@code Publisher}s, and so the function may
-   *     output an empty {@code Publisher}, and push nothing to the {@code
-   *     Queue}. Only particular bind values, like {@code Blob} and {@code
-   *     Clob}, will require asynchronous database calls for allocation and
-   *     deallocation.
-   *   </dd>
-   *   <dt>
-   *     {@code resultFunction}
-   *   </dt>
-   *   <dd>
-   *     Outputs a {@code Publisher} that emits the {@code Result} of
-   *     executing an input JDBC statement. The {@code Publisher} may emit 0,
-   *     1, or many {@code Results}. If the {@code Publisher} emits 0 {@code
-   *     Results}, the {@code Publisher} returned by this method emits a
-   *     single {@code Result} having no update count or row data.
-   *   </dd>
-   * </dl>
-   * </p><p>
-   * This method ensures that the JDBC statement is eventually closed. If the
-   * returned {@code Publisher} emits 1 or more {@code Result}s before
-   * terminating, then the JDBC statement is closed when the last {@code Result}
-   * emitted has been fully consumed. If the {@code Publisher} terminates before
-   * emitting a single {@code Result}, then the JDBC statement is closed
-   * immediately upon termination.
-   * </p><p>
-   * This method ensures that resources allocated for bind values are
-   * deallocated after the {@code Publisher} output by the
-   * {@code resultFunction} has terminated.
-   * </p>
-   * @param statementSupplier Prepares a JDBC statement
-   * @param bindFunction Sets bind values on a JDBC statement
-   * @param resultFunction Executes a JDBC statement
-   * @param <T> The type of JDBC statement
-   * @return A {@code Publisher} that executes a JDBC statement and emits the
-   * {@code Result}s.
-   */
-  private static <T extends PreparedStatement> Publisher<OracleResultImpl>
-  execute(
-    ThrowingSupplier<T> statementSupplier,
-    BiFunction<T, Queue<Publisher<Void>>, Publisher<Void>> bindFunction,
-    Function<T, Publisher<OracleResultImpl>> resultFunction) {
-
-    T preparedStatement = statementSupplier.get();
-    AtomicBoolean isResultEmitted = new AtomicBoolean(false);
-    return Flux.usingWhen(
-      Mono.just(new LinkedList<Publisher<Void>>()),
-      discardQueue ->
-        Flux.from(bindFunction.apply(preparedStatement, discardQueue))
-          .thenMany(resultFunction.apply(preparedStatement)),
-      discardQueue ->
-        Flux.concatDelayError(Flux.fromIterable(discardQueue)))
-      .doOnNext(result -> isResultEmitted.set(true))
-      .onErrorResume(R2dbcException.class, r2dbcException ->
-        Mono.just(OracleResultImpl.createErrorResult(r2dbcException)))
-      .defaultIfEmpty(createUpdateCountResult(-1L))
-      .doFinally(signalType -> {
-        // Close the cursor if the publisher is cancelled or emits an error
-        // before a Result is emitted. Otherwise, the resultFunction should
-        // arrange for the cursor to be closed as it may need to remain open
-        // until the Result is consumed
-        if (! isResultEmitted.get())
-          runJdbc(preparedStatement::close);
-      });
-  }
-
-  /**
-   * Returns a {@code Result} that publishes any {@link SQLWarning}s of a
-   * {@code preparedStatement} as {@link io.r2dbc.spi.Result.Message}
-   * segments followed by any {@code Segments} of a {@code result}. This method
-   * returns the provided {@code result} if the {@code preparedStatement} has
-   * no warnings.
-   * @param preparedStatement Statement that may have warnings
-   * @param result Result of executing the {@code preparedStatement}
-   * @return A {@code Result} having any warning messages of the
-   * {@code preparedStatement} along with its execution {@code result}.
-   */
-  private static OracleResultImpl getWarnings(
-    PreparedStatement preparedStatement, OracleResultImpl result) {
-    SQLWarning warning = fromJdbc(preparedStatement::getWarnings);
-    runJdbc(preparedStatement::clearWarnings);
-    return warning == null
-      ? result
-      : OracleResultImpl.createWarningResult(warning, result);
   }
 
   /**
@@ -1555,4 +854,757 @@ final class OracleStatementImpl implements Statement {
     }
   }
 
+  /**
+   * Returns an exception indicating that it is not possible to execute a
+   * statement that returns both out-parameters and generated values. There
+   * is no JDBC API to create a {@link CallableStatement} that returns
+   * generated values (aka: generated keys).
+   * @return Exception for configuring out-parameters with generated values.
+   */
+  private static IllegalStateException outParameterWithGeneratedValues() {
+    return new IllegalStateException(
+      "Statement can not return both out-parameters and generated values");
+  }
+
+  /**
+   * Returns an exception indicating that it is not possible to execute a
+   * statement with a batch of out-parameters. This is not supported by
+   * Oracle Database, although it would be possible to emulate it by
+   * executing a sequence of {@link CallableStatement}s individually (TODO?)
+   * @return Exception for batching out-parameters.
+   */
+  private static IllegalStateException outParameterWithBatch() {
+    return new IllegalStateException(
+      "Batch execution with out parameters is not supported");
+  }
+
+  /**
+   * Returns an exception indicating that it is not possible to execute a
+   * statement as a batch and returning generated values. This is not supported
+   * by  Oracle Database, although it would be possible to emulate it by
+   * executing a sequence of {@link PreparedStatement}s individually (TODO?)
+   * @return Exception for batching with generated values
+   */
+  private static IllegalStateException generatedValuesWithBatch() {
+    return new IllegalStateException(
+      "Batch execution returning generated values is not supported");
+  }
+
+  /**
+   * <p>
+   * A statement that is executed using JDBC. The base class is implemented to
+   * execute SQL that returns an update count, row data, or implicit results
+   * (ie: DBMS_SQL.RETURN_RESULT).
+   * </p><p>
+   * Subclasses may extend the base class to handle other types of results,
+   * such as DML returning generated values, a procedural call that
+   * returns out-parameters, or a batch of DML update counts.
+   * </p><p>
+   * The base class ensures that all resources allocated for the statement
+   * execution are eventually deallocated. This includes the
+   * {@link #preparedStatement}, along with resources allocated for bind
+   * values, such as {@code java.sql.Blob/Clob} objects.
+   * </p>
+   */
+  private class JdbcStatement {
+
+    /** The {@code PreparedStatement} that is executed */
+    protected final PreparedStatement preparedStatement;
+
+    /** The bind values that are set on the {@link #preparedStatement} */
+    protected final Object[] binds;
+
+    /**
+     * Publisher that deallocate resources after the
+     * {@link #preparedStatement} is executed
+     */
+    private Publisher<Void> deallocators = Mono.empty();
+
+    /**
+     * Constructs a new {@code JdbcStatement} that executes a
+     * {@code preparedStatement} with the given {@code binds}.
+     * @param preparedStatement Statement to execute. Not null. Retained.
+     * @param binds Bind values. Not null. Retained.
+     */
+    private JdbcStatement(PreparedStatement preparedStatement, Object[] binds) {
+      this.preparedStatement = preparedStatement;
+      this.binds = binds;
+    }
+
+    /**
+     * <p>
+     * Executes this statement and returns a publisher that emits the results.
+     * </p><p>
+     * This method first subscribes to the {@link #bind()} publisher, and then
+     * subscribes to the {@link #executeJdbc()} publisher after the bind
+     * publisher has completed. Subclasses may override the {@code bind} and
+     * {@code getResults} methods as needed for different types of binds and
+     * results.
+     * </p><p>
+     * This method is implemented to create {@code Results} of
+     * {@link Result.Message} segments if an {@link R2dbcException} is
+     * emitted from the {@code bind} or {@code getResults} publishers, or if
+     * {@link PreparedStatement#getWarnings()} yields a warning.
+     * </p><p>
+     * After all {@code Results} have been consumed, the
+     * {@link #preparedStatement} is closed.
+     * </p>
+     * @return A publisher that emits the result of executing this statement
+     */
+    final Publisher<OracleResultImpl> execute() {
+
+      if(true)return Flux.usingWhen(Mono.just(new ArrayList<>(1)),
+        results ->
+          Mono.from(bind())
+            .thenMany(executeJdbc())
+            .map(this::getWarnings)
+            .doOnNext(results::add)
+            .onErrorResume(R2dbcException.class, r2dbcException ->
+              Mono.just(createErrorResult(r2dbcException))),
+        this::deallocate);
+
+      List<OracleResultImpl> results = new ArrayList<>(1);
+      Publisher<OracleResultImpl> deallocate =
+        Mono.defer(() -> Mono.from(deallocate(results)))
+          .cast(OracleResultImpl.class);
+
+      return Flux.concatDelayError(
+        Mono.from(bind())
+          .thenMany(executeJdbc())
+          .map(this::getWarnings)
+          .doOnNext(results::add)
+          .onErrorResume(R2dbcException.class, r2dbcException ->
+            Mono.just(createErrorResult(r2dbcException))),
+        deallocate)
+        .doOnCancel(() ->
+          Mono.from(deallocate).subscribe());
+    }
+
+    /**
+     * <p>
+     * Sets {@link #binds} on the {@link #preparedStatement}. The
+     * returned {@code Publisher} completes after all bind values have
+     * materialized and been set on the {@code preparedStatement}.
+     * </p><p>
+     * The base class implements this method to ignore any bind values that
+     * that are instances of {@link Parameter.Out}, and not also an instance of
+     * {@link Parameter.In}. Subclasses may override this method handle
+     * out-parameters, or to bind a batch of values.
+     * </p>
+     * @return A {@code Publisher} that emits {@code onComplete} when all
+     * {@code binds} have been set.
+     */
+    protected Publisher<Void> bind() {
+      return bind(binds);
+    }
+
+    protected final Publisher<Void> bind(Object[] binds) {
+      return adapter.getLock().flatMap(() -> {
+        List<Publisher<Void>> bindPublishers = null;
+        for (int i = 0; i < binds.length; i++) {
+
+          if (binds[i] instanceof Parameter.Out
+            && !(binds[i] instanceof Parameter.In))
+            continue;
+
+          Object jdbcValue = convertBind(binds[i]);
+          SQLType jdbcType =
+            binds[i] instanceof Parameter
+              ? toJdbcType(((Parameter) binds[i]).getType())
+              : null; // JDBC infers the type
+
+          if (jdbcValue instanceof Publisher<?>) {
+            int indexFinal = i;
+            Publisher<Void> bindPublisher =
+              Mono.from((Publisher<?>) jdbcValue)
+                .doOnSuccess(allocatedValue ->
+                  setBind(indexFinal, allocatedValue, jdbcType))
+                .then();
+
+            if (bindPublishers == null)
+              bindPublishers = new LinkedList<>();
+
+            bindPublishers.add(bindPublisher);
+          }
+          else {
+            setBind(i, jdbcValue, jdbcType);
+          }
+        }
+
+        return bindPublishers == null
+          ? Mono.empty()
+          : Flux.concat(bindPublishers);
+      });
+    }
+
+    /**
+     * Executes the JDBC {@link #preparedStatement} and maps the
+     * results into R2DBC {@link Result} objects. The base class implements
+     * this method to get results of update count, row data, or implicit
+     * results (ie: DBMS_SQL.RETURN_RESULT). Subclasses may override this
+     * method to produce different types of results.
+     * @return A publisher that emits the results.
+     */
+    protected Publisher<OracleResultImpl> executeJdbc() {
+      return Mono.from(adapter.publishSQLExecution(preparedStatement))
+        .flatMapMany(this::getResults);
+    }
+
+    /**
+     * Publishes the current result of the {@link #preparedStatement}, along
+     * with any results that follow after calling
+     * {@link PreparedStatement#getMoreResults()}
+     *
+     * @param isResultSet {@code true} if the current result is a
+     * {@code ResultSet}, otherwise {@code false}.
+     * @return A publisher that emits all results of the
+     * {@code preparedStatement}
+     */
+    protected final Publisher<OracleResultImpl> getResults(
+      boolean isResultSet) {
+
+      return adapter.getLock().flatMap(() -> {
+
+        OracleResultImpl result = getCurrentResult(isResultSet);
+        OracleResultImpl nextResult = getCurrentResult(
+          preparedStatement.getMoreResults(KEEP_CURRENT_RESULT));
+
+        // Don't allocate a list unless there are multiple results. Multiple
+        // results should only happen when using DBMS_SQL.RETURN_RESULT
+        // within a PL/SQL call
+        if (nextResult == null) {
+          return Mono.justOrEmpty(result);
+        }
+        else {
+          ArrayList<OracleResultImpl> results = new ArrayList<>();
+
+          // The first result may be null if additional results follow
+          if (result != null)
+            results.add(result);
+
+          while (nextResult != null) {
+            results.add(nextResult);
+
+            nextResult = getCurrentResult(
+              preparedStatement.getMoreResults(KEEP_CURRENT_RESULT));
+          }
+          return Flux.fromIterable(results);
+        }
+      });
+    }
+
+    /**
+     * Adds a {@code publisher} for deallocating a resource that this
+     * statement has allocated. The {@code publisher} is subscribed to after
+     * this statement has executed, possibly before all results have been
+     * consumed. If multiple dealloaction publishers are added, each one is
+     * subscribed to sequentially, and errors emitted by the publishers are
+     * suppressed until all publishers have been subscribed to.
+     * @param publisher Resource deallocation publisher
+     */
+    protected void addDeallocation(Publisher<Void> publisher) {
+      deallocators = Flux.concatDelayError(deallocators, publisher);
+    }
+
+    /**
+     * Returns the current {@code Result} of the {@link #preparedStatement}.
+     * This method returns a result of row data if {@code isResultSet} is
+     * {@code true}. Otherwise, this method returns a result of an update
+     * count if {@link PreparedStatement#getUpdateCount()} returns a value of 0
+     * or greater. Otherwise, this method returns {@code null} if
+     * {@code isResultSet} is {@code false} and {@code getUpdateCount}
+     * returns a negative number.
+     * @param isResultSet {@code true} if the current result is row data,
+     * otherwise false.
+     * @return The current {@code Result} of the {@code preparedStatement}
+     */
+    private OracleResultImpl getCurrentResult(boolean isResultSet) {
+      return fromJdbc(() -> {
+        if (isResultSet) {
+          return createQueryResult(
+            preparedStatement.getResultSet(), adapter);
+        }
+        else {
+          long updateCount = preparedStatement.getLargeUpdateCount();
+          return updateCount >= 0
+            ? createUpdateCountResult(updateCount)
+            : null;
+        }
+      });
+    }
+
+    /**
+     * Returns a {@code Result} that publishes any {@link SQLWarning}s of the
+     * {@link #preparedStatement} as {@link io.r2dbc.spi.Result.Message}
+     * segments followed by any {@code Segments} of a {@code result}. This
+     * method returns the provided {@code result} if the {@code
+     * preparedStatement} has
+     * no warnings.
+     * @param result Result of executing the {@code preparedStatement}
+     * @return A {@code Result} having any warning messages of the
+     * {@code preparedStatement} along with its execution {@code result}.
+     */
+    private OracleResultImpl getWarnings(OracleResultImpl result) {
+      return fromJdbc(() -> {
+        SQLWarning warning = preparedStatement.getWarnings();
+        preparedStatement.clearWarnings();
+        return warning == null
+          ? result
+          : OracleResultImpl.createWarningResult(warning, result);
+      });
+    }
+
+    /**
+     * <p>
+     * Deallocates all resources that have been allocated by this statement.
+     * If the deallocation of any resource results in an error, an attempt is
+     * made to deallocate any remaining resources before emitting the error.
+     * </p><p>
+     * The returned publisher subscribes to the {@link #deallocators}
+     * publisher, and may close the {@link #preparedStatement} if all {@code
+     * results} have been consumed when this method is called.
+     * </p><p>
+     * If one or more {@code results} have yet to be consumed, then this method
+     * arranges for the {@link #preparedStatement} to be closed after all
+     * results have been consumed. A result may be backed by a
+     * {@link java.sql.ResultSet} or by {@link CallableStatement}, so the
+     * {@link #preparedStatement} must remain open until all results have
+     * been consumed.
+     * </p>
+     * @param results Results that must be consumed before closing the
+     * {@link #preparedStatement}
+     * @return A publisher that completes when all resources have been
+     * deallocated
+     */
+    private Publisher<Void> deallocate(Collection<OracleResultImpl> results) {
+
+      // Close the statement after all results are consumed
+      AtomicInteger unconsumed = new AtomicInteger(results.size());
+      Publisher<Void> closeStatement = adapter.getLock().run(() -> {
+        if (unconsumed.decrementAndGet() == 0)
+          preparedStatement.close();
+      });
+
+      for (OracleResultImpl result : results) {
+        if (!result.onConsumed(closeStatement))
+          unconsumed.decrementAndGet();
+      }
+
+      // If all results have already been consumed, the returned
+      // publisher closes the statement
+      if (unconsumed.get() == 0)
+        addDeallocation(adapter.getLock().run(preparedStatement::close));
+
+      return deallocators;
+    }
+
+    /**
+     * Sets the {@code value} of a {@code preparedStatement} parameter at the
+     * specified {@code index}. If a non-null {@code type} is provided, then it is
+     * specified as the SQL type for the bind. Otherwise, if the
+     * {@code type} is {@code null}, then the JDBC driver infers the SQL type
+     * of the bind.
+     * @param index 0-based parameter index
+     * @param value Value. May be null.
+     * @param type SQL type. May be null.
+     */
+    private void setBind(int index, Object value, SQLType type) {
+      runJdbc(() -> {
+        int jdbcIndex = index + 1;
+        if (type != null)
+          preparedStatement.setObject(jdbcIndex, value, type);
+        else
+          preparedStatement.setObject(jdbcIndex, value);
+      });
+    }
+
+    /**
+     * <p>
+     * Converts a {@code value} of a type that is supported by R2DBC into an
+     * equivalent type that is supported by JDBC. The object returned by this
+     * method will express the same information as the original {@code value}
+     * For instance, if this method is called with an {@code io.r2dbc.spi.Blob}
+     * type {@code value}, it will convert it into an {@code java.sql.Blob}
+     * type value that stores the same content as the R2DBC {@code Blob}.
+     * </p><p>
+     * If no conversion is necessary, this method returns the original
+     * {@code value}. If the conversion requires a database call, this
+     * method returns a {@code Publisher} that emits the converted value. If
+     * the conversion requires resource allocation, a {@code Publisher} that
+     * deallocates resources is added to the {@code discardQueue}.
+     * </p>
+     *
+     * @param value Bind value to convert. May be null.
+     * @return Value to set as a bind on the JDBC statement. May be null.
+     * @throws IllegalArgumentException If the JDBC driver can not convert a
+     *   bind value into a SQL value.
+     */
+    private Object convertBind(Object value) {
+      if (value == null || value == NULL_BIND) {
+        return null;
+      }
+      else if (value instanceof Parameter) {
+        return convertBind(((Parameter) value).getValue());
+      }
+      else if (value instanceof io.r2dbc.spi.Blob) {
+        return convertBlobBind((io.r2dbc.spi.Blob) value);
+      }
+      else if (value instanceof io.r2dbc.spi.Clob) {
+        return convertClobBind((io.r2dbc.spi.Clob) value);
+      }
+      else if (value instanceof ByteBuffer) {
+        return convertByteBufferBind((ByteBuffer) value);
+      }
+      else {
+        return value;
+      }
+    }
+
+    /**
+     * Converts an R2DBC Blob to a JDBC Blob. The returned {@code Publisher}
+     * asynchronously writes the {@code r2dbcBlob's} content to a JDBC Blob and
+     * then emits the JDBC Blob after all content has been written. The JDBC
+     * Blob allocates a temporary database BLOB that is freed by a {@code
+     * Publisher} added to the {@code discardQueue}.
+     * @param r2dbcBlob An R2DBC Blob. Not null. Retained.
+     * @return A JDBC Blob. Not null.
+     */
+    private Publisher<java.sql.Blob> convertBlobBind(
+      io.r2dbc.spi.Blob r2dbcBlob) {
+      return Mono.usingWhen(
+        adapter.getLock().get(jdbcConnection::createBlob),
+        jdbcBlob ->
+          Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
+            .thenReturn(jdbcBlob),
+        jdbcBlob -> {
+          addDeallocation(adapter.publishBlobFree(jdbcBlob));
+          return r2dbcBlob.discard();
+        });
+    }
+
+    /**
+     * <p>
+     * Converts an R2DBC Clob to a JDBC Clob. The returned {@code Publisher}
+     * asynchronously writes the {@code r2dbcClob} content to a JDBC Clob and
+     * then emits the JDBC Clob after all content has been written. The JDBC
+     * Clob allocates a temporary database Clob that is freed by a
+     * {@code Publisher} added to the {@code discardQueue}.
+     * </p><p>
+     * This method allocates an {@code NClob} in order to have to JDBC
+     * encode the data with a unicode character set.
+     * </p>
+     * @param r2dbcClob An R2DBC Clob. Not null. Retained.
+     * @return A JDBC Clob. Not null.
+     */
+    private Publisher<java.sql.Clob> convertClobBind(
+      io.r2dbc.spi.Clob r2dbcClob) {
+      return Mono.usingWhen(
+        adapter.getLock().get(jdbcConnection::createNClob),
+        jdbcClob ->
+          Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
+            .thenReturn(jdbcClob),
+        jdbcClob -> {
+          addDeallocation(adapter.publishClobFree(jdbcClob));
+          return r2dbcClob.discard();
+        });
+    }
+
+    /**
+     * Converts a ByteBuffer to a byte array. The {@code byteBuffer} contents,
+     * delimited by it's position and limit, are copied into the returned byte
+     * array. No state of the {@code byteBuffer} is mutated, including it's
+     * position, limit, or mark.
+     * @param byteBuffer A ByteBuffer. Not null. Not retained.
+     * @return A byte array storing the {@code byteBuffer's} content. Not null.
+     */
+    private byte[] convertByteBufferBind(ByteBuffer byteBuffer) {
+      ByteBuffer slice = byteBuffer.slice(); // Don't mutate position/limit/mark
+      byte[] byteArray = new byte[slice.remaining()];
+      slice.get(byteArray);
+      return byteArray;
+    }
+
+  }
+
+  /**
+   * A statement that is executed to return out-parameters with JDBC. This
+   * subclass of {@link JdbcStatement} overrides the base class behavior to
+   * register out-parameters with a {@link CallableStatement}, and to return
+   * a {@link Result} of out-parameters.
+   */
+  private class JdbcCall extends JdbcStatement {
+
+    /**
+     * The indexes of out-parameter binds in the {@link #preparedStatement}.
+     * The array is sorted such that {@code outBindIndexes[0]} is the index
+     * of the first out-parameter, and {@code outBindIndexes[0]} is the index
+     * of the second out-parameter, and so on.
+     */
+    private final int[] outBindIndexes;
+
+    /**
+     * Metadata for out-parameter binds in the {@link #preparedStatement}.
+     */
+    private final OutParametersMetadataImpl metadata;
+
+    /**
+     * Constructs a new {@code JdbcCall} that executes a
+     * {@code callableStatement} with the given {@code bindValues} and
+     * {@code parameterNames}.
+     */
+    private JdbcCall(
+      CallableStatement callableStatement,
+      Object[] bindValues, List<String> parameterNames) {
+
+      super(callableStatement, bindValues);
+
+      outBindIndexes = IntStream.range(0, bindValues.length)
+        .filter(i -> bindValues[i] instanceof Parameter.Out)
+        .toArray();
+
+      OutParameterMetadata[] metadataArray =
+        new OutParameterMetadata[outBindIndexes.length];
+
+      for (int i = 0; i < metadataArray.length; i++) {
+        int bindIndex = outBindIndexes[i];
+
+        // Use the parameter name, or the index if the parameter is unnamed
+        String name = requireNonNullElse(
+          parameterNames.get(bindIndex), String.valueOf(i));
+        metadataArray[i] = createParameterMetadata(
+          name, ((Parameter)bindValues[bindIndex]).getType());
+      }
+
+      this.metadata = createOutParametersMetadata(metadataArray);
+    }
+
+    @Override
+    protected Publisher<Void> bind() {
+      return Flux.concat(super.bind(), registerOutParameters());
+    }
+
+    /**
+     * Invokes {@link CallableStatement#registerOutParameter(int, int)} to
+     * register each instance of {@link Parameter.Out} in the given
+     * {@code values}
+     * @return A publisher that completes when all out-parameter binds are
+     * registered.
+     */
+    private Publisher<Void> registerOutParameters() {
+      return adapter.getLock().run(() -> {
+        CallableStatement callableStatement =
+          preparedStatement.unwrap(CallableStatement.class);
+
+        for (int i : outBindIndexes) {
+          Type type = ((Parameter) binds[i]).getType();
+          SQLType jdbcType = toJdbcType(type);
+          callableStatement.registerOutParameter(i + 1, jdbcType);
+        }
+      });
+    }
+
+    @Override
+    protected Publisher<OracleResultImpl> executeJdbc() {
+      return Flux.concat(
+        super.executeJdbc(),
+        Mono.just(createCallResult(
+          createOutParameters(new JdbcOutParameters(), metadata, adapter),
+          adapter)));
+    }
+
+    /**
+     * Out parameter values returned by the database.
+     */
+    private final class JdbcOutParameters implements JdbcReadable {
+
+      /**
+       * {@inheritDoc}
+       * <p>
+       * Returns the out-parameter value from the {@code CallableStatement} by
+       * mapping an R2DBC out-parameter index to a JDBC parameter index. The
+       * difference between the two is that R2DBC indexes are relative only
+       * to other out-parameters. So for index 0, R2DBC returns the first
+       * out-parameter, even if there are in-parameters at lower indexes in
+       * the parameterized SQL expression. Likewise, for index 1, R2DBC
+       * returns the second out-parameter, even if there are 1 or more
+       * in-parameters between the first and second out-parameter.
+       * </p>
+       */
+      @Override
+      public <T> T getObject(int index, Class<T> type) {
+        // TODO: Throw IllegalArgumentException or IndexOutOfBoundsException
+        //  based on the error code of any SQLException thrown
+        return fromJdbc(() ->
+          preparedStatement.unwrap(CallableStatement.class)
+            .getObject(outBindIndexes[index] + 1, type));
+      }
+    }
+
+  }
+
+  /**
+   * A statement that executes with a batch of bind values. This subclass of
+   * {@link JdbcStatement} overrides the base class to bind a batch of
+   * values, and to execute the JDBC statement using
+   * {@link ReactiveJdbcAdapter#publishBatchUpdate(PreparedStatement)}.
+   */
+  private class JdbcBatch extends JdbcStatement {
+
+    /** Batch of bind values. */
+    private final Queue<Object[]> batch;
+
+    /** Number of batched bind values */
+    private final int batchSize;
+
+    private JdbcBatch(
+      PreparedStatement preparedStatement, Queue<Object[]> batch) {
+      super(preparedStatement, null);
+      this.batch = batch;
+      this.batchSize = batch.size();
+    }
+
+    /**
+     * {@code inheritDoc}
+     * <p>
+     * Binds the first set of values in {@link #binds}, then copies each
+     * remaining set of value into {@link #binds} and binds those as well. Calls
+     * {@link PreparedStatement#addBatch()} before binding each set of values
+     * after the first.
+     * </p>
+     */
+    @Override
+    protected Publisher<Void> bind() {
+      @SuppressWarnings("unchecked")
+      Publisher<Void>[] bindPublishers = new Publisher[batchSize];
+      for (int i = 0; i < batchSize; i++) {
+        bindPublishers[i] = Flux.concat(
+          bind(batch.remove()),
+          adapter.getLock().run(preparedStatement::addBatch));
+      }
+      return Flux.concat(bindPublishers);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The returned {@code Publisher} emits 1 {@code Result} having an
+     * {@link io.r2dbc.spi.Result.UpdateCount} segment for each set of bind
+     * values in the {@link #batch}.
+     * </p>
+     */
+    @Override
+    protected Publisher<OracleResultImpl> executeJdbc() {
+      AtomicInteger index = new AtomicInteger(0);
+
+      return Flux.from(adapter.publishBatchUpdate(preparedStatement))
+        .collect(
+          () -> new long[batchSize],
+          (updateCounts, updateCount) ->
+            updateCounts[index.getAndIncrement()] = updateCount)
+        .map(OracleResultImpl::createBatchUpdateResult)
+        .onErrorResume(
+          error ->
+            error instanceof R2dbcException
+              && error.getCause() instanceof BatchUpdateException,
+          error ->
+            Mono.just(createBatchUpdateErrorResult(
+              (BatchUpdateException) error.getCause())));
+    }
+  }
+
+  /**
+   * A JDBC batch execution where one or more binds are missing in the final
+   * set of bind values.
+   */
+  private final class JdbcBatchInvalidBinds extends JdbcBatch {
+
+    /** Exception thrown when one or more bind values are missing */
+    private final IllegalStateException missingBinds;
+
+    private JdbcBatchInvalidBinds(
+      PreparedStatement preparedStatement, Queue<Object[]> batch,
+      IllegalStateException missingBinds) {
+      super(preparedStatement, batch);
+      this.missingBinds = missingBinds;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Allows the batch to execute with all previously added binds, and then
+     * emits an error result for the missing binds.
+     * </p>
+     */
+    @Override
+    protected Publisher<OracleResultImpl> executeJdbc() {
+      return Flux.from(super.executeJdbc())
+        .concatWithValues(createErrorResult(
+          newNonTransientException(
+            "One or more binds not set after calling add()", sql,
+            missingBinds)));
+    }
+  }
+
+  /**
+   * A statement that returns values generated by a DML command, such as an
+   * column declared with an auto-generated value:
+   * {@code id NUMBER GENERATED ALWAYS AS IDENTITY}
+   */
+  private final class JdbcReturningGenerated extends JdbcStatement {
+
+    private JdbcReturningGenerated(
+      PreparedStatement preparedStatement, Object[] binds) {
+      super(preparedStatement, binds);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Overrides the base implementation to include
+     * {@link PreparedStatement#getGeneratedKeys()} with the first result, if
+     * the generated keys {@code ResultSet} is not empty.
+     * </p><p>
+     * Oracle JDBC throws a {@code SQLException} when invoking
+     * {@code getMetadata()} on an empty generated keys {@code ResultSet}, so
+     * Oracle R2DBC should not even attempt to map that into a {@code Result} of
+     * {@code Row} segments.
+     * </p><p>
+     * If the generated keys {@code ResultSet} is empty, then this method
+     * behaves as if {@link Statement#returnGeneratedValues(String...)} had
+     * never been called at all; It will return whatever results are available
+     * from executing the statement, even if there are no generated values to
+     * return.
+     * </p><p>
+     * The generated keys {@code ResultSet} will be empty if the
+     * SQL was not an UPDATE or INSERT, because Oracle Database does not
+     * support returning generated values for any other type of statement.
+     * </p>
+     */
+    @Override
+    protected Publisher<OracleResultImpl> executeJdbc() {
+      return Mono.from(adapter.publishSQLExecution(preparedStatement))
+        .flatMapMany(isResultSet -> {
+          if (isResultSet) {
+            return super.getResults(true);
+          }
+          else {
+            return adapter.getLock().flatMap(() -> {
+              ResultSet generatedKeys = preparedStatement.getGeneratedKeys();
+
+              if (generatedKeys.isBeforeFirst()) {
+                return Mono.just(createGeneratedValuesResult(
+                  preparedStatement.getLargeUpdateCount(), generatedKeys,
+                  adapter))
+                  .concatWith(super.getResults(
+                    preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
+              }
+              else {
+                return super.getResults(false);
+              }
+            });
+          }
+        });
+    }
+
+  }
 }

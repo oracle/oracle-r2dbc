@@ -95,7 +95,7 @@ interface ReactiveJdbcAdapter {
     }
     catch (SQLException getDriverException) {
       throw OracleR2dbcExceptions.newNonTransientException(
-        "Failed to locate the Oracle JDBC Driver", getDriverException);
+        "Failed to locate the Oracle JDBC Driver", null, getDriverException);
     }
 
     return OracleReactiveJdbcAdapter.getInstance();
@@ -107,7 +107,7 @@ interface ReactiveJdbcAdapter {
    * the {@code options} parameter. Adapters implementing this method return a
    * {@code DataSource} that is supported as an argument to their
    * implementation of
-   * {@link ReactiveJdbcAdapter#publishConnection(DataSource)}.
+   * {@link ReactiveJdbcAdapter#publishConnection(DataSource, Executor)}.
    * </p><p>
    * Adapters implementing this method <i>must</i> specify each supported value
    * of {@link ConnectionFactoryOptions}, how the value of each option is
@@ -533,6 +533,8 @@ interface ReactiveJdbcAdapter {
    * @throws R2dbcException If a database access error occurs.
    */
   Publisher<Void> publishClobFree(Clob clob) throws R2dbcException;
+
+  AsyncLock getLock();
 
   /** 
    * Accessor of column values within a single row from a table of data that

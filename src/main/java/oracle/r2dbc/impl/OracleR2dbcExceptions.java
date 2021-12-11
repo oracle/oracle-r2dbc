@@ -30,6 +30,7 @@ import io.r2dbc.spi.R2dbcRollbackException;
 import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.R2dbcTransientException;
 import io.r2dbc.spi.R2dbcTransientResourceException;
+import oracle.jdbc.OracleDatabaseException;
 
 import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
@@ -166,41 +167,42 @@ final class OracleR2dbcExceptions {
     final String message = sqlException.getMessage();
     final String sqlState = sqlException.getSQLState();
     final int errorCode = sqlException.getErrorCode();
+    final String sql = getSql(sqlException);
 
     if (sqlException instanceof SQLNonTransientException) {
       if (sqlException instanceof SQLSyntaxErrorException) {
         return new R2dbcBadGrammarException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
       else if (sqlException instanceof SQLIntegrityConstraintViolationException) {
         return new R2dbcDataIntegrityViolationException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
       else if (sqlException instanceof SQLNonTransientConnectionException) {
         return new R2dbcNonTransientResourceException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
       else {
         return new OracleR2dbcNonTransientException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
     }
     else if (sqlException instanceof SQLTransientException) {
       if (sqlException instanceof SQLTimeoutException) {
         return new R2dbcTimeoutException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
       else if (sqlException instanceof SQLTransactionRollbackException) {
         return new R2dbcRollbackException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
       else if (sqlException instanceof SQLTransientConnectionException) {
         return new R2dbcTransientResourceException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
       else {
         return new OracleR2dbcTransientException(
-          message, sqlState, errorCode, sqlException);
+          message, sqlState, errorCode, sql, sqlException);
       }
     }
     else if (sqlException instanceof SQLRecoverableException) {
@@ -209,11 +211,11 @@ final class OracleR2dbcExceptions {
       // the connection is no longer valid. The R2dbcTransientResourceException
       // expresses the same conditions.
       return new R2dbcTransientResourceException(
-        message, sqlState, errorCode, sqlException);
+        message, sqlState, errorCode, sql, sqlException);
     }
     else {
       return new OracleR2dbcException(
-        message, sqlState, errorCode, sqlException);
+        message, sqlState, errorCode, sql, sqlException);
     }
   }
 
@@ -238,7 +240,7 @@ final class OracleR2dbcExceptions {
    *   null.
    * @throws R2dbcException If the supplier throws a {@code SQLException}.
    */
-  static void runJdbc(ThrowingRunnable runnable)
+  static void runJdbc(JdbcRunnable runnable)
     throws R2dbcException {
     try {
       runnable.runOrThrow();
@@ -271,7 +273,7 @@ final class OracleR2dbcExceptions {
    * @return The output of the specified {@code supplier}.
    * @throws R2dbcException If the supplier throws a {@code SQLException}.
    */
-  static <T> T fromJdbc(ThrowingSupplier<T> supplier)
+  static <T> T fromJdbc(JdbcSupplier<T> supplier)
     throws R2dbcException {
     try {
       return supplier.getOrThrow();
@@ -293,8 +295,30 @@ final class OracleR2dbcExceptions {
    * @return A new non-transient exception.
    */
   static R2dbcNonTransientException newNonTransientException(
-    String message, Throwable cause) {
-    return new OracleR2dbcNonTransientException(message, null, 0, cause);
+    String message, String sql, Throwable cause) {
+    return new OracleR2dbcNonTransientException(message, null, 0, sql, cause);
+  }
+
+  /**
+   * Returns the SQL command that caused a {@code sqlException}, if it is
+   * available. This method is only implemented to support the case where the
+   * exception is caused by a {@link oracle.jdbc.OracleDatabaseException}.
+   * @param sqlException Exception to extract SQL from. Not null.
+   * @return The SQL that caused the {@code sqlException}, of {@code null} if
+   * the SQL is not available.
+   */
+  private static String getSql(SQLException sqlException) {
+    Throwable cause = sqlException.getCause();
+
+    while (cause != null) {
+
+      if (cause instanceof OracleDatabaseException)
+        return ((OracleDatabaseException)cause).getSql();
+
+      cause = cause.getCause();
+    }
+
+    return null;
   }
 
   /**
@@ -306,7 +330,7 @@ final class OracleR2dbcExceptions {
    * </p>
    */
   @FunctionalInterface
-  interface ThrowingRunnable extends Runnable {
+  interface JdbcRunnable extends Runnable {
     /**
      * Runs to completion and returns normally, or throws a {@code SQLException}
      * if an error is encountered.
@@ -319,8 +343,7 @@ final class OracleR2dbcExceptions {
      * R2dbcException} if an error is encountered.
      * @throws R2dbcException If the run does not complete due to an error.
      * @implNote The default implementation invokes
-     * {@link #runJdbc(ThrowingRunnable)} with this {@code
-     * ThrowingRunnable}.
+     * {@link #runJdbc(JdbcRunnable)} with this {@code JdbcRunnable}.
      */
     @Override
     default void run() throws R2dbcException {
@@ -338,7 +361,7 @@ final class OracleR2dbcExceptions {
    * @param <T> the type of values supplied by this supplier.
    */
   @FunctionalInterface
-  interface ThrowingSupplier<T> extends Supplier<T> {
+  interface JdbcSupplier<T> extends Supplier<T> {
     /**
      * Returns a value, or throws a {@code SQLException} if an error is
      * encountered.
@@ -352,8 +375,7 @@ final class OracleR2dbcExceptions {
      * encountered.
      * @throws R2dbcException If a value is not returned due to an error.
      * @implNote The default implementation invokes
-     * {@link #fromJdbc(ThrowingSupplier)} (ThrowingRunnable)}
-     * with this {@code ThrowingSupplier}.
+     * {@link #fromJdbc(JdbcSupplier)} with this {@code JdbcSupplier}.
      */
     @Override
     default T get() throws R2dbcException {
@@ -368,17 +390,17 @@ final class OracleR2dbcExceptions {
    * concrete subclass must be defined. This subclass does not implement any
    * behavior that is specific to the Oracle driver.
    * </p><p>
-   * This subclass is defined so that {@link #toR2dbcException(SQLException)}
-   * can throw an instance of {@code R2dbcException} when mapping a
-   * {@link SQLException}.
+   * This subclass is defined so that
+   * {@link #toR2dbcException(SQLException)} can throw an instance of
+   * {@code R2dbcException} when mapping a {@link SQLException}.
    * </p>
    */
   private static final class OracleR2dbcException
     extends R2dbcException {
     private OracleR2dbcException(
-      String message, String sqlState, int errorCode,
+      String message, String sqlState, int errorCode, String sql,
       SQLException sqlException) {
-      super(message, sqlState, errorCode, sqlException);
+      super(message, sqlState, errorCode, sql, sqlException);
     }
   }
 
@@ -390,17 +412,18 @@ final class OracleR2dbcExceptions {
    * This subclass does implement any behavior that is specific to the
    * Oracle driver.
    * </p><p>
-   * This subclass is defined so that {@link #toR2dbcException(SQLException)}
-   * can throw an instance of {@code R2dbcTransientException} when mapping a
+   * This subclass is defined so that
+   * {@link #toR2dbcException(SQLException)} can throw an instance of
+   * {@code R2dbcTransientException} when mapping a
    * {@link SQLTransientException}.
    * </p>
    */
   private static final class OracleR2dbcTransientException
     extends R2dbcTransientException {
     private OracleR2dbcTransientException(
-      String message, String sqlState, int errorCode,
+      String message, String sqlState, int errorCode, String sql,
       SQLException sqlException) {
-      super(message, sqlState, errorCode, sqlException);
+      super(message, sqlState, errorCode, sql, sqlException);
     }
   }
 
@@ -420,9 +443,9 @@ final class OracleR2dbcExceptions {
   private static final class OracleR2dbcNonTransientException
     extends R2dbcNonTransientException {
     private OracleR2dbcNonTransientException(
-      String message, String sqlState, int errorCode,
+      String message, String sqlState, int errorCode, String sql,
       Throwable cause) {
-      super(message, sqlState, errorCode, cause);
+      super(message, sqlState, errorCode, sql, cause);
     }
   }
 

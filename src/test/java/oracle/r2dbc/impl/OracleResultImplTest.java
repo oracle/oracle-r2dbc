@@ -407,7 +407,7 @@ public class OracleResultImplTest {
       awaitNone(Mono.from(connection.createStatement(
         "INSERT INTO testBatchUpdateError VALUES (?)")
         .bind(0, 0).add()
-        .bind(0, 0).add()
+        .bind(0, 0)
         .execute())
         .flatMapMany(result ->
           result.flatMap(segment -> {

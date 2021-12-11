@@ -26,6 +26,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
+import java.util.NoSuchElementException;
 
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
@@ -61,17 +62,17 @@ public class OracleReadableImplTest {
         awaitUpdate(1, connection.createStatement(
           "INSERT INTO testGetByIndex (x,y) VALUES (0,1)"));
 
-        // Expect IllegalArgumentException for an index less than 0
-        awaitError(IllegalArgumentException.class,
+        // Expect IndexOutOfBoundsException for an index less than 0
+        awaitError(IndexOutOfBoundsException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndex")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get(-1))));
 
-        // Expect IllegalArgumentException for an index greater than or equal
+        // Expect IndexOutOfBoundsException for an index greater than or equal
         // to the number of columns
-        awaitError(IllegalArgumentException.class,
+        awaitError(IndexOutOfBoundsException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndex")
             .execute())
@@ -137,38 +138,38 @@ public class OracleReadableImplTest {
             .concatMap(result ->
               result.map((row, metadata) -> row.get(null))));
 
-        // Expect IllegalArgumentException for unmatched names
-        awaitError(IllegalArgumentException.class,
+        // Expect NoSuchElementException for unmatched names
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get("z"))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get("xx"))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get("x "))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get(" x"))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get(" "))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByName")
             .execute())
@@ -303,17 +304,17 @@ public class OracleReadableImplTest {
               result.map((row, metadata) ->
                 row.get(0, Unsupported.class))));
 
-        // Expect IllegalArgumentException for an index less than 0
-        awaitError(IllegalArgumentException.class,
+        // Expect IndexOutOfBoundsException for an index less than 0
+        awaitError(IndexOutOfBoundsException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndexAndType")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get(-1, Integer.class))));
 
-        // Expect IllegalArgumentException for an index greater than or equal
+        // Expect IndexOutOfBoundsException for an index greater than or equal
         // to the number of columns
-        awaitError(IllegalArgumentException.class,
+        awaitError(IndexOutOfBoundsException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByIndexAndType")
             .execute())
@@ -400,38 +401,38 @@ public class OracleReadableImplTest {
             .concatMap(result ->
               result.map((row, metadata) -> row.get(null, Integer.class))));
 
-        // Expect IllegalArgumentException for unmatched names
-        awaitError(IllegalArgumentException.class,
+        // Expect NoSuchElementException for unmatched names
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get("z", Integer.class))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get("xx", Integer.class))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get("x ", Integer.class))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get(" x", Integer.class))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())
             .concatMap(result ->
               result.map((row, metadata) -> row.get(" ", Integer.class))));
-        awaitError(IllegalArgumentException.class,
+        awaitError(NoSuchElementException.class,
           Flux.from(connection.createStatement(
             "SELECT x, y FROM testGetByNameAndType")
             .execute())

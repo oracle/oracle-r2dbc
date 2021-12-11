@@ -25,6 +25,7 @@ import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcNonTransientException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Result.Message;
@@ -35,12 +36,13 @@ import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Signal;
 
-import java.math.BigDecimal;
 import java.sql.RowId;
 import java.sql.SQLWarning;
 import java.util.Collections;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -95,7 +97,7 @@ public class OracleStatementImplTest {
           .bind(0, 0).bind(1, 0).add()
           .bind(0, 1).bind(1, 0).add()
           .bind(0, 1).bind(1, 1).add()
-          .bind(0, 1).bind(1, 2).add());
+          .bind(0, 1).bind(1, 2));
 
       // Expect bind values to be applied in WHERE clause as:
       // SELECT x, y FROM testBindByIndex WHERE x = 1 AND y > 0
@@ -217,7 +219,7 @@ public class OracleStatementImplTest {
           .bind("X", 0).bind("Y", 0).add()
           .bind("X", 1).bind("Y", 0).add()
           .bind("X", 1).bind("Y", 1).add()
-          .bind("X", 1).bind("Y", 2).add());
+          .bind("X", 1).bind("Y", 2));
 
       // Expect bind values to be applied in WHERE clause as:
       // SELECT x, y FROM testBindByName WHERE x = 1 AND y > 0
@@ -264,21 +266,21 @@ public class OracleStatementImplTest {
         IllegalArgumentException.class,
         () -> statement.bind("x", new UnsupportedType()));
 
-      // Expect IllegalArgumentException for an unmatched identifier
+      // Expect NoSuchElementException for an unmatched identifier
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("z", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("xx", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> statement.bind("X", 1));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () ->
           connection.createStatement("SELECT x FROM testBindByIndex")
             .bind("x", 0));
@@ -430,7 +432,7 @@ public class OracleStatementImplTest {
           .bindNull(0, Integer.class).bind(1, 1).add()
           .bindNull(0, Integer.class).bind(1, 2).add()
           .bind(0, 0).bind(1, 3).add()
-          .bind(0, 0).bindNull(1, Integer.class).add());
+          .bind(0, 0).bindNull(1, Integer.class));
       awaitQuery(
         asList(
           asList(null, 0),
@@ -544,21 +546,21 @@ public class OracleStatementImplTest {
         IllegalArgumentException.class,
         () -> selectStatement.bindNull(null, Integer.class));
 
-      // Expect IllegalArgumentException for an unmatched identifier
+      // Expect NoSuchElementException for an unmatched identifier
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("z", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("xx", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () -> selectStatement.bindNull("X", Integer.class));
       assertThrows(
-        IllegalArgumentException.class,
+        NoSuchElementException.class,
         () ->
           connection.createStatement("SELECT x FROM testBindByIndex")
             .bind("x", 0));
@@ -574,7 +576,7 @@ public class OracleStatementImplTest {
           .bindNull("x", Integer.class).bind("y", 1).add()
           .bindNull("x", Integer.class).bind("y", 2).add()
           .bind("x", 0).bind("y", 3).add()
-          .bind("x", 0).bindNull("y", Integer.class).add());
+          .bind("x", 0).bindNull("y", Integer.class));
       awaitQuery(
         asList(
           asList(null, 0),
@@ -725,7 +727,7 @@ public class OracleStatementImplTest {
       awaitUpdate(
         asList(1, 1, 1),
         connection.createStatement("INSERT INTO testAdd VALUES(0, 0)")
-          .add().add().add());
+          .add().add());
       awaitQuery(
         asList(asList(0, 0), asList(0, 0), asList(0, 0)),
         row -> asList(row.get(0, Integer.class), row.get(1, Integer.class)),
@@ -737,7 +739,7 @@ public class OracleStatementImplTest {
         connection.createStatement("INSERT INTO testAdd VALUES(:x, :y)")
           .bind("x", 1).bind("y", 1).add()
           .bind("x", 1).bind("y", 2).add()
-          .bind("x", 1).bind("y", 3).add());
+          .bind("x", 1).bind("y", 3));
       awaitQuery(
         asList(asList(1, 1), asList(1, 2), asList(1, 3)),
         row -> asList(row.get(0, Integer.class), row.get(1, Integer.class)),
@@ -768,7 +770,7 @@ public class OracleStatementImplTest {
         Mono.from(connection.createStatement("SELECT ? FROM dual")
           .bind(0, 1).add()
           .bind(0, 2).add()
-          .bind(0, 3).add()
+          .bind(0, 3)
           .execute())
           .flatMapMany(Result::getRowsUpdated));
 
@@ -806,12 +808,21 @@ public class OracleStatementImplTest {
           connection.createStatement("INSERT INTO table VALUES(:x, :y)")
             .bind("x", 0).bind("y", 1).add()
             .bind("x", 0).add());
-      assertThrows(
-        IllegalStateException.class,
-        () ->
-          connection.createStatement("INSERT INTO table VALUES(:x, :y)")
-            .bind("x", 0).bind("y", 1).add()
-            .bind("y", 1).execute()); // implicit add()
+
+      // Expect the statement to execute with previously added binds, and
+      // then emit an error if binds are missing in the final set of binds.
+      List<Signal<Integer>> signals =
+        awaitOne(Flux.from(connection.createStatement(
+          "INSERT INTO testAdd VALUES (:x, :y)")
+          .bind("x", 0).bind("y", 1).add()
+          .bind("y", 1).execute())
+          .flatMap(Result::getRowsUpdated)
+          .materialize()
+          .collectList());
+      assertEquals(2, signals.size());
+      assertEquals(1, signals.get(0).get());
+      assertTrue(
+        signals.get(1).getThrowable() instanceof R2dbcNonTransientException);
 
     }
     finally {
@@ -860,7 +871,7 @@ public class OracleStatementImplTest {
         asList(1, 1),
         updateStatement
           .bind("oldValue", 1).bind("newValue", 2).add()
-          .bind("oldValue", 0).bind("newValue", 1).add());
+          .bind("oldValue", 0).bind("newValue", 1));
 
       // Expect bind values to be cleared after execute with explicit add()
       assertThrows(IllegalStateException.class, updateStatement::execute);
@@ -1008,26 +1019,8 @@ public class OracleStatementImplTest {
         .bind("prefix", "TEST")
         .returnGeneratedValues("x", "y"));
 
-      // Expect an IllegalStateException when executing a query with a
-      // Statement configured to return columns generated by DML.
-      awaitError(IllegalStateException.class,
-        connection.createStatement(
-          "SELECT x, y" +
-            " FROM testReturnGeneratedValues" +
-            " WHERE x < :old_x" +
-            " ORDER BY x")
-          .bind("old_x", 10)
-          .returnGeneratedValues("x")
-          .execute());
-
-      // TODO: Uncomment this test when the Oracle JDBC Team fixes a bug where
-      //   ResultSet.isBeforeFirst() returns true for an empty ResultSet
-      //   returned by Statement.getGeneratedKeys(). The team is aware of the
-      //   bug and is working on a fix. For now, this test will result in:
-      //   ORA-17023 Unsupported feature: getMetaData
-      // Expect the column names to be ignored if the SQL is not an INSERT or
-      // UPDATE
-      /*
+      // Expect a normal row data result when executing a SELECT statement,
+      // even if the Statement is configured to return columns generated by DML.
       awaitQuery(asList(
         asList(1, "TEST1"),
         asList(2, "TEST2"),
@@ -1035,10 +1028,24 @@ public class OracleStatementImplTest {
         asList(4, "TEST4")),
         row -> asList(row.get("x", Integer.class), row.get("y", String.class)),
         connection.createStatement(
-          "DELETE FROM testReturnGeneratedValues WHERE x < :old_x")
+          "SELECT x, y" +
+            " FROM testReturnGeneratedValues" +
+            " WHERE x < :old_x" +
+            " ORDER BY x")
           .bind("old_x", 10)
-          .returnGeneratedValues("x", "y"));
-       */
+          .returnGeneratedValues("x"));
+
+      // Expect the column names to be ignored if the SQL is not an INSERT or
+      // UPDATE
+      awaitUpdate(4, connection.createStatement(
+        "DELETE FROM testReturnGeneratedValues WHERE x < :old_x")
+        .bind("old_x", 10)
+        .returnGeneratedValues("x", "y"));
+
+      // Expect no generated values if an UPDATE doesn't effect any rows.
+      awaitUpdate(0, connection.createStatement(
+        "UPDATE testReturnGeneratedValues SET y = 'effected' WHERE x IS NULL")
+        .returnGeneratedValues("y"));
     }
     finally {
       tryAwaitExecution(connection.createStatement(
@@ -1757,8 +1764,9 @@ public class OracleStatementImplTest {
       // Load [0,100] into the table
       Statement insert = connection.createStatement(
         "INSERT INTO testNoOutImplicitResult VALUES (?)");
-      IntStream.rangeClosed(0, 100)
+      IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
+      insert.bind(0, 100);
       awaitOne(101, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
         .reduce(0, (total, updateCount) -> total + updateCount));
@@ -1867,8 +1875,9 @@ public class OracleStatementImplTest {
       // Load [0,100] into the table
       Statement insert = connection.createStatement(
         "INSERT INTO testOutAndImplicitResult VALUES (?)");
-      IntStream.rangeClosed(0, 100)
+      IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
+      insert.bind(0, 100);
       awaitOne(101, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
         .reduce(0, (total, updateCount) -> total + updateCount));
@@ -2079,7 +2088,7 @@ public class OracleStatementImplTest {
 
       for (int i = 0; i < publishers.length; i++) {
 
-        // Batch insert 100 values
+        // Each publisher batch inserts a range of 100 values
         Statement statement = connection.createStatement(
           "INSERT INTO testConcurrentFetch VALUES (?)");
         int start = i * 100;
@@ -2094,10 +2103,12 @@ public class OracleStatementImplTest {
           .collect(Collectors.summingInt(Integer::intValue))
           .cache();
 
+        // Execute in parallel, and retain the result for verification later
         mono.subscribe();
         publishers[i] = mono;
       }
 
+      // Expect each publisher to emit an update count of 100
       awaitMany(
         IntStream.range(0, publishers.length)
           .map(i -> 100)
@@ -2105,32 +2116,31 @@ public class OracleStatementImplTest {
           .collect(Collectors.toList()),
         Flux.merge(publishers));
 
-      // Fetch rows in parallel
+      // Create publishers that fetch rows in parallel
       Publisher<List<Integer>>[] fetchPublishers =
         new Publisher[publishers.length];
 
       for (int i = 0; i < publishers.length; i++) {
         Mono<List<Integer>> mono = Flux.from(connection.createStatement(
-          "SELECT value FROM testConcurrentFetch")
+          "SELECT value FROM testConcurrentFetch ORDER BY value")
           .execute())
           .flatMap(result ->
             result.map(row -> row.get(0, Integer.class)))
           .collect(Collectors.toList())
           .cache();
 
+        // Execute in parallel, and retain the result for verification later
         mono.subscribe();
         fetchPublishers[i] = mono;
       }
 
+      // Expect each fetch publisher to get the same result
       List<Integer> expected = IntStream.range(0, publishers.length * 100)
         .boxed()
         .collect(Collectors.toList());
 
-      awaitOne(IntStream.range(0, publishers.length)
-        .mapToObj(i -> expected)
-        .collect(Collectors.toSet()),
-        Flux.merge(fetchPublishers)
-          .collect(Collectors.toSet()));
+      for (Publisher<List<Integer>> publisher : fetchPublishers)
+        awaitOne(expected, publisher);
     }
     finally {
       tryAwaitExecution(connection.createStatement(
@@ -2207,6 +2217,25 @@ public class OracleStatementImplTest {
         "ALTER SESSION SET ddl_lock_timeout=15"));
       tryAwaitExecution(connection.createStatement(
         "DROP TABLE testUsingWhenCancel"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that {@link R2dbcException#getSql()} returns the SQL command
+   * that caused an exception.
+   */
+  @Test
+  public void testGetSql() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      String badSql = "SELECT 0 FROM dooool";
+      Result result = awaitOne(connection.createStatement(badSql).execute());
+      R2dbcException r2dbcException = assertThrows(R2dbcException.class, () ->
+        awaitOne(result.getRowsUpdated()));
+      assertEquals(badSql, r2dbcException.getSql());
+    }
+    finally {
       tryAwaitNone(connection.close());
     }
   }
