@@ -952,8 +952,7 @@ final class OracleStatementImpl implements Statement {
      * @return A publisher that emits the result of executing this statement
      */
     final Publisher<OracleResultImpl> execute() {
-
-      if(true)return Flux.usingWhen(Mono.just(new ArrayList<>(1)),
+      return Flux.usingWhen(Mono.just(new ArrayList<>(1)),
         results ->
           Mono.from(bind())
             .thenMany(executeJdbc())
@@ -962,22 +961,6 @@ final class OracleStatementImpl implements Statement {
             .onErrorResume(R2dbcException.class, r2dbcException ->
               Mono.just(createErrorResult(r2dbcException))),
         this::deallocate);
-
-      List<OracleResultImpl> results = new ArrayList<>(1);
-      Publisher<OracleResultImpl> deallocate =
-        Mono.defer(() -> Mono.from(deallocate(results)))
-          .cast(OracleResultImpl.class);
-
-      return Flux.concatDelayError(
-        Mono.from(bind())
-          .thenMany(executeJdbc())
-          .map(this::getWarnings)
-          .doOnNext(results::add)
-          .onErrorResume(R2dbcException.class, r2dbcException ->
-            Mono.just(createErrorResult(r2dbcException))),
-        deallocate)
-        .doOnCancel(() ->
-          Mono.from(deallocate).subscribe());
     }
 
     /**
