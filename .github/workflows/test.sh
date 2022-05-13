@@ -57,8 +57,7 @@ cp $PWD/startup/* $startUp
 # directory.
 startUpMount=/opt/oracle/scripts/startup
 readyFile=ready
-echo "touch $startUpMount/$readyFile" > $startUp/99_ready.sh
-
+echo "touch -f $startUpMount/$readyFile" > $startUp/99_ready.sh
 
 # The oracle/docker-images repo is cloned. This repo provides Dockerfiles along
 # with a handy script to build images of Oracle Database. For now, this script
