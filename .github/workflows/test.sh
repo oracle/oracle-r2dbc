@@ -75,17 +75,16 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # database has started.
 # The database port number, 1521, is mapped to the host system. The Oracle
 # R2DBC test suite is configured to connect with this port.
-docker run --name test_db --detach --rm -p 1521:$2 -v $startUp:$startUpMount oracle/database:$1-xe
+docker run --name test_db --detach --rm -p $2:1521 -v $startUp:$startUpMount oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
-# a file named "$1-ready" in the startup directory, where $1 is the database 
-# version number. When that file exists, it means the database is ready for 
-# testing.
+# a file named "ready" in the startup scripts directory. When that file exists, 
+# it means the database is ready for testing.
 echo "Waiting for database to start..."
 until [ -f $startUp/$readyFile ]
 do
-  docker logs --since 3s test_db
-  sleep 3
+  docker logs --since 1s test_db
+  sleep 1
 done
 
 # Create a configuration file and run the tests. The service name, "xepdb1",
