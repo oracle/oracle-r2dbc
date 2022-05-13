@@ -223,4 +223,40 @@ public final class OracleR2dbcOptions {
    */
   public static final Option<CharSequence> ENABLE_QUERY_RESULT_CACHE =
     Option.valueOf(OracleConnection.CONNECTION_PROPERTY_ENABLE_QUERY_RESULT_CACHE);
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL}
+   */
+  public static final Option<CharSequence> VSESSION_TERMINAL =
+    Option.valueOf(OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL);
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE}
+   */
+  public static final Option<CharSequence> VSESSION_MACHINE =
+    Option.valueOf(OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_MACHINE);
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_OSUSER}
+   */
+  public static final Option<CharSequence> VSESSION_OSUSER =
+    Option.valueOf(OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_OSUSER);
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM}
+   */
+  public static final Option<CharSequence> VSESSION_PROGRAM =
+    Option.valueOf(OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM);
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS}
+   */
+  public static final Option<CharSequence> VSESSION_PROCESS =
+    Option.valueOf(OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_PROCESS);
+
 }
