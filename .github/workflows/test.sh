@@ -23,6 +23,13 @@
 # execute the Oracle R2DBC test suite with a configuration that has it connect
 # to that database.
 #
+# The database version is configured by the first parameter. The version is 
+# expressed is as <major>.<minor>.<patch> version number, for example: "18.4.0"
+#
+# The database port number is configured by the second parameter. If multiple
+# databases are created by running this script in parallel, then a unique port
+# number should be provided for each database.
+#
 # This script makes no attempt to clean up. The docker container is left
 # running, and the database retains the test user and any other modifications
 # that the test suite may have performed.
@@ -68,7 +75,7 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # database has started.
 # The database port number, 1521, is mapped to the host system. The Oracle
 # R2DBC test suite is configured to connect with this port.
-docker run --name test_db --detach --rm -p 1521:1521 -v $startUp:$startUpMount oracle/database:$1-xe
+docker run --name test_db --detach --rm -p 1521:$2 -v $startUp:$startUpMount oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "$1-ready" in the startup directory, where $1 is the database 
@@ -88,7 +95,7 @@ done
 cd $GITHUB_WORKSPACE
 echo "DATABASE=xepdb1" > src/test/resources/config.properties
 echo "HOST=localhost" >> src/test/resources/config.properties
-echo "PORT=1521" >> src/test/resources/config.properties
+echo "PORT=$2" >> src/test/resources/config.properties
 echo "USER=test" >> src/test/resources/config.properties
 echo "PASSWORD=test" >> src/test/resources/config.properties
 echo "CONNECT_TIMEOUT=30" >> src/test/resources/config.properties
