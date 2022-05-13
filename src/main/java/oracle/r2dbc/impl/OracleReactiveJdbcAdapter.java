@@ -126,17 +126,20 @@ import static org.reactivestreams.FlowAdapters.toPublisher;
 final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
   /**
+   * <p>
    * The set of JDBC connection properties that this adapter supports. Each
    * property in this set is represented as an {@link Option} having the name
    * of the supported JDBC connection property. When a property is configured
    * with a sensitive value, such as a password, it is represented in this
    * set as a {@linkplain Option#sensitiveValueOf(String) sensitive Option}.
+   * </p><p>
    * If a new Option is added to this set, then it <i>must</i> be documented
    * in the javadoc of {@link #createDataSource(ConnectionFactoryOptions)},
    * and in any other reference that lists which options the Oracle R2DBC Driver
    * supports. Undocumented options are useless; Other programmers won't be
    * able to use an option if they have no way to understand what the option
    * does or how it should be configured.
+   * </p>
    */
   private static final Set<Option<CharSequence>>
     JDBC_CONNECTION_PROPERTY_OPTIONS = Set.of(
@@ -198,7 +201,14 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       // Allow the client-side ResultSet cache to be disabled. It is
       // necessary to do so when using the serializable transaction isolation
       // level in order to prevent phantom reads.
-      OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE
+      OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE,
+
+      // Allow v$session attributes to be configured for tracing
+      OracleR2dbcOptions.VSESSION_OSUSER,
+      OracleR2dbcOptions.VSESSION_TERMINAL,
+      OracleR2dbcOptions.VSESSION_PROCESS,
+      OracleR2dbcOptions.VSESSION_PROGRAM,
+      OracleR2dbcOptions.VSESSION_MACHINE
     );
 
   /** Guards access to a JDBC {@code Connection} created by this adapter */
@@ -379,6 +389,21 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    *   </li><li>
    *   {@linkplain OracleConnection#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE
    *     oracle.jdbc.implicitStatementCacheSize}
+   *   </li><li>
+   *   {@linkplain OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_OSUSER
+   *     v$session.osuser}
+   *   </li><li>
+   *   {@linkplain OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL
+   *     v$session.terminal}
+   *   </li><li>
+   *   {@linkplain OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS
+   *     v$session.process}
+   *   </li><li>
+   *   {@linkplain OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM
+   *     v$session.program}
+   *   </li><li>
+   *   {@linkplain OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE
+   *     v$session.machine}
    *   </li>
    * </ul>
    *
