@@ -213,9 +213,9 @@ public class OracleTestKit implements TestKit<Integer> {
    * </p>
    */
   @Override
-  public Mono<Integer> extractRowsUpdated(Result result) {
+  public Mono<Long> extractRowsUpdated(Result result) {
     return Flux.from(result.getRowsUpdated())
-      .reduce(0, (total, updateCount) -> total + updateCount);
+      .reduce(0L, (total, updateCount) -> total + updateCount);
   }
 
   @Override

@@ -89,9 +89,9 @@ public class OracleResultImplTest {
           .toIterable()
           .iterator();
       Result insertResult0 = insertResults.next();
-      Publisher<Integer> insertCountPublisher0 =
+      Publisher<Long> insertCountPublisher0 =
         insertResult0.getRowsUpdated();
-      awaitOne(1, insertCountPublisher0);
+      awaitOne(1L, insertCountPublisher0);
 
       // Expect IllegalStateException from multiple Result consumptions.
       assertThrows(IllegalStateException.class,
@@ -100,12 +100,12 @@ public class OracleResultImplTest {
         () -> insertResult0.map((row, metadata) -> "unexpected"));
 
       // Expect update count publisher to support multiple subscribers
-      awaitOne(1, insertCountPublisher0);
+      awaitOne(1L, insertCountPublisher0);
 
       Result insertResult1 = insertResults.next();
-      Publisher<Integer> insertCountPublisher1 =
+      Publisher<Long> insertCountPublisher1 =
         insertResult1.getRowsUpdated();
-      awaitOne(1, insertCountPublisher1);
+      awaitOne(1L, insertCountPublisher1);
 
       // Expect IllegalStateException from multiple Result consumptions.
       assertThrows(IllegalStateException.class,
@@ -114,16 +114,16 @@ public class OracleResultImplTest {
         () -> insertResult1.map((row, metadata) -> "unexpected"));
 
       // Expect update count publisher to support multiple subscribers
-      awaitOne(1, insertCountPublisher1);
+      awaitOne(1L, insertCountPublisher1);
 
       // Expect an update count of zero from UPDATE of zero rows
       consumeOne(connection.createStatement(
         "UPDATE testGetRowsUpdated SET y = 99 WHERE x = 99")
         .execute(),
         noUpdateResult -> {
-          Publisher<Integer> noUpdateCountPublisher =
+          Publisher<Long> noUpdateCountPublisher =
             noUpdateResult.getRowsUpdated();
-          awaitOne(0, noUpdateCountPublisher);
+          awaitOne(0L, noUpdateCountPublisher);
 
           // Expect IllegalStateException from multiple Result consumptions.
           assertThrows(IllegalStateException.class,
@@ -131,7 +131,7 @@ public class OracleResultImplTest {
           assertThrows(IllegalStateException.class, noUpdateResult::getRowsUpdated);
 
           // Expect update count publisher to support multiple subscribers
-          awaitOne(0, noUpdateCountPublisher);
+          awaitOne(0L, noUpdateCountPublisher);
         });
 
       // Expect update count of 2 from UPDATE of 2 rows
@@ -139,8 +139,8 @@ public class OracleResultImplTest {
         "UPDATE testGetRowsUpdated SET y = 2 WHERE x = 0")
         .execute(),
         updateResult -> {
-        Publisher<Integer> updateCountPublisher = updateResult.getRowsUpdated();
-        awaitOne(2, updateCountPublisher);
+        Publisher<Long> updateCountPublisher = updateResult.getRowsUpdated();
+        awaitOne(2L, updateCountPublisher);
 
         // Expect IllegalStateException from multiple Result consumptions.
         assertThrows(IllegalStateException.class,
@@ -148,7 +148,7 @@ public class OracleResultImplTest {
         assertThrows(IllegalStateException.class, updateResult::getRowsUpdated);
 
         // Expect update count publisher to support multiple subscribers
-        awaitOne(2, updateCountPublisher);
+        awaitOne(2L, updateCountPublisher);
       });
 
       // Expect no update count from SELECT
@@ -156,11 +156,11 @@ public class OracleResultImplTest {
         "SELECT x,y FROM testGetRowsUpdated")
         .execute())
         .flatMapMany(selectResult -> {
-          Publisher<Integer> selectCountPublisher =
+          Publisher<Long> selectCountPublisher =
             selectResult.getRowsUpdated();
 
           // Expect update count publisher to support multiple subscribers
-          Publisher<Integer> result = Flux.concat(
+          Publisher<Long> result = Flux.concat(
             Mono.from(selectCountPublisher).cache(),
             Mono.from(selectCountPublisher).cache());
 
@@ -178,8 +178,8 @@ public class OracleResultImplTest {
         .bind("x", 0)
         .execute(),
         deleteResult -> {
-          Publisher<Integer> deleteCountPublisher = deleteResult.getRowsUpdated();
-          awaitOne(2, deleteCountPublisher);
+          Publisher<Long> deleteCountPublisher = deleteResult.getRowsUpdated();
+          awaitOne(2L, deleteCountPublisher);
 
           // Expect IllegalStateException from multiple Result consumptions.
           assertThrows(IllegalStateException.class,
@@ -187,7 +187,7 @@ public class OracleResultImplTest {
           assertThrows(IllegalStateException.class, deleteResult::getRowsUpdated);
 
           // Expect update count publisher to support multiple subscribers
-          awaitOne(2, deleteCountPublisher);
+          awaitOne(2L, deleteCountPublisher);
         });
     }
     finally {
@@ -473,7 +473,7 @@ public class OracleResultImplTest {
       // UpdateCount segment to be published by getRowsUpdated
       AtomicReference<UpdateCount> unfilteredUpdateCount =
         new AtomicReference<>(null);
-      awaitOne(1, Flux.from(connection.createStatement(
+      awaitOne(1L, Flux.from(connection.createStatement(
         "INSERT INTO testFilter VALUES (1)")
         .execute())
         .map(result ->
@@ -529,7 +529,7 @@ public class OracleResultImplTest {
         .execute())
         .block(sqlTimeout());
       Result filteredResult = unfilteredResult.filter(segment -> false);
-      Publisher<Integer> filteredUpdateCounts = filteredResult.getRowsUpdated();
+      Publisher<Long> filteredUpdateCounts = filteredResult.getRowsUpdated();
       assertThrows(
         IllegalStateException.class, unfilteredResult::getRowsUpdated);
       assertThrows(
@@ -545,13 +545,13 @@ public class OracleResultImplTest {
         .block(sqlTimeout());
       Result filteredResult2 = unfilteredResult2.filter(segment ->
         fail("Unexpected invocation"));
-      Publisher<Integer> unfilteredUpdateCounts =
+      Publisher<Long> unfilteredUpdateCounts =
         unfilteredResult2.getRowsUpdated();
       assertThrows(
         IllegalStateException.class, filteredResult2::getRowsUpdated);
       assertThrows(
         IllegalStateException.class, unfilteredResult2::getRowsUpdated);
-      awaitOne(1, unfilteredUpdateCounts);
+      awaitOne(1L, unfilteredUpdateCounts);
 
       // Execute an INSERT that fails, and filter Message type segments.
       // Expect the Result to not emit {@code onError} when consumed.

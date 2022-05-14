@@ -45,8 +45,10 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
@@ -811,7 +813,7 @@ public class OracleStatementImplTest {
 
       // Expect the statement to execute with previously added binds, and
       // then emit an error if binds are missing in the final set of binds.
-      List<Signal<Integer>> signals =
+      List<Signal<Long>> signals =
         awaitOne(Flux.from(connection.createStatement(
           "INSERT INTO testAdd VALUES (:x, :y)")
           .bind("x", 0).bind("y", 1).add()
@@ -911,7 +913,7 @@ public class OracleStatementImplTest {
         selectStatement::execute);
 
       // Expect update to execute when a subscriber subscribes
-      awaitOne(1,
+      awaitOne(1L,
         Flux.from(updatePublisher)
           .flatMap(result -> result.getRowsUpdated()));
       awaitQuery(
@@ -1767,9 +1769,9 @@ public class OracleStatementImplTest {
       IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
       insert.bind(0, 100);
-      awaitOne(101, Flux.from(insert.execute())
+      awaitOne(101L, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
-        .reduce(0, (total, updateCount) -> total + updateCount));
+        .reduce(0L, (total, updateCount) -> total + updateCount));
 
       // Create a procedure that returns a cursor
       awaitExecution(connection.createStatement(
@@ -1844,8 +1846,8 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicInteger count = new AtomicInteger(-9);
-      awaitMany(asList(-9, -10),
+      AtomicLong count = new AtomicLong(-9);
+      awaitMany(asList(-9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown; END;")
           .execute())
           .concatMap(result ->
@@ -1878,9 +1880,9 @@ public class OracleStatementImplTest {
       IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
       insert.bind(0, 100);
-      awaitOne(101, Flux.from(insert.execute())
+      awaitOne(101L, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
-        .reduce(0, (total, updateCount) -> total + updateCount));
+        .reduce(0L, (total, updateCount) -> total + updateCount));
 
       // Create a procedure that returns a cursor
       awaitExecution(connection.createStatement(
@@ -1961,8 +1963,8 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicInteger count = new AtomicInteger(-8);
-      awaitMany(asList(-8, -9, -10),
+      AtomicLong count = new AtomicLong(-8);
+      awaitMany(asList(-8L, -9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown(?); END;")
           .bind(0, Parameters.out(R2dbcType.VARCHAR))
           .execute())
@@ -2083,7 +2085,7 @@ public class OracleStatementImplTest {
 
       // Create many statements and execute them in parallel. "Many" should
       // be enough to exhaust the common ForkJoinPool if any thread gets blocked
-      Publisher<Integer>[] publishers =
+      Publisher<Long>[] publishers =
         new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
 
       for (int i = 0; i < publishers.length; i++) {
@@ -2098,9 +2100,9 @@ public class OracleStatementImplTest {
             statement.add().bind(0, value);
           });
 
-        Mono<Integer> mono = Flux.from(statement.execute())
+        Mono<Long> mono = Flux.from(statement.execute())
           .flatMap(Result::getRowsUpdated)
-          .collect(Collectors.summingInt(Integer::intValue))
+          .collect(Collectors.summingLong(Long::longValue))
           .cache();
 
         // Execute in parallel, and retain the result for verification later
@@ -2110,7 +2112,7 @@ public class OracleStatementImplTest {
 
       // Expect each publisher to emit an update count of 100
       awaitMany(
-        IntStream.range(0, publishers.length)
+        LongStream.range(0, publishers.length)
           .map(i -> 100)
           .boxed()
           .collect(Collectors.toList()),
