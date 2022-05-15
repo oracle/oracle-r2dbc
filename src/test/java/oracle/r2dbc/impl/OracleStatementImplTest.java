@@ -53,10 +53,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static java.lang.String.format;
@@ -828,7 +826,7 @@ public class OracleStatementImplTest {
 
       // Expect the statement to execute with previously added binds, and
       // then emit an error if binds are missing in the final set of binds.
-      List<Signal<Long>> signals =
+      List<Signal<Integer>> signals =
         awaitOne(Flux.from(connection.createStatement(
           "INSERT INTO testAdd VALUES (:x, :y)")
           .bind("x", 0).bind("y", 1).add()
@@ -1861,7 +1859,7 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicLong count = new AtomicLong(-9);
+      AtomicInteger count = new AtomicInteger(-9);
       awaitMany(asList(-9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown; END;")
           .execute())
@@ -1978,7 +1976,7 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicLong count = new AtomicLong(-8);
+      AtomicInteger count = new AtomicInteger(-8);
       awaitMany(asList(-8L, -9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown(?); END;")
           .bind(0, Parameters.out(R2dbcType.VARCHAR))
@@ -2332,7 +2330,7 @@ public class OracleStatementImplTest {
         "CREATE TABLE testConcurrentFetch (value NUMBER)"));
 
       // Create many statements and execute them in parallel.
-      Publisher<Long>[] publishers = new Publisher[8];
+      Publisher<Integer>[] publishers = new Publisher[8];
 
       for (int i = 0; i < publishers.length; i++) {
 
@@ -2347,9 +2345,9 @@ public class OracleStatementImplTest {
             statement.add().bind(0, value);
           });
 
-        Mono<Long> mono = Flux.from(statement.execute())
+        Mono<Integer> mono = Flux.from(statement.execute())
           .flatMap(Result::getRowsUpdated)
-          .collect(Collectors.summingLong(Long::longValue))
+          .collect(Collectors.summingInt(Integer::intValue))
           .cache();
 
         // Execute in parallel, and retain the result for verification later
