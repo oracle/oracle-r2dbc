@@ -56,7 +56,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static java.lang.String.format;
@@ -2158,6 +2157,7 @@ public class OracleStatementImplTest {
         "CREATE TABLE testUsingWhenCancel (value NUMBER)"));
 
       // Use more threads than what the FJP has available
+      @SuppressWarnings({"unchecked","rawtypes"})
       Publisher<Boolean>[] publishers =
         new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
 
@@ -2301,6 +2301,7 @@ public class OracleStatementImplTest {
   private void verifyConcurrentExecute(Connection connection) {
 
     // Create many statements and execute them in parallel.
+    @SuppressWarnings({"unchecked","rawtypes"})
     Publisher<Integer>[] publishers = new Publisher[8];
 
     for (int i = 0; i < publishers.length; i++) {
@@ -2332,6 +2333,7 @@ public class OracleStatementImplTest {
         "CREATE TABLE testConcurrentFetch (value NUMBER)"));
 
       // Create many statements and execute them in parallel.
+      @SuppressWarnings({"unchecked","rawtypes"})
       Publisher<Long>[] publishers = new Publisher[8];
 
       for (int i = 0; i < publishers.length; i++) {
@@ -2365,6 +2367,7 @@ public class OracleStatementImplTest {
         Flux.merge(publishers));
 
       // Create publishers that fetch rows in parallel
+      @SuppressWarnings({"unchecked","rawtypes"})
       Publisher<List<Integer>>[] fetchPublishers =
         new Publisher[publishers.length];
 
