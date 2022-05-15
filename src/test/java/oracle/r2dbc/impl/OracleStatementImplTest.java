@@ -22,6 +22,8 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.ConnectionFactories;
+import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
@@ -32,6 +34,8 @@ import io.r2dbc.spi.Result.Message;
 import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
+import oracle.r2dbc.OracleR2dbcOptions;
+import oracle.r2dbc.test.DatabaseConfig;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -43,16 +47,29 @@ import java.sql.SQLWarning;
 import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
+import static oracle.r2dbc.test.DatabaseConfig.password;
+import static oracle.r2dbc.test.DatabaseConfig.port;
+import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.user;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
@@ -811,7 +828,7 @@ public class OracleStatementImplTest {
 
       // Expect the statement to execute with previously added binds, and
       // then emit an error if binds are missing in the final set of binds.
-      List<Signal<Integer>> signals =
+      List<Signal<Long>> signals =
         awaitOne(Flux.from(connection.createStatement(
           "INSERT INTO testAdd VALUES (:x, :y)")
           .bind("x", 0).bind("y", 1).add()
@@ -911,7 +928,7 @@ public class OracleStatementImplTest {
         selectStatement::execute);
 
       // Expect update to execute when a subscriber subscribes
-      awaitOne(1,
+      awaitOne(1L,
         Flux.from(updatePublisher)
           .flatMap(result -> result.getRowsUpdated()));
       awaitQuery(
@@ -1767,9 +1784,9 @@ public class OracleStatementImplTest {
       IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
       insert.bind(0, 100);
-      awaitOne(101, Flux.from(insert.execute())
+      awaitOne(101L, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
-        .reduce(0, (total, updateCount) -> total + updateCount));
+        .reduce(0L, (total, updateCount) -> total + updateCount));
 
       // Create a procedure that returns a cursor
       awaitExecution(connection.createStatement(
@@ -1844,8 +1861,8 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicInteger count = new AtomicInteger(-9);
-      awaitMany(asList(-9, -10),
+      AtomicLong count = new AtomicLong(-9);
+      awaitMany(asList(-9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown; END;")
           .execute())
           .concatMap(result ->
@@ -1878,9 +1895,9 @@ public class OracleStatementImplTest {
       IntStream.range(0, 100)
         .forEach(i -> insert.bind(0, i).add());
       insert.bind(0, 100);
-      awaitOne(101, Flux.from(insert.execute())
+      awaitOne(101L, Flux.from(insert.execute())
         .flatMap(Result::getRowsUpdated)
-        .reduce(0, (total, updateCount) -> total + updateCount));
+        .reduce(0L, (total, updateCount) -> total + updateCount));
 
       // Create a procedure that returns a cursor
       awaitExecution(connection.createStatement(
@@ -1961,8 +1978,8 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicInteger count = new AtomicInteger(-8);
-      awaitMany(asList(-8, -9, -10),
+      AtomicLong count = new AtomicLong(-8);
+      awaitMany(asList(-8L, -9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown(?); END;")
           .bind(0, Parameters.out(R2dbcType.VARCHAR))
           .execute())
@@ -2033,119 +2050,98 @@ public class OracleStatementImplTest {
   }
 
   /**
-   * Verifies that concurrent statement execution does not cause threads
-   * to block.
+   * Verifies that concurrent statement execution on a single
+   * connection does not cause threads to block when there are many threads
+   * available.
    */
   @Test
-  public void testConcurrentExecute() {
-    Connection connection = awaitOne(sharedConnection());
+  public void testConcurrentExecuteManyThreads() throws InterruptedException {
+    ExecutorService executorService = Executors.newFixedThreadPool(4);
     try {
-
-      // Create many statements and execute them in parallel. "Many" should
-      // be enough to exhaust the common ForkJoinPool if any thread gets blocked
-      Publisher<Integer>[] publishers =
-        new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
-
-      for (int i = 0; i < publishers.length; i++) {
-        Flux<Integer> flux = Flux.from(connection.createStatement(
-          "SELECT " + i + " FROM sys.dual")
-          .execute())
-          .flatMap(result ->
-            result.map(row -> row.get(0, Integer.class)))
-          .cache();
-
-        flux.subscribe();
-        publishers[i] = flux;
+      Connection connection = awaitOne(connect(executorService));
+      try {
+        verifyConcurrentExecute(connection);
       }
-
-      awaitMany(
-        IntStream.range(0, publishers.length)
-          .boxed()
-          .collect(Collectors.toList()),
-        Flux.concat(publishers));
+      finally {
+        tryAwaitNone(connection.close());
+      }
     }
     finally {
-      tryAwaitNone(connection.close());
+      executorService.shutdown();
+      executorService.awaitTermination(
+        sqlTimeout().toSeconds(), TimeUnit.SECONDS);
     }
   }
 
   /**
-   * Verifies that concurrent statement execution and row fetching does not
-   * cause threads to block.
+   * Verifies that concurrent statement execution on a single
+   * connection does not cause threads to block when there is just one thread
+   * available.
    */
   @Test
-  public void testConcurrentFetch() {
-    Connection connection = awaitOne(sharedConnection());
+  public void testConcurrentExecuteSingleThread() throws InterruptedException {
+    ExecutorService executorService = Executors.newSingleThreadExecutor();
     try {
-
-      awaitExecution(connection.createStatement(
-        "CREATE TABLE testConcurrentFetch (value NUMBER)"));
-
-      // Create many statements and execute them in parallel. "Many" should
-      // be enough to exhaust the common ForkJoinPool if any thread gets blocked
-      Publisher<Integer>[] publishers =
-        new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
-
-      for (int i = 0; i < publishers.length; i++) {
-
-        // Each publisher batch inserts a range of 100 values
-        Statement statement = connection.createStatement(
-          "INSERT INTO testConcurrentFetch VALUES (?)");
-        int start = i * 100;
-        statement.bind(0, start);
-        IntStream.range(start + 1, start + 100)
-          .forEach(value -> {
-            statement.add().bind(0, value);
-          });
-
-        Mono<Integer> mono = Flux.from(statement.execute())
-          .flatMap(Result::getRowsUpdated)
-          .collect(Collectors.summingInt(Integer::intValue))
-          .cache();
-
-        // Execute in parallel, and retain the result for verification later
-        mono.subscribe();
-        publishers[i] = mono;
+      Connection connection = awaitOne(connect(executorService));
+      try {
+        verifyConcurrentExecute(connection);
       }
-
-      // Expect each publisher to emit an update count of 100
-      awaitMany(
-        IntStream.range(0, publishers.length)
-          .map(i -> 100)
-          .boxed()
-          .collect(Collectors.toList()),
-        Flux.merge(publishers));
-
-      // Create publishers that fetch rows in parallel
-      Publisher<List<Integer>>[] fetchPublishers =
-        new Publisher[publishers.length];
-
-      for (int i = 0; i < publishers.length; i++) {
-        Mono<List<Integer>> mono = Flux.from(connection.createStatement(
-          "SELECT value FROM testConcurrentFetch ORDER BY value")
-          .execute())
-          .flatMap(result ->
-            result.map(row -> row.get(0, Integer.class)))
-          .collect(Collectors.toList())
-          .cache();
-
-        // Execute in parallel, and retain the result for verification later
-        mono.subscribe();
-        fetchPublishers[i] = mono;
+      finally {
+        tryAwaitNone(connection.close());
       }
-
-      // Expect each fetch publisher to get the same result
-      List<Integer> expected = IntStream.range(0, publishers.length * 100)
-        .boxed()
-        .collect(Collectors.toList());
-
-      for (Publisher<List<Integer>> publisher : fetchPublishers)
-        awaitOne(expected, publisher);
     }
     finally {
-      tryAwaitExecution(connection.createStatement(
-        "DROP TABLE testConcurrentFetch"));
-      tryAwaitNone(connection.close());
+      executorService.shutdown();
+      executorService.awaitTermination(
+        sqlTimeout().toSeconds(), TimeUnit.SECONDS);
+    }
+  }
+
+  /**
+   * Verifies that concurrent statement execution and row fetching on a single
+   * connection does not cause threads to block when there is just one thread
+   * available.
+   */
+  @Test
+  public void testConcurrentFetchSingleThread() throws InterruptedException {
+    ExecutorService executorService = Executors.newSingleThreadExecutor();
+    try {
+      Connection connection = awaitOne(connect(executorService));
+      try {
+        verifyConcurrentFetch(connection);
+      }
+      finally {
+        tryAwaitNone(connection.close());
+      }
+    }
+    finally {
+      executorService.shutdown();
+      executorService.awaitTermination(
+        sqlTimeout().toSeconds(), TimeUnit.SECONDS);
+    }
+  }
+
+  /**
+   * Verifies that concurrent statement execution and row fetching on a single
+   * connection does not cause threads to block when there are many threads
+   * available.
+   */
+  @Test
+  public void testConcurrentFetchManyThreads() throws InterruptedException {
+    ExecutorService executorService = Executors.newFixedThreadPool(4);
+    try {
+      Connection connection = awaitOne(connect(executorService));
+      try {
+        verifyConcurrentFetch(connection);
+      }
+      finally {
+        tryAwaitNone(connection.close());
+      }
+    }
+    finally {
+      executorService.shutdown();
+      executorService.awaitTermination(
+        sqlTimeout().toSeconds(), TimeUnit.SECONDS);
     }
   }
 
@@ -2273,6 +2269,131 @@ public class OracleStatementImplTest {
     @Override
     public Object getValue() {
       return value;
+    }
+  }
+
+  /**
+   * Connect to the database configured by {@link DatabaseConfig}, with a
+   * the connection configured to use a given {@code executor} for async
+   * callbacks.
+   * @param executor Executor for async callbacks
+   * @return Connection that uses the {@code executor}
+   */
+  private static Publisher<? extends Connection> connect(Executor executor) {
+    return ConnectionFactories.get(
+        ConnectionFactoryOptions.parse(format(
+            "r2dbc:oracle://%s:%d/%s", host(), port(), serviceName()))
+          .mutate()
+          .option(
+            ConnectionFactoryOptions.USER, user())
+          .option(
+            ConnectionFactoryOptions.PASSWORD, password())
+          .option(
+            OracleR2dbcOptions.EXECUTOR, executor)
+          .build())
+      .create();
+  }
+
+  /**
+   * Verifies concurrent statement execution the given {@code connection}
+   * @param connection Connection to verify
+   */
+  private void verifyConcurrentExecute(Connection connection) {
+
+    // Create many statements and execute them in parallel.
+    Publisher<Integer>[] publishers = new Publisher[8];
+
+    for (int i = 0; i < publishers.length; i++) {
+      Flux<Integer> flux = Flux.from(connection.createStatement(
+            "SELECT " + i + " FROM sys.dual")
+          .execute())
+        .flatMap(result ->
+          result.map(row -> row.get(0, Integer.class)))
+        .cache();
+
+      flux.subscribe();
+      publishers[i] = flux;
+    }
+
+    awaitMany(
+      IntStream.range(0, publishers.length)
+        .boxed()
+        .collect(Collectors.toList()),
+      Flux.concat(publishers));
+  }
+
+  /**
+   * Verifies concurrent row fetching with the given {@code connection}
+   * @param connection Connection to verify
+   */
+  private void verifyConcurrentFetch(Connection connection) {
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testConcurrentFetch (value NUMBER)"));
+
+      // Create many statements and execute them in parallel.
+      Publisher<Long>[] publishers = new Publisher[8];
+
+      for (int i = 0; i < publishers.length; i++) {
+
+        Statement statement = connection.createStatement(
+          "INSERT INTO testConcurrentFetch VALUES (?)");
+
+        // Each publisher batch inserts a range of 10 values
+        int start = i * 10;
+        statement.bind(0, start);
+        IntStream.range(start + 1, start + 10)
+          .forEach(value -> {
+            statement.add().bind(0, value);
+          });
+
+        Mono<Long> mono = Flux.from(statement.execute())
+          .flatMap(Result::getRowsUpdated)
+          .collect(Collectors.summingLong(Long::longValue))
+          .cache();
+
+        // Execute in parallel, and retain the result for verification later
+        mono.subscribe();
+        publishers[i] = mono;
+      }
+
+      // Expect each publisher to emit an update count of 100
+      awaitMany(
+        Stream.generate(() -> 10L)
+          .limit(publishers.length)
+          .collect(Collectors.toList()),
+        Flux.merge(publishers));
+
+      // Create publishers that fetch rows in parallel
+      Publisher<List<Integer>>[] fetchPublishers =
+        new Publisher[publishers.length];
+
+      for (int i = 0; i < fetchPublishers.length; i++) {
+        Mono<List<Integer>> mono = Flux.from(connection.createStatement(
+              "SELECT value FROM testConcurrentFetch ORDER BY value")
+            .execute())
+          .flatMap(result ->
+            result.map(row -> row.get(0, Integer.class)))
+          .sort()
+          .collect(Collectors.toList())
+          .cache();
+
+        // Execute in parallel, and retain the result for verification later
+        mono.subscribe();
+        fetchPublishers[i] = mono;
+      }
+
+      // Expect each fetch publisher to get the same result
+      List<Integer> expected = IntStream.range(0, publishers.length * 10)
+        .boxed()
+        .collect(Collectors.toList());
+
+      for (Publisher<List<Integer>> publisher : fetchPublishers)
+        awaitOne(expected, publisher);
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testConcurrentFetch"));
     }
   }
 }
