@@ -91,11 +91,12 @@ done
 # database editions. The test user is created by the startup/01_createUser.sql
 # script
 cd $GITHUB_WORKSPACE
-echo "DATABASE=xepdb1" > src/test/resources/config.properties
-echo "HOST=localhost" >> src/test/resources/config.properties
-echo "PORT=$2" >> src/test/resources/config.properties
-echo "USER=test" >> src/test/resources/config.properties
-echo "PASSWORD=test" >> src/test/resources/config.properties
-echo "CONNECT_TIMEOUT=30" >> src/test/resources/config.properties
-echo "SQL_TIMEOUT=30" >> src/test/resources/config.properties
-mvn clean compile test
+echo "Configuration for testing with Oracle Database $1" > src/test/resources/$1.properties
+echo "DATABASE=xepdb1" >> src/test/resources/$1.properties
+echo "HOST=localhost" >> src/test/resources/$1.properties
+echo "PORT=$2" >> src/test/resources/$1.properties
+echo "USER=test" >> src/test/resources/$1.properties
+echo "PASSWORD=test" >> src/test/resources/$1.properties
+echo "CONNECT_TIMEOUT=30" >> src/test/resources/$1.properties
+echo "SQL_TIMEOUT=30" >> src/test/resources/$1.properties
+mvn -Doracle.r2dbc.config=$1.properties clean compile test
