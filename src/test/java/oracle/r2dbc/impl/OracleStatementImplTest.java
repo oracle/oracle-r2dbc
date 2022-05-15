@@ -53,6 +53,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -826,7 +827,7 @@ public class OracleStatementImplTest {
 
       // Expect the statement to execute with previously added binds, and
       // then emit an error if binds are missing in the final set of binds.
-      List<Signal<Integer>> signals =
+      List<Signal<Long>> signals =
         awaitOne(Flux.from(connection.createStatement(
           "INSERT INTO testAdd VALUES (:x, :y)")
           .bind("x", 0).bind("y", 1).add()
@@ -1859,7 +1860,7 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicInteger count = new AtomicInteger(-9);
+      AtomicLong count = new AtomicLong(-9);
       awaitMany(asList(-9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown; END;")
           .execute())
@@ -1976,7 +1977,7 @@ public class OracleStatementImplTest {
               .collectList()));
 
       // Expect Implicit Results to have no update counts
-      AtomicInteger count = new AtomicInteger(-8);
+      AtomicLong count = new AtomicLong(-8);
       awaitMany(asList(-8L, -9L, -10L),
         Flux.from(connection.createStatement("BEGIN countDown(?); END;")
           .bind(0, Parameters.out(R2dbcType.VARCHAR))
@@ -2156,6 +2157,7 @@ public class OracleStatementImplTest {
         "CREATE TABLE testUsingWhenCancel (value NUMBER)"));
 
       // Use more threads than what the FJP has available
+      @SuppressWarnings({"unchecked","rawtypes"})
       Publisher<Boolean>[] publishers =
         new Publisher[ForkJoinPool.getCommonPoolParallelism() * 4];
 
@@ -2299,6 +2301,7 @@ public class OracleStatementImplTest {
   private void verifyConcurrentExecute(Connection connection) {
 
     // Create many statements and execute them in parallel.
+    @SuppressWarnings({"unchecked","rawtypes"})
     Publisher<Integer>[] publishers = new Publisher[8];
 
     for (int i = 0; i < publishers.length; i++) {
@@ -2330,7 +2333,8 @@ public class OracleStatementImplTest {
         "CREATE TABLE testConcurrentFetch (value NUMBER)"));
 
       // Create many statements and execute them in parallel.
-      Publisher<Integer>[] publishers = new Publisher[8];
+      @SuppressWarnings({"unchecked","rawtypes"})
+      Publisher<Long>[] publishers = new Publisher[8];
 
       for (int i = 0; i < publishers.length; i++) {
 
@@ -2345,9 +2349,9 @@ public class OracleStatementImplTest {
             statement.add().bind(0, value);
           });
 
-        Mono<Integer> mono = Flux.from(statement.execute())
+        Mono<Long> mono = Flux.from(statement.execute())
           .flatMap(Result::getRowsUpdated)
-          .collect(Collectors.summingInt(Integer::intValue))
+          .collect(Collectors.summingLong(Long::longValue))
           .cache();
 
         // Execute in parallel, and retain the result for verification later
@@ -2363,6 +2367,7 @@ public class OracleStatementImplTest {
         Flux.merge(publishers));
 
       // Create publishers that fetch rows in parallel
+      @SuppressWarnings({"unchecked","rawtypes"})
       Publisher<List<Integer>>[] fetchPublishers =
         new Publisher[publishers.length];
 

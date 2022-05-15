@@ -269,6 +269,7 @@ public final class Awaits {
       expectedCounts,
       Flux.from(statement.execute())
         .flatMap(result -> Flux.from(result.getRowsUpdated()))
+        .map(Math::toIntExact)
         .collectList()
         .block(sqlTimeout()),
       "Unexpected update counts");

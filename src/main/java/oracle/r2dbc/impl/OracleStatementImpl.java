@@ -1457,7 +1457,7 @@ final class OracleStatementImpl implements Statement {
      */
     @Override
     protected Publisher<Void> bind() {
-      @SuppressWarnings("unchecked")
+      @SuppressWarnings({"unchecked","rawtypes"})
       Publisher<Void>[] bindPublishers = new Publisher[batchSize];
       for (int i = 0; i < batchSize; i++) {
         bindPublishers[i] = Flux.concat(

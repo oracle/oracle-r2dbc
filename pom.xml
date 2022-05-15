@@ -29,7 +29,7 @@
   <version>0.4.0</version>
   <name>oracle-r2dbc</name>
   <description>
-    Oracle R2DBC Driver implementing version 0.9.0 of the R2DBC SPI for Oracle Database.
+    Oracle R2DBC Driver implementing version 1.0.0 of the R2DBC SPI for Oracle Database.
   </description>
   <url>
     https://github.com/oracle/oracle-r2dbc
@@ -65,8 +65,8 @@
 
   <properties>
     <java.version>11</java.version>
-    <ojdbc.version>21.3.0.0</ojdbc.version>
-    <r2dbc.version>0.9.0.RELEASE</r2dbc.version>
+    <ojdbc.version>21.5.0.0</ojdbc.version>
+    <r2dbc.version>1.0.0.RELEASE</r2dbc.version>
     <reactor.version>3.3.0.RELEASE</reactor.version>
     <reactive-streams.version>1.0.3</reactive-streams.version>
     <junit.version>5.7.0</junit.version>
