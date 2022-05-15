@@ -4,6 +4,7 @@ The Oracle R2DBC Driver is a Java library that supports reactive programming wit
 
 Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified by the Reactive Relational Database Connectivity (R2DBC) project. The R2DBC SPI exposes Reactive Streams as an abstraction for remote database operations. Reactive Streams is a well defined standard for asynchronous, non-blocking, and back-pressured communication. This standard allows an R2DBC driver to interoperate with other reactive libraries and frameworks, such as Spring, Project Reactor, RxJava, and Akka Streams.
 
+![](https://github.com/oracle/oracle-r2dbc/actions/workflows/build-and-test.yml/badge.svg)
 
 ### Learn More About R2DBC:
 [R2DBC Project Home Page](https://r2dbc.io)

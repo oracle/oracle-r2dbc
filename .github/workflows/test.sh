@@ -74,7 +74,8 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # database has started.
 # The database port number, 1521, is mapped to the host system. The Oracle
 # R2DBC test suite is configured to connect with this port.
-docker run --name test_db_$1 --detach --rm -p $2:1521 -v $startUp:$startUpMount oracle/database:$1-xe
+containerName=test_db_$1
+docker run --name $containerName --detach --rm -p $2:1521 -v $startUp:$startUpMount oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "ready" in the startup scripts directory. When that file exists, 
@@ -82,7 +83,7 @@ docker run --name test_db_$1 --detach --rm -p $2:1521 -v $startUp:$startUpMount 
 echo "Waiting for database to start..."
 until [ -f $startUp/$readyFile ]
 do
-  docker logs --since 1s test_db
+  docker logs --since 1s $containerName
   sleep 1
 done
 
@@ -102,4 +103,4 @@ echo "SQL_TIMEOUT=30" >> src/test/resources/$1.properties
 mvn -Doracle.r2dbc.config=$1.properties clean compile test
 
 # Stop the database container to free up resources
-docker stop test_db_$1
+docker stop $containerName
