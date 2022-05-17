@@ -30,6 +30,7 @@ import io.r2dbc.spi.Result;
 import oracle.jdbc.OracleConnection;
 import oracle.jdbc.datasource.OracleDataSource;
 import oracle.r2dbc.OracleR2dbcOptions;
+import oracle.r2dbc.test.DatabaseConfig;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -63,6 +64,7 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.STATEMENT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
+import static java.lang.String.format;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.password;
@@ -210,7 +212,7 @@ public class OracleReactiveJdbcAdapterTest {
   public void testTnsAdmin() throws IOException {
 
     // Create an Oracle Net Descriptor
-    String descriptor = String.format(
+    String descriptor = format(
       "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=tcp))" +
         "(CONNECT_DATA=(SERVICE_NAME=%s)))",
       host(), port(), serviceName());
@@ -227,13 +229,13 @@ public class OracleReactiveJdbcAdapterTest {
     try {
       // Expect to connect with the descriptor in the R2DBC URL
       awaitNone(awaitOne(
-        ConnectionFactories.get(String.format(
+        ConnectionFactories.get(format(
           "r2dbc:oracle://%s:%s@?oracle.r2dbc.descriptor=%s",
           user(), password(), descriptor))
           .create())
         .close());
       awaitNone(awaitOne(
-        ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
+        ConnectionFactories.get(ConnectionFactoryOptions.parse(format(
           "r2dbc:oracle://@?oracle.r2dbc.descriptor=%s", descriptor))
           .mutate()
           .option(USER, user())
@@ -245,14 +247,14 @@ public class OracleReactiveJdbcAdapterTest {
       // Expect to connect with the tnsnames.ora file, when a URL specifies
       // the file path and an alias
       awaitNone(awaitOne(
-        ConnectionFactories.get(String.format(
+        ConnectionFactories.get(format(
           "r2dbc:oracle://%s:%s@?oracle.r2dbc.descriptor=%s&TNS_ADMIN=%s",
           user(), password(), "test_alias", userDir))
           .create())
           .close());
       awaitNone(awaitOne(
         ConnectionFactories.get(ConnectionFactoryOptions.parse(
-          String.format(
+          format(
             "r2dbc:oracle://@?oracle.r2dbc.descriptor=%s&TNS_ADMIN=%s",
             "test_alias", userDir))
           .mutate()
@@ -288,14 +290,14 @@ public class OracleReactiveJdbcAdapterTest {
 
       // Create an ojdbc.properties file containing the user name
       Files.writeString(Path.of("ojdbc.properties"),
-        String.format("user=%s", user()),
+        format("user=%s", user()),
         StandardOpenOption.CREATE_NEW);
       try {
         // Expect to connect with the tnsnames.ora and ojdbc.properties files,
         // when a URL specifies their path and an alias, the properties file
         // specifies a user, and a standard option specifies the password.
         awaitNone(awaitOne(
-          ConnectionFactories.get(ConnectionFactoryOptions.parse(String.format(
+          ConnectionFactories.get(ConnectionFactoryOptions.parse(format(
             "r2dbc:oracle://?oracle.r2dbc.descriptor=%s&TNS_ADMIN=%s",
             "test_alias", userDir))
             .mutate()
@@ -463,6 +465,63 @@ public class OracleReactiveJdbcAdapterTest {
           result.map(row -> row.get(0, Integer.class)))
         .collect(Collectors.toSet()));
       assertTrue(count.get() != 0);
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies the
+   * {@link OracleR2dbcOptions#VSESSION_OSUSER},
+   * {@link OracleR2dbcOptions#VSESSION_TERMINAL},
+   * {@link OracleR2dbcOptions#VSESSION_PROCESS},
+   * {@link OracleR2dbcOptions#VSESSION_PROGRAM}, and
+   * {@link OracleR2dbcOptions#VSESSION_MACHINE} options.
+   */
+  @Test
+  public void testVSessionOptions() {
+    String osuser = "test-osuser";
+    String terminal = "test-terminal";
+    String process = "test-process";
+    String program = "test-program";
+    String machine = "test-machine";
+
+    // Verify configuration with URL parameters
+    Connection connection = awaitOne(ConnectionFactories.get(
+      ConnectionFactoryOptions.parse(
+        format("r2dbc:oracle://%s:%d/%s" +
+          "?v$session.osuser=%s" +
+          "&v$session.terminal=%s" +
+          "&v$session.process=%s" +
+          "&v$session.program=%s" +
+          "&v$session.machine=%s",
+          host(), port(), serviceName(),
+          osuser, terminal, process, program, machine))
+      .mutate()
+      .option(USER, user())
+      .option(PASSWORD, password())
+      .build())
+      .create());
+    try {
+      Result result = awaitOne(connection.createStatement(
+        "SELECT count(*)" +
+          " FROM v$session" +
+          " WHERE osuser=?" +
+          " AND terminal=?" +
+          " AND process=?" +
+          " AND program=?" +
+          " AND machine=?")
+        .bind(0, osuser)
+        .bind(1, terminal)
+        .bind(2, process)
+        .bind(3, program)
+        .bind(4, machine)
+        .execute());
+
+      assertEquals(
+        Integer.valueOf(1),
+        awaitOne(result.map(row -> row.get(0, Integer.class))));
     }
     finally {
       tryAwaitNone(connection.close());
