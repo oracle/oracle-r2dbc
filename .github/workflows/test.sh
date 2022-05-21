@@ -80,7 +80,7 @@ docker run --name $containerName --detach --rm -p $2:1521 -v $startUp:/opt/oracl
 # a file named "ready" in the startup scripts directory. When that file exists, 
 # it means the database is ready for testing.
 echo "Waiting for database to start..."
-until docker exec -it $containerName sh -c "test -f $readyFile"
+until docker exec $containerName sh -c "test -f $readyFile"
 do
   docker logs --since 1s $containerName
   sleep 1
