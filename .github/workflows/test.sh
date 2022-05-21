@@ -52,6 +52,7 @@
 startUp=$PWD/$1/startup
 mkdir -p $startUp
 cp $PWD/startup/* $startUp
+chmod -r u+rw $startUp
 
 # Create the 99_ready.sh script. It will touch a file in the mounted startup
 # directory.
