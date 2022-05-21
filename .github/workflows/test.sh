@@ -52,13 +52,11 @@
 startUp=$PWD/$1/startup
 mkdir -p $startUp
 cp $PWD/startup/* $startUp
-chmod -R u+rw $startUp
 
 # Create the 99_ready.sh script. It will touch a file in the mounted startup
 # directory.
-startUpMount=/opt/oracle/scripts/startup
-readyFile=ready
-echo "touch -f $startUpMount/$readyFile" > $startUp/99_ready.sh
+readyFile='$HOME/oracle-r2dbc-ready'
+echo "touch -f $readyFile" > $startUp/99_ready.sh
 
 # The oracle/docker-images repo is cloned. This repo provides Dockerfiles along
 # with a handy script to build images of Oracle Database. For now, this script
@@ -76,13 +74,13 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # The database port number, 1521, is mapped to the host system. The Oracle
 # R2DBC test suite is configured to connect with this port.
 containerName=test_db_$1
-docker run --name $containerName --detach --rm -p $2:1521 -v $startUp:$startUpMount oracle/database:$1-xe
+docker run --name $containerName --detach --rm -p $2:1521 -v $startUp:/opt/oracle/scripts/startup oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "ready" in the startup scripts directory. When that file exists, 
 # it means the database is ready for testing.
 echo "Waiting for database to start..."
-until [ -f $startUp/$readyFile ]
+until docker exec -it $containerName sh -c "test -f $readyFile"
 do
   docker logs --since 1s $containerName
   sleep 1
