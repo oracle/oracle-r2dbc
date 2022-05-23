@@ -29,32 +29,21 @@
 # The database port number is configured by the second parameter. If multiple
 # databases are created by running this script in parallel, then a unique port
 # number should be provided for each database.
-#
-# This script makes no attempt to clean up. The docker container is left
-# running, and the database retains the test user and any other modifications
-# that the test suite may have performed.
-# It is assumed that the Github Runner will clean up any state this script
-# leaves behind.
 
 
 # The startup directory is mounted as a volume inside the docker container.
 # The container's entry point script will execute any .sh and .sql scripts
 # it finds under /opt/oracle/scripts/startup. The startup scripts are run
-# after the database instance is active.A numeric prefix on the script name
-# determines the order in which scripts are run. The final script, prefixed
-# with "99_" will create a file named "ready" in the mounted volume, indicating
-# that all scripts have completed and the database is ready for testing. 
-
-# Create directory with the startup scripts. Naming the directory with the
-# version number should isolate it from database container that is running 
-# concurrently, assuming multiple containers are not running the same database
-# version.
+# after the database instance is active.
 startUp=$PWD/$1/startup
 mkdir -p $startUp
 cp $PWD/startup/* $startUp
 
-# Create the 99_ready.sh script. It will touch a file in the mounted startup
-# directory.
+# Create a 99_ready.sh script. The numeric prefix of the file name determines 
+# the order in which scripts are run. The final script, prefixed with "99_"
+# will create a file named "oracle-r2dbc-ready" in the $HOME directory within
+# the container. The existence of this file is waited for before any tests are
+# run.
 readyFile='$HOME/oracle-r2dbc-ready'
 echo "touch -f $readyFile" > $startUp/99_ready.sh
 
@@ -63,6 +52,8 @@ echo "touch -f $readyFile" > $startUp/99_ready.sh
 # is just going to build an Express Edition (XE) image, because this can be 
 # done in an automated fashion. Other editions would require a script to accept
 # a license agreement.
+# Parallel executions of this script clone the repo into isolated directories.
+cd $PWD/$1
 git clone https://github.com/oracle/docker-images.git
 cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 ./buildContainerImage.sh -v $1 -x
@@ -91,7 +82,7 @@ done
 # database editions. The test user is created by the startup/01_createUser.sql
 # script
 cd $GITHUB_WORKSPACE
-echo "Configuration for testing with Oracle Database $1" > src/test/resources/$1.properties
+echo "# Configuration for testing with Oracle Database $1" > src/test/resources/$1.properties
 echo "DATABASE=xepdb1" >> src/test/resources/$1.properties
 echo "HOST=localhost" >> src/test/resources/$1.properties
 echo "PORT=$2" >> src/test/resources/$1.properties
