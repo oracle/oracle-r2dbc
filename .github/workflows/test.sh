@@ -65,7 +65,7 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # The -p option has the database port number, 1521, mapped to any available
 # port in the range between 49152 and 65535
 containerName=test_db_$1
-docker run --name $containerName --detach --rm -p 49152–65535:1521 -v $startUp:/opt/oracle/scripts/startup oracle/database:$1-xe
+docker run --name $containerName --detach --rm -p 49152-65535:1521 -v $startUp:/opt/oracle/scripts/startup oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "ready" in the startup scripts directory. When that file exists, 
