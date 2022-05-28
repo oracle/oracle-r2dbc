@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Test with Oracle Database 18.4.0 XE
-        run: cd $GITHUB_WORKSPACE/.github/workflows && bash test.sh 18.4.0 50184
+        run: cd $GITHUB_WORKSPACE/.github/workflows && bash test.sh 18.4.0
   # Tests the Oracle R2DBC Driver with a 21.3 XE Oracle Database
   test-21-3-xe:
     needs: build
@@ -66,4 +66,4 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Test with Oracle Database 21.3.0 XE
-        run: cd $GITHUB_WORKSPACE/.github/workflows && bash test.sh 21.3.0 50213
+        run: cd $GITHUB_WORKSPACE/.github/workflows && bash test.sh 21.3.0

@@ -62,10 +62,10 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # The startup directory is mounted. It contains a createUser.sql script that
 # creates a test user. The docker container will run this script once the
 # database has started.
-# The database port number, 1521, is mapped to the host system. The Oracle
-# R2DBC test suite is configured to connect with this port.
+# The -P option has the the database port number, 1521, mapped to an available
+# port on the host system.
 containerName=test_db_$1
-docker run --name $containerName --detach --rm -p $2:1521 -v $startUp:/opt/oracle/scripts/startup oracle/database:$1-xe
+docker run --name $containerName --detach --rm -P -v $startUp:/opt/oracle/scripts/startup oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "ready" in the startup scripts directory. When that file exists, 
@@ -77,6 +77,13 @@ do
   sleep 1
 done
 
+# Find out which port number on the host system has been mapped to the 1521
+# port of the container. 1521 is the Oracle Database port number. The Oracle
+# R2DBC test suite is configured to connect to the mapped port on the host 
+# system. The docker port command outputs a string in the format of:
+# "<ip>:<port>", and the sed command extracts the port number with a regex.
+dbPort=$(docker port $containerName 1521 | sed 's/^.*:\([0-9]*\)$/\1/')
+
 # Create a configuration file and run the tests. The service name, "xepdb1",
 # is always created for the XE database. It would probably change for other 
 # database editions. The test user is created by the startup/01_createUser.sql
@@ -85,11 +92,11 @@ cd $GITHUB_WORKSPACE
 echo "# Configuration for testing with Oracle Database $1" > src/test/resources/$1.properties
 echo "DATABASE=xepdb1" >> src/test/resources/$1.properties
 echo "HOST=localhost" >> src/test/resources/$1.properties
-echo "PORT=$2" >> src/test/resources/$1.properties
+echo "PORT=$dbPort" >> src/test/resources/$1.properties
 echo "USER=test" >> src/test/resources/$1.properties
 echo "PASSWORD=test" >> src/test/resources/$1.properties
-echo "CONNECT_TIMEOUT=30" >> src/test/resources/$1.properties
-echo "SQL_TIMEOUT=30" >> src/test/resources/$1.properties
+echo "CONNECT_TIMEOUT=60" >> src/test/resources/$1.properties
+echo "SQL_TIMEOUT=60" >> src/test/resources/$1.properties
 mvn -Doracle.r2dbc.config=$1.properties clean compile test
 
 # Stop the database container to free up resources
