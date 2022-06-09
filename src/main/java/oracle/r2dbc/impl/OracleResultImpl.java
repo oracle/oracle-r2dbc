@@ -196,9 +196,8 @@ abstract class OracleResultImpl implements Result {
    * </p>
    */
   @Override
-  public Publisher<Integer> getRowsUpdated() {
-    return publishSegments(UpdateCount.class,
-      updateCount -> Math.toIntExact(updateCount.value()));
+  public Publisher<Long> getRowsUpdated() {
+    return publishSegments(UpdateCount.class, UpdateCount::value);
   }
 
   /**

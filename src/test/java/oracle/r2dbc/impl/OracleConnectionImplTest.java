@@ -952,7 +952,7 @@ public class OracleConnectionImplTest {
             "Unexpected value returned by isAutoCommit() before subscribing to"
               + " setAutoCommit(true) publisher");
           awaitMany(
-            List.of(1, 1),
+            List.of(1L, 1L),
             Flux.from(sessionA.createBatch()
               .add("INSERT INTO testSetAutoCommit VALUES ('C')")
               .add("INSERT INTO testSetAutoCommit VALUES ('C')")

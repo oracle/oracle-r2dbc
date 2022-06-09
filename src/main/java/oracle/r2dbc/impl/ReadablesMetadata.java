@@ -237,22 +237,6 @@ class ReadablesMetadata<T extends ReadableMetadata> {
     public boolean contains(String columnName) {
       return getColumnIndex(columnName) != -1;
     }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Implements the R2DBC SPI method by returning a view of the column metadata
-     * objects, with each list entry mapped to {@link ColumnMetadata#getName()}.
-     * As specified by the SPI method documentation, the returned collection is
-     * unmodifiable, imposes the same column ordering as the query result, and
-     * supports case insensitive look ups.
-     * </p>
-     */
-    @Override
-    public Collection<String> getColumnNames() {
-      throw new UnsupportedOperationException(
-        "This method is deprecated for removal");
-    }
   }
 
   static final class OutParametersMetadataImpl
