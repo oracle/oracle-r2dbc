@@ -67,9 +67,9 @@
     <java.version>11</java.version>
     <ojdbc.version>21.5.0.0</ojdbc.version>
     <r2dbc.version>1.0.0.RELEASE</r2dbc.version>
-    <reactor.version>3.3.0.RELEASE</reactor.version>
+    <reactor.version>2020.0.19</reactor.version>
     <reactive-streams.version>1.0.3</reactive-streams.version>
-    <junit.version>5.7.0</junit.version>
+    <junit.version>5.8.2</junit.version>
     <spring-jdbc.version>5.2.6.RELEASE</spring-jdbc.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
@@ -206,6 +206,19 @@
     </resources>
   </build>
 
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.projectreactor</groupId>
+        <artifactId>reactor-bom</artifactId>
+        <version>${reactor.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <!-- Oracle R2DBC Driver Dependencies -->
     <dependency>
@@ -221,7 +234,6 @@
     <dependency>
       <groupId>io.projectreactor</groupId>
       <artifactId>reactor-core</artifactId>
-      <version>${reactor.version}</version>
     </dependency>
     <dependency>
       <groupId>org.reactivestreams</groupId>
@@ -257,7 +269,6 @@
     <dependency>
       <groupId>io.projectreactor</groupId>
       <artifactId>reactor-test</artifactId>
-      <version>${reactor.version}</version>
       <scope>test</scope>
     </dependency>
 
