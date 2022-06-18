@@ -228,7 +228,7 @@ public final class JdbcToR2dbc {
    * interactions as {@link #insertJdbc(java.sql.Connection)}.
    * @return {@code Publisher} emitting the count of inserted rows.
    */
-  static Publisher<Integer> insertR2dbc(io.r2dbc.spi.Connection connection) {
+  static Publisher<Long> insertR2dbc(io.r2dbc.spi.Connection connection) {
 
     return Flux.from(connection.createStatement(
       "INSERT INTO JdbcToR2dbcTable(id, value) VALUES (?, ?)")
@@ -260,7 +260,7 @@ public final class JdbcToR2dbc {
    * interactions as {@link #updateJdbc(java.sql.Connection)}.
    * @return {@code Publisher} emitting the count of updated rows.
    */
-  static Publisher<Integer> updateR2dbc(io.r2dbc.spi.Connection connection) {
+  static Publisher<Long> updateR2dbc(io.r2dbc.spi.Connection connection) {
 
     return Flux.from(connection.createStatement(
       "UPDATE JdbcToR2dbcTable SET value = ? WHERE id = ?")
@@ -298,7 +298,7 @@ public final class JdbcToR2dbc {
    * @param connection Database connection
    * @return {@code Publisher} emitting the count of updated rows.
    */
-  static Publisher<Integer> tryUpdateR2dbc(io.r2dbc.spi.Connection connection) {
+  static Publisher<Long> tryUpdateR2dbc(io.r2dbc.spi.Connection connection) {
 
     // Try to update the row
     return Flux.from(updateR2dbc(connection))
@@ -347,7 +347,7 @@ public final class JdbcToR2dbc {
    * @param connection Database connection
    * @return {@code Publisher} emitting the count of updated rows.
    */
-  static Publisher<Integer> tryInsertR2dbc(io.r2dbc.spi.Connection connection) {
+  static Publisher<Long> tryInsertR2dbc(io.r2dbc.spi.Connection connection) {
 
     // Try to insert the row
     return Flux.from(insertR2dbc(connection))
@@ -421,7 +421,7 @@ public final class JdbcToR2dbc {
    * @param connection Database connection
    * @return {@code Publisher} emitting the count of updated rows.
    */
-  static Publisher<Integer> loopR2dbc(io.r2dbc.spi.Connection connection) {
+  static Publisher<Long> loopR2dbc(io.r2dbc.spi.Connection connection) {
 
     // Try to update the row, or insert it if it does not exist
     return Flux.from(tryUpdateR2dbc(connection))
@@ -512,7 +512,7 @@ public final class JdbcToR2dbc {
             // exists. If so, then ignore it.
             error instanceof R2dbcException
               && ((R2dbcException)error).getErrorCode() == 955,
-            0),
+            0L),
       io.r2dbc.spi.Connection::close)
       .blockLast(Duration.ofSeconds(15));
   }
@@ -531,7 +531,7 @@ public final class JdbcToR2dbc {
       // a finally block so we don't want it to throw the error over another
       // error from the try block.
       .doOnError(System.out::println)
-      .onErrorReturn(1)
+      .onErrorReturn(1L)
       .blockLast(Duration.ofSeconds(15));
   }
 
