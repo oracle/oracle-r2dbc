@@ -64,7 +64,7 @@ Oracle R2DBC can also be built from source using Maven:
 Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime dependencies:
 - R2DBC SPI 1.0.0.RELEASE
 - Reactive Streams 1.0.3
-- Project Reactor 2020.0.19
+- Project Reactor 3.4.18
 - Oracle JDBC 21.5.0.0 for JDK 11 (ojdbc11.jar)
   - Oracle R2DBC relies on the Oracle JDBC Driver's [Reactive Extensions
   ](https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/jdbc-reactive-extensions.html#GUID-1C40C43B-3823-4848-8B5A-D2F97A82F79B) APIs.
