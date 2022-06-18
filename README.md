@@ -103,9 +103,9 @@ Flux.usingWhen(
   connection ->
     Flux.from(connection.createStatement(
       "SELECT 'Hello, Oracle' FROM sys.dual")
-    .execute())
-    .flatMap(result ->
-      result.map(row -> row.get(0, String.class))),
+      .execute())
+      .flatMap(result ->
+        result.map(row -> row.get(0, String.class))),
   Connection::close)
   .doOnNext(System.out::println)
   .doOnError(Throwable::printStackTrace)
@@ -341,8 +341,8 @@ typically defer execution until a Subscriber signals demand, and not support
 multiple subscribers.
 
 ### Errors
-Oracle R2DBC creates R2dbcExceptions having ORA-XXXXX error codes that ared used
-by Oracle Database and Oracle JDBC.
+Oracle R2DBC creates R2dbcExceptions having the same ORA-XXXXX error codes 
+used by Oracle Database and Oracle JDBC.
 
 A reference for the ORA-XXXXX error codes can be found 
 [here](https://docs.oracle.com/en/database/oracle/oracle-database/21/errmg/ORA-00000.html#GUID-27437B7F-F0C3-4F1F-9C6E-6780706FB0F6)
@@ -355,7 +355,8 @@ isolation is configured, then the
 `oracle.r2dbc.OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE` option must also be
 configured as `false` to avoid phantom reads.
 
-> READ COMMITTED and SERIALIZABLE are the isolation levels supported by Oracle Database
+> READ COMMITTED and SERIALIZABLE are the only isolation levels supported by 
+> Oracle Database
 
 Oracle Database does not support a lock wait timeout that is configurable within
 the scope of a transaction or session. Oracle R2DBC implements SPI methods that 
@@ -385,9 +386,9 @@ connection.createStatement(
   "SELECT value FROM example WHERE id=:id")
   .bind("id", 99)
 ```
-The `bind` method may either be called with a `String` valued name (or with 
-zero-based index) to set the value of a named parameter. Parameter names 
-are case-sensitive.
+The `bind` method may be called with a `String` valued name, or with zero-based
+index, to set the value of a named parameter. Parameter names are
+case-sensitive.
 
 #### Batch Execution
 The `Statement.add()` method may be used execute a DML command multiple times
@@ -397,7 +398,7 @@ execute a SELECT query with a batch of bind values will result in an error.
 
 #### Returning Generated Values
 The `Statement.returnGeneratedValues(String...)` method may be called to return 
-generated values for the basic forms of `INSERT` and `UPDATE` statements.
+generated values from basic forms of `INSERT` and `UPDATE` statements.
 
 If an empty set of column names is passed to `returnGeneratedValues`, the 
 `Statement` will return the
@@ -410,7 +411,7 @@ of each row affected by an INSERT or UPDATE.
 > for more information.
 
 Returning generated values is only supported for `INSERT` and `UPDATE` commands 
-where a `RETURNING INTO` clause would be valid. For example, if a table is 
+in which a `RETURNING INTO` clause would be valid. For example, if a table is 
 declared as:
 ```sql
 CREATE TABLE example (
@@ -470,9 +471,9 @@ OUT parameters are consumed by invoking `Result.map(Function)`:
 ```java
 result.map(outParameters -> outParameters.get("greeting_out", String.class))
 ```
-For a procedural call that returns multiple results, the publisher returned by 
+If a procedural call returns multiple results, the publisher returned by 
 `Statement.execute()` emits one `Result` for each cursor returned by 
-`DBMS_SQL.RETURN_RESULT` in the called procedure. The order in which each 
+`DBMS_SQL.RETURN_RESULT` in the procedure. The order in which each 
 `Result` is emitted corresponds to the order in which the procedure returns each
 cursor.
 
@@ -483,53 +484,50 @@ for the out parameters is emitted last, after the `Result` for each cursor.
 Oracle R2DBC supports type mappings between Java and SQL for non-standard data 
 types of Oracle Database.
 
-`javax.json.JsonObject` and `oracle.sql.json.OracleJsonObject` are supported as 
-the Java type mappings for the `JSON` data type.
-
-`java.time.Duration` is supported as the Java type mapping for the
-`INTERVAL DAY TO SECOND` data type.
-
-`java.time.Period` is supported as the Java type mapping for the 
-`INTERVAL YEAR TO MONTH` data type.
-
-`java.time.LocalDateTime` is supported as the Java type mapping for the `DATE` 
-data type.
+| Oracle SQL Type                                                                                                                                         | Java Type |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
+| [JSON](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-E441F541-BA31-4E8C-B7B4-D2FB8C42D0DF)                   |  `javax.json.JsonObject` or `oracle.sql.json.OracleJsonObject` |
+| [DATE](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-5405B652-C30E-4F4F-9D33-9A4CB2110F1B)                                                                                                                                                | `java.time.LocalDateTime` |
+| [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration` |
+| [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period` |
 > Unlike the standard SQL type named "DATE", the Oracle Database type named 
 > "DATE" stores values for year, month, day, hour, minute, and second. The 
 > standard SQL type only stores year, month, and day. LocalDateTime objects are able 
 > to store the same values as a DATE in Oracle Database.
 
 ### BLOB, CLOB, and NCLOB
-Oracle R2DBC supports reading and writing the content of large object (LOB) 
-types.
+Oracle R2DBC allows large objects (LOBs) to be read and written as a reactive 
+stream, or as a
+fully materialized value.
 
-#### Configuring the Prefetched Data Size
-When a SQL query returns the content of a LOB column, only a portion of the 
-entire content is received in the response from Oracle Database. The portion 
-which is received in the SQL query response is referred to as "prefetched data".
-Any content remaining after the prefetched data must be fetched by additional 
-database calls.
+#### Prefetched LOB Data
+When a SQL query returns a LOB column,  only a portion of the LOB's content
+is received in the response from Oracle Database. The portion received in the 
+SQL query response is referred to as "prefetched data". Any content remaining
+after the prefetched portion must be fetched with additional database calls. 
 
-For example, if a SQL query returns a LOB which is 100MB in size, then the 
-response might include only the first 1MB of the LOB's content. Additional 
+For example, if a SQL query returns a LOB that is 100MB in size, then the 
+response might prefetch only the first 1MB of the LOB's content. Additional 
 database calls would be required to fetch the remaining 99MB of content.
 
-The number of prefetched bytes is configured by an `Option` named [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
-. The default value of this `Option` is 1 GB.
-
-#### Streamed Type Mapping 
-For systems in which LOB values are too large for prefetching, a smaller 
-prefetch size may be configured. By mapping LOB columns to `Blob` or `Clob` 
-objects, the content may be streamed over a series of non-blocking database 
-calls.
+By default, Oracle R2DBC attempts to prefetch the entire content of a LOB. Oracle R2DBC will
+request up to 1GB of prefetched data from Oracle Database when executing a SQL
+query.
 
 #### Materialzed Type Mapping
 The `Row.get(...)` method allows LOB values to be mapped into materialized
-types like `ByteBuffer` and `String`. If the prefetch size is large
-enough to have fetched the entire LOB value, then `Row.get(...)`  can
-return a `ByteBuffer/String` without any additional database calls. However, if
-the LOB value is larger than the prefetch size, then `Row.get(...)` must execute
-a **blocking database call** to fetch the remainder of that value. 
+types like `ByteBuffer` and `String`. If the entire LOB has been prefetched, 
+then `Row.get(...)`  can return a `ByteBuffer/String` without any additional 
+database calls. However, if the LOB value is larger than the prefetch size, then
+`Row.get(...)` must execute a **blocking database call** to fetch the remainder of that value.
+
+#### Streamed Type Mapping 
+In a system that consumes very large LOBs, a very large amount of memory will be
+consumed if the entire LOB is prefetched. When a LOB is too large to be 
+prefetched entirely, a smaller prefetch size can be configured using the
+[oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
+option, and the LOB can be consumed as a stream. By mapping LOB columns to 
+`Blob` or `Clob` objects, the content can be consumed as a reactive stream. 
 
 ## Secure Programming Guidelines
 The following security related guidelines should be adhered to when programming
