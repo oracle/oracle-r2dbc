@@ -4,13 +4,12 @@ The Oracle R2DBC Driver is a Java library that supports reactive programming wit
 
 Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified by the Reactive Relational Database Connectivity (R2DBC) project. The R2DBC SPI exposes Reactive Streams as an abstraction for remote database operations. Reactive Streams is a well defined standard for asynchronous, non-blocking, and back-pressured communication. This standard allows an R2DBC driver to interoperate with other reactive libraries and frameworks, such as Spring, Project Reactor, RxJava, and Akka Streams.
 
-
 ### Learn More About R2DBC:
 [R2DBC Project Home Page](https://r2dbc.io)
 
-[R2DBC Javadocs v0.9.0.RELEASE](https://r2dbc.io/spec/0.9.0.RELEASE/api/)
+[R2DBC Javadocs v1.0.0.RELEASE](https://r2dbc.io/spec/1.0.0.RELEASE/api/)
 
-[R2DBC Specification v0.9.0.RELEASE](https://r2dbc.io/spec/0.9.0.RELEASE/spec/html/)
+[R2DBC Specification v1.0.0.RELEASE](https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/)
 
 ### Learn More About Reactive Streams:
 [Reactive Streams Project Home Page](http://www.reactive-streams.org)
@@ -18,61 +17,55 @@ Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified 
 [Reactive Streams Javadocs v1.0.3](http://www.reactive-streams.org/reactive-streams-1.0.3-javadoc/org/reactivestreams/package-summary.html)
 
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
+
 # About This Version
-The 0.4.0 release Oracle R2DBC implements version 0.9.0.RELEASE of the R2DBC SPI.
+The 1.0.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
 
-Bug fixes included in this release:
-- Resolved a stack overflow that occcured when reading JSON columns
-- Using asynchronous lock acquisition to avoid contention for JDBC's lock
+Changes in this release:
+- Added support for long valued update counts
+- New OracleR2dbcOptions constants for V$SESSION tracing
 
-Functionality added in this release:
-- Support for SERIALIZABLE transaction isolation
-- Support for transaction savepoints
-- Support for R2dbcException.getSql()
+### Integration with Spring and Other Libraries
+Oracle R2DBC can interoperate with other libraries that support the 
+1.0.0.RELEASE version of the R2DBC SPI. When using libraries like Spring and
+r2dbc-pool, be sure to use a version which supports the 1.0.0.RELEASE of the
+SPI.
 
-API changes in this release:
-- Addition of oracle.r2dbc.OracleR2dbcOptions, a class that declares Oracle R2DBC's extended Options
-- Addition of oracle.r2dbc.OracleR2dbcOptions.EXECUTOR, an Option for configuring a non-default Executor
-- Renamed the "oracleNetDescriptor" Option to "oracle.r2dbc.descriptor"
-- Statement.add() results in an IllegalStateException if bind values are not set afterwards 
-
-### Spring Integration
-Use the 0.1.0 version of Oracle R2DBC if you are programming with Spring.
-The later versions of Oracle R2DBC implement the 0.9.x versions of the R2DBC
- SPI. Currently, Spring only supports drivers that implement the 0.8.x versions
- of the SPI.
- 
-### Performance Goals
-The primary goal of these early releases of Oracle R2DBC is to support the R2DBC
- SPI on Oracle Database. The only performance goal is to enable concurrent
- database calls to be executed by a single thread.
-
-The R2DBC SPI and Oracle's implementation are both pre-production. As these
- projects mature we will shift our development focus from implementing
- the SPI to optimizing the implementation.
-
-
-# Installation
-Oracle R2DBC can be built from source using Maven:
-
-`mvn clean install -DskipTests=true`
-
-> Omitting -DskipTests=true from the command above will execute the test suite, where end-to-end tests connect to an Oracle Database instance. The connection configuration is read from [src/test/resources/config.properties](src/test/resources/example-config.properties).
-
-Artifacts can also be found on Maven Central.
-```
+Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.5.0.0. Other 
+libraries may depend on a different version of Oracle JDBC which is 
+incompatible. To resolve this incompatibility, it may be necessary to explicitly 
+declare the dependency in your project, ie:
+```xml
 <dependency>
-  <groupId>com.oracle.database.r2dbc</groupId>
-  <artifactId>oracle-r2dbc</artifactId>
-  <version>0.4.0</version>
+    <groupId>com.oracle.database.jdbc</groupId>
+    <artifactId>ojdbc11</artifactId>
+    <version>21.5.0.0</version>
 </dependency>
 ```
 
+# Installation
+Oracle R2DBC can be obtained from Maven Central.
+```xml
+<dependency>
+  <groupId>com.oracle.database.r2dbc</groupId>
+  <artifactId>oracle-r2dbc</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
+
+Oracle R2DBC can also be built from source using Maven:
+`mvn clean install -DskipTests=true`
+
+> If -DskipTests=true is omitted from the command above, then it will execute 
+> end-to-end tests which connect to an Oracle Database. Tests read the connection 
+> configuration from
+> [src/test/resources/config.properties](src/test/resources/example-config.properties).
+
 Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime dependencies:
-- R2DBC SPI 0.9.0.RELEASE
+- R2DBC SPI 1.0.0.RELEASE
 - Reactive Streams 1.0.3
-- Project Reactor 3.3.0.RELEASE
-- Oracle JDBC 21.3.0.0 for JDK 11 (ojdbc11.jar)
+- Project Reactor 2020.0.19
+- Oracle JDBC 21.5.0.0 for JDK 11 (ojdbc11.jar)
   - Oracle R2DBC relies on the Oracle JDBC Driver's [Reactive Extensions
   ](https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/jdbc-reactive-extensions.html#GUID-1C40C43B-3823-4848-8B5A-D2F97A82F79B) APIs.
 
@@ -81,43 +74,70 @@ The Oracle R2DBC Driver has been verified with Oracle Database versions 18, 19,
 
 # Code Examples
 
-The following code example uses the Oracle R2DBC Driver with Project Reactor's [Mono](https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Mono.html) and [Flux](https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html) types to open a database connection and execute a SQL query:
+The following method returns an Oracle R2DBC `ConnectionFactory`
 ```java
-ConnectionFactory connectionFactory = ConnectionFactories.get(
-  "r2dbc:oracle://db.example.com:1521/db.service.name");
+  static ConnectionFactory getConnectionFactory() {
+    String user = getUser();
+    char[] password = getPassword();
+    try {
+      return ConnectionFactories.get(
+        ConnectionFactoryOptions.builder()
+          .option(ConnectionFactoryOptions.DRIVER, "oracle")
+          .option(ConnectionFactoryOptions.HOST, "db.host.example.com")
+          .option(ConnectionFactoryOptions.PORT, 1521)
+          .option(ConnectionFactoryOptions.DATABASE, "db.service.name")
+          .option(ConnectionFactoryOptions.USER, user)
+          .option(ConnectionFactoryOptions.PASSWORD, CharBuffer.wrap(password))
+          .build());
+    }
+    finally {
+      Arrays.fill(password, (char)0);
+    }
+  }
+```
 
-Mono.from(connectionFactory.create())
-  .flatMapMany(connection ->
+The following method uses Project Reactor's [Flux](https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html) to open a connection, execute a SQL query, and then close the connection:
+```java
+Flux.usingWhen(
+  getConnectionFactory().create(),
+  connection ->
     Flux.from(connection.createStatement(
       "SELECT 'Hello, Oracle' FROM sys.dual")
-      .execute())
-      .flatMap(result ->
-        result.map(row -> row.get(0, String.class)))
-      .doOnNext(System.out::println)
-      .thenMany(connection.close()))
+    .execute())
+    .flatMap(result ->
+      result.map(row -> row.get(0, String.class))),
+  Connection::close)
+  .doOnNext(System.out::println)
+  .doOnError(Throwable::printStackTrace)
   .subscribe();
 ```
 When executed, the code above will _asynchronously_ print the result of the SQL query.
 
-The next example includes a named parameter marker, ":locale_name", in the SQL command:
+The next example uses a named parameter marker, `:locale_name`, in the SQL command:
 ```java
-Mono.from(connectionFactory.create())
-  .flatMapMany(connection ->
+Flux.usingWhen(
+  getConnectionFactory().create(),
+  connection ->
     Flux.from(connection.createStatement(
       "SELECT greeting FROM locale WHERE locale_name = :locale_name")
       .bind("locale_name", "France")
       .execute())
       .flatMap(result ->
         result.map(row ->
-          String.format("%s, Oracle", row.get("greeting", String.class))))
-      .doOnNext(System.out::println)
-      .thenMany(connection.close()))
+          String.format("%s, Oracle", row.get("greeting", String.class)))),
+  Connection::close)
+  .doOnNext(System.out::println)
+  .doOnError(Throwable::printStackTrace)
   .subscribe();
 ```
-Like the previous example, executing the code above will _asynchronously_ print a greeting message. "France" is set as the bind value for locale_name, so the query should return a greeting like "Bonjour" when row.get("greeting") is called.
+Like the previous example, executing the code above will _asynchronously_ print 
+a greeting message. "France" is set as the bind value for `locale_name`, so the
+query should return a greeting like "Bonjour" when `row.get("greeting")`
+is called.
+
+Additional code examples can be found [here](sample).
 
 # Help
-
 For help programming with Oracle R2DBC, ask questions on Stack Overflow tagged with [[oracle] and [r2dbc]](https://stackoverflow.com/tags/oracle+r2dbc). The development team monitors Stack Overflow regularly.
 
 Issues may be opened as described in [our contribution guide](CONTRIBUTING.md).
@@ -142,13 +162,13 @@ This software is dual-licensed to you under the Universal Permissive License
 either license.
 
 # Documentation
-This document specifies the behavior of the R2DBC SPI implemented for the 
+This document specifies the behavior of the R2DBC SPI as implemented for the 
 Oracle Database. This SPI implementation is referred to as the "Oracle R2DBC
 Driver" or "Oracle R2DBC" throughout the remainder of this document.
 
-The Oracle R2DBC Driver implements behavior specified by the R2DBC 0.9.0.RELEASE 
-[Specification](https://r2dbc.io/spec/0.9.0.RELEASE/spec/html/)
-and [Javadoc](https://r2dbc.io/spec/0.9.0.RELEASE/api/)
+The Oracle R2DBC Driver implements behavior specified by the R2DBC 1.0.0.RELEASE 
+[Specification](https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/)
+and [Javadoc](https://r2dbc.io/spec/1.0.0.RELEASE/api/)
 
 Publisher objects created by Oracle R2DBC implement behavior specified by
 the Reactive Streams 1.0.3 [Specification](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
@@ -159,18 +179,92 @@ optional for a compliant implementation. The remainder of this document specifie
 the Oracle R2DBC Driver's implementation of these optional requirements.
 
 ### Connection Creation
-- The Oracle R2DBC Driver is identified by the name "oracle". The driver 
+The Oracle R2DBC Driver is identified by the name "oracle". The driver 
 implements a ConnectionFactoryProvider located by an R2DBC URL identifing
-"oracle" as a driver, or by a DRIVER ConnectionFactoryOption with the value
+"oracle" as a driver, or by a DRIVER `ConnectionFactoryOption` with the value
 of "oracle".
-- The following well-known ConnectionFactory Options are supported: 
-`DRIVER`, `USER`, `PASSWORD`, `HOST`, `PORT`, `DATABASE`, `SSL`, 
-`CONNECT_TIMEOUT`, `STATEMENT_TIMEOUT`.
-- The `DATABASE` `ConnectionFactoryOption` is interpreted as the 
-[service name](https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-153861C1-16AD-41EC-A179-074146B722E6) of an Oracle Database instance. 
-System Identifiers (SID) are not recognized.
-- A subset of Oracle JDBC's connection properties are supported as extended
-options. Extended options that configure Oracle JDBC connection properties are declared in `oracle.r2dbc.OracleR2dbcOptions`. These options all have the same name as their corresponding Oracle JDBC connection property, and will accept a `CharSequence` value:
+
+#### Support for Standard R2DBC Options
+The following standard [ConnectionFactoryOptions](https://r2dbc.io/spec/1.0.0.RELEASE/api/io/r2dbc/spi/ConnectionFactoryOptions.html)
+are supported by Oracle R2DBC: 
+ - `DRIVER`
+ - `HOST`
+ - `PORT`
+ - `DATABASE`
+ - `USER`
+ - `PASSWORD`
+ - `SSL`
+ - `CONNECT_TIMEOUT`
+ - `STATEMENT_TIMEOUT`.
+
+> Oracle R2DBC interprets the `DATABASE` option as the
+> [service name](https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-153861C1-16AD-41EC-A179-074146B722E6)
+> of an Oracle Database instance. _System Identifiers (SID) are not recognized_.
+
+#### Support for Extended R2DBC Options
+Oracle R2DBC extends the standard set of R2DBC options to offer functionality 
+that is specific to Oracle Database and the Oracle JDBC Driver. Extended options
+are declared in the
+[OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java)
+class.
+
+#### Configuring an Oracle Net Descriptor
+The `oracle.r2dbc.OracleR2dbcOptions.DESCRIPTOR` option may be used to configure
+an Oracle Net Descriptor of the form ```(DESCRIPTION=...)```. If this option is
+used to configure a descriptor, then it is invalid to specify any 
+other option that conflicts with information in the descriptor. Conflicting
+options include `HOST`, `PORT`, `DATABASE`, and `SSL`. These options all 
+conflict with information that appears in a descriptor.
+
+The `DESCRIPTOR` option has the name `oracle.r2dbc.descriptor`. This name can 
+be used to configure a descriptor in the query section of an R2DBC URL: 
+```
+r2dbc:oracle://?oracle.r2dbc.descriptor=(DESCRIPTION=...)
+```
+The `DESCRIPTOR` constant may also be used to configure a descriptor 
+programmatically:
+```java
+ConnectionFactoryOptions.builder()
+  .option(OracleR2dbcOptions.DESCRIPTOR, "(DESCRIPTION=...)")
+```
+The `DESCRIPTOR` option may be set to an aliased entry of a `tnsnames.ora` file.
+Use the `TNS_ADMIN` option to specify the directory where `tnsnames.ora` is 
+located:
+```
+r2dbc:oracle://?oracle.r2dbc.descriptor=myAlias&TNS_ADMIN=/path/to/tnsnames/
+```
+
+#### Configuring a java.util.concurrent.Executor
+The `oracle.r2dbc.OracleR2dbcOptions.EXECUTOR` option configures a 
+`java.util.concurrent.Executor` for executing asynchronous callbacks. The 
+`EXECUTOR` option may be used to configure an `Executor` programmatically:
+```java
+ConnectionFactoryOptions.builder()
+  .option(OracleR2dbcOptions.EXECUTOR, getExecutor())
+```
+> There is no way to configure an executor with a URL query parameter
+
+If this option is not configured, then the common 
+`java.util.concurrent.ForkJoinPool` is used as a default.
+#### Configuring Oracle JDBC Connection Properties
+A subset of Oracle JDBC's connection properties are also supported by Oracle 
+R2DBC. These connection properties may be configured as options having the same
+name as the Oracle JDBC connection property, and may have `CharSequence` value
+types.
+
+For example, the following URL configures the `oracle.net.wallet_location` 
+connection property:
+```
+r2dbcs:oracle://db.host.example.com:1522/db.service.name?oracle.net.wallet_location=/path/to/wallet/
+```
+The same property can also be configured programmatically:
+```java
+ ConnectionFactoryOptions.builder()
+  .option(OracleR2dbcOptions.TLS_WALLET_LOCATION, "/path/to/wallet")
+```
+
+The following is a list of all Oracle JDBC connection properties that are 
+supported by Oracle R2DBC:
   - [oracle.net.tns_admin](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_TNS_ADMIN)
   - [oracle.net.wallet_location](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_WALLET_LOCATION)
   - [oracle.net.wallet_password](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_WALLET_PASSWORD)
@@ -198,140 +292,248 @@ options. Extended options that configure Oracle JDBC connection properties are d
     - Cached query results can cause phantom reads even if the serializable
      transaction isolation level is set. Set this to "false" if using the
       serializable isolation level.
-- Oracle Net Descriptors of the form ```(DESCRIPTION=...)``` may be specified using `oracle.r2dbc.OracleR2dbcOptions.DESCRIPTOR`.
-  - If a descriptor is specified, then it is invalid to specify any other options that might conflict with information in the descriptor, such as: `HOST`, `PORT`, `DATABASE`, and `SSL`.
-  - The `DESCRIPTOR` option has the name `oracle.r2dbc.descriptor`, and this may appear in the query section of an R2DBC URL: `r2dbc:oracle://?oracle.r2dbc.descriptor=(DESCRIPTION=...)`
-  - The `DESCRIPTOR` option may be provided programmatically: 
-  ```java
-  ConnectionFactoryOptions.builder().option(OracleR2dbcOptions.DESCRIPTOR, "(DESCRIPTION=...)")
-  ```
-  - The `DESCRIPTOR` option may be set to an aliased entry of a tnsnames.ora file. The directory of tnsnames.ora may be set using an option with the name `TNS_ADMIN`: `r2dbc:oracle://?oracle.r2dbc.descriptor=myAlias&TNS_ADMIN=/path/to/tnsnames/`
-- A `java.util.concurrent.Executor` to use for executing asynchronous callbacks may specified using `oracle.r2dbc.OracleR2dbcOptions.EXECUTOR`.
-  - The `EXECUTOR` option can only be set programmatically, it can not be set in the query section of an R2DBC URL:
-  ```java
-  Executor myExecutor = getMyExecutor();
-  ConnectionFactoryOptions options = ConnectionFactoryOptions.builder()
-    .option(ConnectionFactoryOptions.DRIVER, "oracle")
-    .option(OracleR2dbcOptions.EXECUTOR, myExecutor)
-    ...
-    .build();
-  ```
+  - [v$session.terminal](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL)
+  - [v$session.machine](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE)
+  - [v$session.osuser](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_OSUSER)
+  - [v$session.program](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM)
+  - [v$session.process](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS)
 
 ### Thread Safety and Parallel Execution
-- Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are thread safe.
-- All other SPI implementations are not thread safe.
-- Executing parallel database calls is not supported over a single `Connection`. 
-If a thread attempts to initiate a parallel call, that call will be enqueued. The enqueued call will not be executed until the connection is no longer executing any other call. This is a limitation of the Oracle Database, which does not support parallel calls within a single session.
+Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are the only 
+classes that have a thread safe implementation. All other classes implemented 
+by Oracle R2DBC are not thread safe. For instance, it is not safe for multiple
+threads to concurrently access a single instance of `Result`.
+> It is recommended to use a Reactive Streams library such as Project Reactor
+> or RxJava to manage the consumption of non-thread safe objects
+
+Oracle Database does not allow multiple database calls to execute in parallel
+over a single `Connection`. If an attempt is made to execute a database call
+before a previous call has completed, then Oracle R2DBC will enqueue that call
+and only execute it after the previous call has completed.
+
+To illustrate, the following code attempts to execute two statements in 
+parallel:
+```java
+Flux.merge(
+  connection.createStatement(
+    "INSERT INTO example (id, value) VALUES (0, 'x')")
+    .execute(),
+  connection.createStatement(
+    "INSERT INTO example (id, value) VALUES (1, 'y')")
+    .execute())
+```
+When the publisher of the second statement is subscribed to, Oracle R2DBC will 
+enqueue a task for sending that statement to the database. The enqueued task 
+will only be executed after the publisher of the first statement has completed.
 
 ### Reactive Streams
-- The Oracle R2DBC javadoc of every method that returns a Publisher specifies the 
-behavior of that Publisher in regards to deferred execution and multiple Subscribers.
-- Typically, a Publisher of one or zero items defers execution until a Subscriber 
-subscribes, supports multiple Subscribers, and caches the result of a database call
-(the same result of the same call is emitted to each Subscriber).
-- Typically, a Publisher of multiple items defers execution until a Subscriber 
-signals demand, and does not support multiple subscribers.
+Every method implemented by Oracle R2DBC that returns a Publisher has a JavaDoc
+which specifies the Publisher's behavior with regard to deferred execution and 
+support for multiple Subscribers.
+
+Oracle R2DBC's implementation of Publishers that emit one or zero items will
+typically defer execution until a Subscriber subscribes, support multiple 
+Subscribers, and cache the result of a database call (the same result of the 
+same call is emitted to each Subscriber).
+
+Oracle R2DBC's implementation of Publishers that emit multiple items will 
+typically defer execution until a Subscriber signals demand, and not support 
+multiple subscribers.
 
 ### Errors
-- The error code of an R2dbcException is an [Oracle Database 
-or Oracle JDBC Driver error message](https://docs.oracle.com/en/database/oracle/oracle-database/21/errmg/ORA-00000.html#GUID-27437B7F-F0C3-4F1F-9C6E-6780706FB0F6)
+Oracle R2DBC creates R2dbcExceptions having ORA-XXXXX error codes that ared used
+by Oracle Database and Oracle JDBC.
+
+A reference for the ORA-XXXXX error codes can be found 
+[here](https://docs.oracle.com/en/database/oracle/oracle-database/21/errmg/ORA-00000.html#GUID-27437B7F-F0C3-4F1F-9C6E-6780706FB0F6)
 
 ### Transactions
-- READ COMMITTED is the default transaction isolation level
-- SERIALIZABLE is the only isolation level, besides READ COMMITED, that
- Oracle Database supports.
-  - To avoid phantom reads, configure `oracle.r2dbc.OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE` as `false` when using SERIALIZABLE isolation. 
-- Oracle Database does not support a lock wait timeout that is configurable
- within the scope of a transaction or session. SPI methods that configure a
-  lock wait timeout throw ```UnsupportedOperationException```
+Oracle R2DBC uses READ COMMITTED as the default transaction isolation level.
+
+Oracle R2DBC also supports the SERIALIZABLE isolation level. If SERIALIZABLE
+isolation is configured, then the 
+`oracle.r2dbc.OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE` option must also be
+configured as `false` to avoid phantom reads.
+
+> READ COMMITTED and SERIALIZABLE are the isolation levels supported by Oracle Database
+
+Oracle Database does not support a lock wait timeout that is configurable within
+the scope of a transaction or session. Oracle R2DBC implements SPI methods that 
+configure a lock wait timeout to throw ```UnsupportedOperationException```.
 
 ### Statements
-- Batch execution is only supported for DML type SQL commands (INSERT/UPDATE/DELETE).
-- SQL commands may contain JDBC style parameter markers where question
-mark characters (?) designate unnamed parameters. A numeric index must
-be used when setting the bind value of an unnamed parameter.
-- SQL commands may contain named parameter markers where the
-colon character (:) is followed by an alphanumeric parameter name. A name
-or numeric index may be used when setting the bind value of a named parameter.
-- Parameter names are case-sensitive.
-- When an empty set of column names is specified to Statement.returnGeneratedValues(String...), executing that ```Statement``` returns the [ROWID](https://docs.oracle.com/en/database/oracle/oracle-database/21/cncpt/tables-and-table-clusters.html#GUID-0258C4C2-2BF2-445F-B1E1-F282A57A6859) 
-of each row affected by an INSERT or UPDATE.
-  - This behavior may change in a later release.
-  - Programmers are advised not to use the ROWID as if it were a primary key.
-    - The ROWID of a row may change.
-    - After a row is deleted, its ROWID may be reassigned to a new row.
-    - Further Reading: https://asktom.oracle.com/pls/apex/asktom.search?tag=is-it-safe-to-use-rowid-to-locate-a-row
-- Returning generated values is only supported for INSERT and UPDATE commands when a RETURNING INTO clause can be appended to the end of that command. (This limitation may be resolved in a later release)
-  - Example: `INSERT INTO my_table(val) VALUES (:val)` is supported because a RETURNING INTO clause may be appended to this command.
-  - Example: `INSERT INTO my_table(val) SELECT 1 FROM sys.dual` is not supported because a RETURNING INTO clause may not be appended to this command.
-  - The Oracle Database SQL Language Reference defines INSERT and UPDATE commands for which a RETURNING INTO clause is supported.
-  - INSERT: https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423
-  - UPDATE: https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/UPDATE.html#GUID-027A462D-379D-4E35-8611-410F3AC8FDA5
+Oracle R2DBC supports SQL execution with the `Statement` SPI.
 
-### Procedural Calls
-- Use ```Connection.createStatement(String)``` to create a
- ```Statement``` that executes a PL/SQL call:
+#### Parameter Markers
+A SQL command passed to `Connection.createStatement(String)` may include 
+named parameter markers, unnamed parameter markers, or both.
+
+Unnamed parameter markers may appear in SQL as a question mark
+(`?`):
+```java
+connection.createStatement(
+  "SELECT value FROM example WHERE id=?")
+  .bind(0, 99)
+```
+The `bind` method must be called with a zero-based index to set the value of an
+unnamed parameter.
+
+Named parameter markers may appear in SQL as a colon character (`:`) followed by 
+an alpha-numeric name:
+```java
+connection.createStatement(
+  "SELECT value FROM example WHERE id=:id")
+  .bind("id", 99)
+```
+The `bind` method may either be called with a `String` valued name (or with 
+zero-based index) to set the value of a named parameter. Parameter names 
+are case-sensitive.
+
+#### Batch Execution
+The `Statement.add()` method may be used execute a DML command multiple times
+with a batch of different bind values. Oracle Database only supports batch
+execution for DML type SQL commands (INSERT/UPDATE/DELETE). Attempting to
+execute a SELECT query with a batch of bind values will result in an error.
+
+#### Returning Generated Values
+The `Statement.returnGeneratedValues(String...)` method may be called to return 
+generated values for the basic forms of `INSERT` and `UPDATE` statements.
+
+If an empty set of column names is passed to `returnGeneratedValues`, the 
+`Statement` will return the
+[ROWID](https://docs.oracle.com/en/database/oracle/oracle-database/21/cncpt/tables-and-table-clusters.html#GUID-0258C4C2-2BF2-445F-B1E1-F282A57A6859)
+of each row affected by an INSERT or UPDATE.
+> Programmers are advised not to use the ROWID as if it were a primary key.
+> The ROWID of a row change, or be reassigned to a different row.
+> See
+> https://asktom.oracle.com/pls/apex/asktom.search?tag=is-it-safe-to-use-rowid-to-locate-a-row
+> for more information.
+
+Returning generated values is only supported for `INSERT` and `UPDATE` commands 
+where a `RETURNING INTO` clause would be valid. For example, if a table is 
+declared as:
+```sql
+CREATE TABLE example (
+  id NUMBER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  value VARCAHR(100))
+```
+Returning generated values is supported for the following statement:
+```java
+connection.createStatement(
+  "INSERT INTO example(value) VALUES (:value)")
+  .bind("value", "x")
+  .returningGeneratedValues("id")
+```
+This statement is supported because the `INSERT` could be written to include a 
+`RETURNING INTO` clause:
+```sql
+INSERT INTO example(value) VALUES (:value) RETURING id INTO :id
+```
+As a counter example, returning generated values is not supported for the 
+following statement:
+```java
+connection.createStatement(
+  "INSERT INTO example (value) SELECT 'y' FROM sys.dual")
+  .returningGeneratedValues("id")
+```
+This statement is not supported because it can not be written to include a 
+`RETURNING INTO` clause.
+
+> The Oracle Database SQL Language Reference specifies the INSERT and UPDATE 
+> commands for which a RETURNING INTO clause is supported.
+> 
+> For the INSERT syntax, see:
+> https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/INSERT.html
+> 
+> For the UPDATE syntax, see:
+> https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/UPDATE.html
+
+#### Procedural Calls
+The SQL string passed to ```Connection.createStatement(String)``` may execute a
+PL/SQL call:
   ```java
   connection.createStatement("BEGIN sayHello(:name_in, :greeting_out); END;")
   ```
-- Register out parameters by invoking ```Statement.bind(int/String, Object)```
+OUT parameters are registered by invoking 
+`Statement.bind(int, Object)` or `Statement.bind(String, Object)`
  with an instance of ```io.r2dbc.spi.Parameter``` implementing the 
-  ```io.r2dbc.spi.Parameter.Out``` marker interface:
-  ```java
-  statement.bind("greeting_out", Parameters.out(R2dbcType.VARCHAR))
-  ```
-- Register in out parameters  by invoking
- ```Statement.bind(int/String, Object)``` with an instance of
-  ```io.r2dbc.spi.Parameter``` implementing both the
-   ```io.r2dbc.spi.Parameter.Out``` and 
-   ```io.r2dbc.spi.Parameter.In``` marker interfaces.
-- Consume out parameters by invoking
- ```Result.map(Function)```:
-  ```java
-  result.map(outParameters -> outParameters.get("greeting_out", String.class))
-  ```
-- ```Statement.execute()``` returns a ```Publisher<Result>``` that emits one
- ```Result``` for each cursor returned by ```DBMS_SQL.RETURN_RESULT```
-    - The order in which a ```Result``` is emitted for a cursor
-     corresponds to the order in which the procedure returns each cursor.
-    - If a procedure returns cursors and also has out parameters, then the 
-    ```Result``` for out parameters is emitted last, after the
-    ```Result``` for each returned cursor.
+```io.r2dbc.spi.Parameter.Out``` marker interface:
+```java
+statement.bind("greeting_out", Parameters.out(R2dbcType.VARCHAR))
+```
+Likewise, an IN OUT parameter would be registered by invoking
+`Statement.bind(int, Object)` or `Statement.bind(String, Object)`
+with an instance of ```io.r2dbc.spi.Parameter``` implementing both the
+`io.r2dbc.spi.Parameter.Out` and `io.r2dbc.spi.Parameter.In` marker interfaces.
+
+OUT parameters are consumed by invoking `Result.map(Function)`:
+```java
+result.map(outParameters -> outParameters.get("greeting_out", String.class))
+```
+For a procedural call that returns multiple results, the publisher returned by 
+`Statement.execute()` emits one `Result` for each cursor returned by 
+`DBMS_SQL.RETURN_RESULT` in the called procedure. The order in which each 
+`Result` is emitted corresponds to the order in which the procedure returns each
+cursor.
+
+If a procedure returns cursors, and also has out parameters, then the `Result` 
+for the out parameters is emitted last, after the `Result` for each cursor.
 
 ### Type Mappings
-- `javax.json.JsonObject` and `oracle.sql.json.OracleJsonObject` are supported as 
-Java type mappings for `JSON` column values.
-- `java.time.Duration` is supported as a Java type mapping for `INTERVAL DAY TO SECOND` 
-column values.
-- `java.time.Period` is supported as a Java type mapping for `INTERVAL YEAR TO MONTH` 
-column values.
-- `java.time.LocalDateTime` is supported as a Java type mapping for `DATE` column values.
-The Oracle Database type named "DATE" stores the same information as a `LocalDateTime`:
-year, month, day, hour, minute, and second.
+Oracle R2DBC supports type mappings between Java and SQL for non-standard data 
+types of Oracle Database.
+
+`javax.json.JsonObject` and `oracle.sql.json.OracleJsonObject` are supported as 
+the Java type mappings for the `JSON` data type.
+
+`java.time.Duration` is supported as the Java type mapping for the
+`INTERVAL DAY TO SECOND` data type.
+
+`java.time.Period` is supported as the Java type mapping for the 
+`INTERVAL YEAR TO MONTH` data type.
+
+`java.time.LocalDateTime` is supported as the Java type mapping for the `DATE` 
+data type.
+> Unlike the standard SQL type named "DATE", the Oracle Database type named 
+> "DATE" stores values for year, month, day, hour, minute, and second. The 
+> standard SQL type only stores year, month, and day. LocalDateTime objects are able 
+> to store the same values as a DATE in Oracle Database.
 
 ### BLOB, CLOB, and NCLOB
-When a SQL query returns a LOB value, a
-portion of that value is prefetched from the database and the remaining portion
-must be fetched with additional database calls. The number of prefetched
-bytes is configured by an `Option` named [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
+Oracle R2DBC supports reading and writing the content of large object (LOB) 
+types.
+
+#### Configuring the Prefetched Data Size
+When a SQL query returns the content of a LOB column, only a portion of the 
+entire content is received in the response from Oracle Database. The portion 
+which is received in the SQL query response is referred to as "prefetched data".
+Any content remaining after the prefetched data must be fetched by additional 
+database calls.
+
+For example, if a SQL query returns a LOB which is 100MB in size, then the 
+response might include only the first 1MB of the LOB's content. Additional 
+database calls would be required to fetch the remaining 99MB of content.
+
+The number of prefetched bytes is configured by an `Option` named [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
 . The default value of this `Option` is 1 GB.
- 
+
+#### Streamed Type Mapping 
+For systems in which LOB values are too large for prefetching, a smaller 
+prefetch size may be configured. By mapping LOB columns to `Blob` or `Clob` 
+objects, the content may be streamed over a series of non-blocking database 
+calls.
+
+#### Materialzed Type Mapping
 The `Row.get(...)` method allows LOB values to be mapped into materialized
 types like `ByteBuffer` and `String`. If the prefetch size is large
 enough to have fetched the entire LOB value, then `Row.get(...)`  can
-return a `ByteBuffer/String` without any additional database calls.
-Otherwise, if the LOB value is larger than the prefetch size, then
-`Row.get(...)`  must execute a **blocking database call** to fetch the
-remainder of that value. 
+return a `ByteBuffer/String` without any additional database calls. However, if
+the LOB value is larger than the prefetch size, then `Row.get(...)` must execute
+a **blocking database call** to fetch the remainder of that value. 
 
-For systems in which LOB values are too large to be prefetched, a smaller
-prefetch size can be configured, and LOB values may be mapped into `Blob`
-or `Clob` objects rather than `ByteBuffer` or `String`. `Blob`
-and `Clob` objects allow the LOB value to be streamed using non-blocking
-database calls.
-
-# Secure Programming Guidelines
-The following security guidelines should be followed when programming with the Oracle R2DBC Driver.
+## Secure Programming Guidelines
+The following security related guidelines should be adhered to when programming
+with the Oracle R2DBC Driver.
 ### Defend Against SQL Injection Attacks
 - Always specify the parameters of a SQL command using the bind methods of io.r2dbc.spi.Statement. 
   - Do not use String concatenation to specify parameters of a SQL command. 
