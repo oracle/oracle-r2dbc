@@ -63,7 +63,7 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # creates a test user. The docker container will run this script once the
 # database has started.
 containerName=test_db_$1
-dbPort=$(echo "60$1" | tr -d '.')
+dbPort=$(echo "5$1" | tr -d '.')
 echo "Starting container: $containerName"
 echo "Host port: $dbPort"
 docker run --name $containerName --detach --rm -p $dbPort:1521 -v $startUp:/opt/oracle/scripts/startup -e ORACLE_PDB=xepdb1 oracle/database:$1-xe
