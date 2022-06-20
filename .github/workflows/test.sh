@@ -62,11 +62,11 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # The startup directory is mounted. It contains a createUser.sql script that
 # creates a test user. The docker container will run this script once the
 # database has started.
-# The -p option has the database port number, 1521, mapped to any available
-# port in the range between 49152 and 65535
 containerName=test_db_$1
-echo "Staring container: $containerName"
-docker run --name $containerName --detach --rm -p 49152-65535:1521 -v $startUp:/opt/oracle/scripts/startup -e ORACLE_PDB=xepdb1 oracle/database:$1-xe
+dbPort=$(echo "60$1" | tr -d '.')
+echo "Starting container: $containerName"
+echo "Host port: $dbPort"
+docker run --name $containerName --detach --rm -p $dbPort:1521 -v $startUp:/opt/oracle/scripts/startup -e ORACLE_PDB=xepdb1 oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "ready" in the startup scripts directory. When that file exists, 
@@ -77,14 +77,6 @@ do
   docker logs --since 1s $containerName
   sleep 1
 done
-
-# Find out which port number on the host system has been mapped to the 1521
-# port of the container. 1521 is the Oracle Database port number. The Oracle
-# R2DBC test suite is configured to connect to the mapped port on the host 
-# system. The docker port command outputs a string in the format of:
-# "<ip>:<port>", and the sed command extracts the port number with a regex.
-dbPort=$(docker port $containerName 1521 | sed 's/^.*:\([0-9]*\)$/\1/')
-echo "Host port: $dbPort"
 
 # Create a configuration file and run the tests. The service name, "xepdb1",
 # is always created for the XE database. It would probably change for other 
