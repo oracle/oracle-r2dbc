@@ -34,10 +34,12 @@
 -- tables, and to query some V$ views:
 --   v$open_cursor (to verify if cursors are being closed).
 --   v$transaction (to verify if TransactionDefinitions are applied).
+--   v$session (to verify if VSESSION_* Options are applied).
 ALTER SESSION SET CONTAINER=xepdb1;
 CREATE ROLE r2dbc_test_user;
 GRANT SELECT ON v_$open_cursor TO r2dbc_test_user;
 GRANT SELECT ON v_$transaction TO r2dbc_test_user;
+GRANT SELECT ON v_$session TO r2dbc_test_user;
 
 CREATE USER test IDENTIFIED BY test;
 GRANT connect, resource, unlimited tablespace, r2dbc_test_user TO test;

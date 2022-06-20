@@ -65,7 +65,8 @@ cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
 # The -p option has the database port number, 1521, mapped to any available
 # port in the range between 49152 and 65535
 containerName=test_db_$1
-docker run --name $containerName --detach --rm -p 49152-65535:1521 -v $startUp:/opt/oracle/scripts/startup oracle/database:$1-xe
+echo "Staring container: $containerName"
+docker run --name $containerName --detach --rm -p 49152-65535:1521 -v $startUp:/opt/oracle/scripts/startup -e ORACLE_PDB=xepdb1 oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
 # a file named "ready" in the startup scripts directory. When that file exists, 
@@ -83,6 +84,7 @@ done
 # system. The docker port command outputs a string in the format of:
 # "<ip>:<port>", and the sed command extracts the port number with a regex.
 dbPort=$(docker port $containerName 1521 | sed 's/^.*:\([0-9]*\)$/\1/')
+echo "Host port: $dbPort"
 
 # Create a configuration file and run the tests. The service name, "xepdb1",
 # is always created for the XE database. It would probably change for other 
@@ -95,8 +97,8 @@ echo "HOST=localhost" >> src/test/resources/$1.properties
 echo "PORT=$dbPort" >> src/test/resources/$1.properties
 echo "USER=test" >> src/test/resources/$1.properties
 echo "PASSWORD=test" >> src/test/resources/$1.properties
-echo "CONNECT_TIMEOUT=60" >> src/test/resources/$1.properties
-echo "SQL_TIMEOUT=60" >> src/test/resources/$1.properties
+echo "CONNECT_TIMEOUT=120" >> src/test/resources/$1.properties
+echo "SQL_TIMEOUT=120" >> src/test/resources/$1.properties
 mvn -Doracle.r2dbc.config=$1.properties clean compile test
 
 # Stop the database container to free up resources
