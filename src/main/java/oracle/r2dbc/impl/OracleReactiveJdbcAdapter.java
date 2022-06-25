@@ -104,7 +104,7 @@ import static org.reactivestreams.FlowAdapters.toPublisher;
  *     Connection without blocking a thread. Oracle JDBC implements thread
  *     safety by blocking threads, and this can cause deadlocks in common
  *     R2DBC programming scenarios. See the JavaDoc of
- *     {@link UsingConnectionSubscriber} for more details.
+ *     {@link AsyncLock} for more details.
  *   </li>
  * </ul><p>
  * A instance of this class is obtained by invoking {@link #getInstance()}. A
@@ -260,7 +260,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    *   jdbc:oracle:thin:@HOST:PORT/DATABASE
    * </pre><p>
    * Alternatively, the host, port, and service name may be specified using an
-   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-8D28E91B-CB72-4DC8-AEFC-F5D583626CF6"></a>
+   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-8D28E91B-CB72-4DC8-AEFC-F5D583626CF6">
    * Oracle Net Descriptor</a>. The descriptor may be set as the value of an
    * {@link Option} having the name "descriptor". When the descriptor option is
    * present, the JDBC URL is composed as:

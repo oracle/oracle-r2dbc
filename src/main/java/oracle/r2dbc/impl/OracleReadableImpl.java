@@ -71,9 +71,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * {@code jdbcReadable} and obtains metadata of the values from
    * {@code resultMetadata}.
    * </p>
-   * @param jdbcReadable Readable values from a JDBC Driver.
-   * @param readablesMetadata Metadata of each value
-   * @param adapter Adapts JDBC calls into reactive streams.
+   * @param jdbcReadable Readable values from a JDBC Driver. Not null.
+   * @param readablesMetadata Metadata of each value. Not null.
+   * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   private OracleReadableImpl(
     JdbcReadable jdbcReadable, ReadablesMetadata<?> readablesMetadata,
@@ -89,9 +89,11 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * provided {@code jdbcReadable} and {@code metadata}. The metadata
    * object is used to determine the default type mapping of column values.
    * </p>
-   * @param adapter Adapts JDBC calls into reactive streams.
-   * @param jdbcReadable Row data from the Oracle JDBC Driver.
-   * @param metadata Meta-data for the specified row.
+   * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
+   * @param metadata Meta-data for the specified row. Not null.
+   * @param adapter Adapts JDBC calls into reactive streams. Not null.
+   * @return A {@code Row} backed by the {@code jdbcReadable} and
+   *   {@code metadata}. Not null.
    */
   static Row createRow(
     JdbcReadable jdbcReadable, RowMetadataImpl metadata,
@@ -104,9 +106,11 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * the provided {@code jdbcReadable} and {@code rowMetadata}. The metadata
    * object is used to determine the default type mapping of column values.
    * </p>
-   * @param adapter Adapts JDBC calls into reactive streams.
-   * @param jdbcReadable Row data from the Oracle JDBC Driver.
-   * @param metadata Meta-data for the specified row.
+   * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
+   * @param metadata Meta-data for the specified row. Not null.
+   * @param adapter Adapts JDBC calls into reactive streams. Not null.
+   * @return An {@code OutParameters} backed by the {@code jdbcReadable} and
+   *   {@code metadata}. Not null.
    */
   static OutParameters createOutParameters(
     JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata,
@@ -160,7 +164,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * method implements a case-insensitive name match. If more than one
    * value has a matching name, this method returns lowest index of all
    * matching values.
-   * @param name The name of a value
+   * @param name The name of a value. Not null.
    * @return The index of the named value within this {@code Readable}
    * @throws NoSuchElementException If no column has a matching name.
    */
@@ -184,9 +188,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * </p>
    *
    * @param index 0-based index of a value
-   * @param type Java type that the value is converted to
+   * @param type Java type that the value is converted to. Not null.
    * @param <T> Java type that the value is converted to
-   * @return The converted column value
+   * @return The converted column value. May be null.
    * @throws R2dbcException If the conversion is not supported.
    */
   private <T> T convert(int index, Class<T> type) {
@@ -359,9 +363,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * determine the default type mapping of column values.
      * </p>
      *
-     * @param jdbcReadable Row data from the Oracle JDBC Driver.
-     * @param metadata Meta-data for the specified row.
-     * @param adapter Adapts JDBC calls into reactive streams.
+     * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
+     * @param metadata Meta-data for the specified row. Not null.
+     * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private RowImpl(
       JdbcReadable jdbcReadable,
@@ -401,9 +405,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * {@code outParametersMetaData}.
      * </p>
      *
-     * @param jdbcReadable Readable values from a JDBC Driver.
-     * @param metadata Metadata of each value
-     * @param adapter Adapts JDBC calls into reactive streams.
+     * @param jdbcReadable Readable values from a JDBC Driver. Not null.
+     * @param metadata Metadata of each value. Not null.
+     * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OutParametersImpl(
       JdbcReadable jdbcReadable,

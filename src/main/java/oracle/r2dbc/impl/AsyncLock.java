@@ -88,8 +88,11 @@ final class AsyncLock {
     new ConcurrentLinkedDeque<>();
 
   /**
-   * Returns a {@code Publisher} that emits {@code onComplete} when this lock is
-   * acquired.
+   * Acquires this lock, executes a {@code callback}, and then releases this 
+   * lock. The {@code callback} may be executed before this method returns
+   * if this lock is currently available. Otherwise, the {@code callback} is
+   * executed asynchronously after this lock becomes available.
+   * @param callback Task to be executed with lock ownership. Not null.
    */
   void lock(Runnable callback) {
     assert waitCount.get() >= 0 : "Wait count is less than 0: " + waitCount;
@@ -151,6 +154,7 @@ final class AsyncLock {
    * emits {@code onNext} if the supplier returns a non-null value, and then
    * emits {@code onComplete}. Or, the {@code Publisher} emits {@code onError}
    * with any {@code Throwable} thrown by the supplier.
+   * @param <T> The class of object output by the {@code jdbcSupplier}
    * @param jdbcSupplier Supplier to execute. Not null.
    * @return A publisher that emits the result of the {@code jdbcSupplier}.
    */
@@ -177,9 +181,10 @@ final class AsyncLock {
    * {@code null}, the returned publisher just emits {@code onComplete}. If the
    * supplier throws an error, the returned publisher emits that as
    * {@code onError}.
+   * @param <T> The class of object emitted by the supplied publisher
    * @param publisherSupplier Supplier to execute. Not null.
-   * @return A flat-mapping of the publisher output by the {
-   * @code publisherSupplier}.
+   * @return A flat-mapping of the publisher output by the 
+   * {@code publisherSupplier}.
    */
   <T> Publisher<T> flatMap(JdbcSupplier<Publisher<T>> publisherSupplier) {
     return Mono.from(get(publisherSupplier))
@@ -194,6 +199,7 @@ final class AsyncLock {
    * {@link Subscription#request(long)} will only occur when the JDBC connection
    * is not being used by another thread or another publisher.
    *
+   * @param <T> The class of object emitted by the {@code publisher}
    * @param publisher A publisher that uses the JDBC connection
    * @return A Publisher that
    */

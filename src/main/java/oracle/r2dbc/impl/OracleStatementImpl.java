@@ -288,10 +288,9 @@ final class OracleStatementImpl implements Statement {
    * matching name. For instance, when {@code 9} is bound to the parameter
    * named "x", the following SQL would return all names having a birthday on
    * the 9th day of the 9th month:
-   * <pre>
+   * </p><pre>
    * SELECT name FROM birthday WHERE month=:x AND day=:x
    * </pre>
-   * </p>
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code identifier} does match a
    * case sensitive parameter name that appears in this {@code Statement's}
@@ -348,17 +347,15 @@ final class OracleStatementImpl implements Statement {
    * SQL command is read from left to right. (Note: It is not recommended to use
    * duplicate parameter names. Use {@link #bindNull(int, Class)} to set the
    * SQL {@code NULL} value for a duplicate parameter name at a given index).
-   * </p>
    * </p><p>
    * If the specified {@code identifier} matches more than one parameter name,
    * then this method binds the SQL {@code NULL} value to all parameters
    * having a matching name. For instance, when {@code NULL} is bound to the
    * parameter named "x", the following SQL would create a birthday with
    * {@code NULL} values for month and day:
-   * <pre>
+   * </p><pre>
    * INSERT INTO birthday (name, month, day) VALUES ('Plato', :x, :x)
    * </pre>
-   * </p>
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code identifier} does match a
    * case sensitive parameter name that appears in this {@code Statement's}
