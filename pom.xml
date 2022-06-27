@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2020, 2022, Oracle and/or its affiliates.
 
   This software is dual-licensed to you under the Universal Permissive License 
   (UPL) 1.0 as shown at https://oss.oracle.com/licenses/upl or Apache License
@@ -26,7 +26,7 @@
 
   <groupId>com.oracle.database.r2dbc</groupId>
   <artifactId>oracle-r2dbc</artifactId>
-  <version>0.4.0</version>
+  <version>1.0.0</version>
   <name>oracle-r2dbc</name>
   <description>
     Oracle R2DBC Driver implementing version 1.0.0 of the R2DBC SPI for Oracle Database.
@@ -163,9 +163,16 @@
         <configuration>
           <header>Oracle R2DBC ${project.version}</header>
           <footer>
-            Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+            Copyright (c) 2020, 2022, Oracle and/or its affiliates.
           </footer>
           <show>package</show>
+          <!--
+            If sourcepath is not configured, then docs are only generated for
+            the oracle.r2dbc package, and not for the oracle.r2dbc.impl package.
+            The author of this comment could not find any explaination for this
+            in the documentation of the Maven JavaDoc plugin.
+          -->
+          <sourcepath>src/main/java</sourcepath>
           <links>
             <link>https://r2dbc.io/spec/${r2dbc.version}/api/</link>
             <link>https://www.reactive-streams.org/reactive-streams-1.0.3-javadoc/</link>

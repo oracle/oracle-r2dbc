@@ -257,7 +257,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    *   jdbc:oracle:thin:@HOST:PORT/DATABASE
    * </pre><p>
    * Alternatively, the host, port, and service name may be specified using an
-   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-8D28E91B-CB72-4DC8-AEFC-F5D583626CF6"></a>
+   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-8D28E91B-CB72-4DC8-AEFC-F5D583626CF6">
    * Oracle Net Descriptor</a>. The descriptor may be set as the value of an
    * {@link Option} having the name "descriptor". When the descriptor option is
    * present, the JDBC URL is composed as:

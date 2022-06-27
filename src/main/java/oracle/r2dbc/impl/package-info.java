@@ -27,6 +27,11 @@
  * developers should program against the io.r2dbc.spi interfaces only, without
  * referencing any classes defined in this package.
  * </p><p>
+ * <em>
+ * The API defined by this package is not stable. It may change between 
+ * releases of Oracle R2DBC.
+ * </em>
+ * </p><p>
  * {@link oracle.r2dbc.impl.ReactiveJdbcAdapter} defines a reactive interface
  * to be implemented using any non-standard APIs that a JDBC driver may provide
  * for asynchronous database access. The Oracle R2DBC Driver relies on an

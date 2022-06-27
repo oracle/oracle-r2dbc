@@ -84,6 +84,7 @@ final class OracleR2dbcExceptions {
   /**
    * Checks if a {@code jdbcConnection} is open, and throws an exception if the
    * check fails.
+   * @param jdbcConnection Connection to check. Not null.
    * @throws IllegalStateException If {@code jdbcConnection} is closed
    */
   static void requireOpenConnection(java.sql.Connection jdbcConnection) {
@@ -289,9 +290,10 @@ final class OracleR2dbcExceptions {
    * caused the error is repeated, and stops reoccurring only if the
    * condition that caused the failure is corrected.
    * @param message A descriptive message that helps another programmer
-   *                understand the cause of failure. Not null.
+   *   understand the cause of failure. Not null.
+   * @param sql The SQL statement which resulted in error. May be null.
    * @param cause An error thrown by other code to indicate a failure, if any.
-   *             May be null.
+   *   May be null.
    * @return A new non-transient exception.
    */
   static R2dbcNonTransientException newNonTransientException(

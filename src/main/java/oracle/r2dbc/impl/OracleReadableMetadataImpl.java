@@ -243,7 +243,6 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
    * <p>
    * Implements the R2DBC SPI method by returning the R2DBC {@code Type}.
    * </p>
-   * @return
    */
   @Override
   public Type getType() {
