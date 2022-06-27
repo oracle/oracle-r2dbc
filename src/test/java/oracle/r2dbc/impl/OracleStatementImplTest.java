@@ -2302,7 +2302,8 @@ public class OracleStatementImplTest {
 
     // Create many statements and execute them in parallel.
     @SuppressWarnings({"unchecked","rawtypes"})
-    Publisher<Integer>[] publishers = new Publisher[8];
+    Publisher<Integer>[] publishers =
+      new Publisher[Runtime.getRuntime().availableProcessors() * 4];
 
     for (int i = 0; i < publishers.length; i++) {
       Flux<Integer> flux = Flux.from(connection.createStatement(
@@ -2334,7 +2335,8 @@ public class OracleStatementImplTest {
 
       // Create many statements and execute them in parallel.
       @SuppressWarnings({"unchecked","rawtypes"})
-      Publisher<Long>[] publishers = new Publisher[8];
+      Publisher<Long>[] publishers =
+        new Publisher[Runtime.getRuntime().availableProcessors() * 4];
 
       for (int i = 0; i < publishers.length; i++) {
 
