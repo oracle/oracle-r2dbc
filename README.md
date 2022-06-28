@@ -1,3 +1,5 @@
+![](https://github.com/oracle/oracle-r2dbc/actions/workflows/build-and-test.yml/badge.svg)
+
 # About Oracle R2DBC
 
 The Oracle R2DBC Driver is a Java library that supports reactive programming with Oracle Database.

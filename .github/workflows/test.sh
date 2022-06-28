@@ -23,64 +23,75 @@
 # execute the Oracle R2DBC test suite with a configuration that has it connect
 # to that database.
 #
-# This script makes no attempt to clean up. The docker container is left
-# running, and the database retains the test user and any other modifications
-# that the test suite may have performed.
-# It is assumed that the Github Runner will clean up any state this script
-# leaves behind.
+# The database version is configured by the first parameter. The version is 
+# expressed is as <major>.<minor>.<patch> version number, for example: "18.4.0"
+#
+# The database port number is configured by the second parameter. If multiple
+# databases are created by running this script in parallel, then a unique port
+# number should be provided for each database.
 
 
 # The startup directory is mounted as a volume inside the docker container.
 # The container's entry point script will execute any .sh and .sql scripts
 # it finds under /opt/oracle/scripts/startup. The startup scripts are run
-# after the database instance is active.A numeric prefix on the script name
-# determines the order in which scripts are run. The final script, prefixed
-# with "99_" will create a file named "done" in the mounted volumn. When the
-# "done" file exists, this signals that the database is active and that all
-# startup scripts have completed.
-startUpScripts=$PWD/startup
-startUpMount=/opt/oracle/scripts/startup
-echo "touch $startUpMount/done" > $startUpScripts/99_done.sh
+# after the database instance is active.
+startUp=$PWD/$1/startup
+mkdir -p $startUp
+cp $PWD/startup/* $startUp
 
+# Create a 99_ready.sh script. The numeric prefix of the file name determines 
+# the order in which scripts are run. The final script, prefixed with "99_"
+# will create a file named "oracle-r2dbc-ready" in the $HOME directory within
+# the container. The existence of this file is waited for before any tests are
+# run.
+readyFile='$HOME/oracle-r2dbc-ready'
+echo "touch -f $readyFile" > $startUp/99_ready.sh
 
 # The oracle/docker-images repo is cloned. This repo provides Dockerfiles along
 # with a handy script to build images of Oracle Database. For now, this script
-# is just going to build an 18.4.0 XE image, because this can be done in an
-# automated fashion, without having to accept license agreements required by
-# newer versions like 19 and 21.
-# TODO: Also test with newer database versions
+# is just going to build an Express Edition (XE) image, because this can be 
+# done in an automated fashion. Other editions would require a script to accept
+# a license agreement.
+# Parallel executions of this script clone the repo into isolated directories.
+cd $PWD/$1
 git clone https://github.com/oracle/docker-images.git
 cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
-./buildContainerImage.sh -v 18.4.0 -x
+./buildContainerImage.sh -v $1 -x
 
 # Run the image in a detached container
 # The startup directory is mounted. It contains a createUser.sql script that
 # creates a test user. The docker container will run this script once the
 # database has started.
-# The database port number, 1521, is mapped to the host system. The Oracle
-# R2DBC test suite is configured to connect with this port.
-docker run --name test_db --detach --rm -p 1521:1521 -v $startUpScripts:$startUpMount oracle/database:18.4.0-xe
+containerName=test_db_$1
+dbPort=$(echo "5$1" | tr -d '.')
+echo "Starting container: $containerName"
+echo "Host port: $dbPort"
+docker run --name $containerName --detach --rm -p $dbPort:1521 -v $startUp:/opt/oracle/scripts/startup -e ORACLE_PDB=xepdb1 oracle/database:$1-xe
 
 # Wait for the database instance to start. The final startup script will create
-# a file named "done" in the startup directory. When that file exists, it means
-# the database is ready for testing.
+# a file named "ready" in the startup scripts directory. When that file exists, 
+# it means the database is ready for testing.
 echo "Waiting for database to start..."
-until [ -f $startUpScripts/done ]
+until docker exec $containerName sh -c "test -f $readyFile"
 do
-  docker logs --since 3s test_db
-  sleep 3
+  docker logs --since 1s $containerName
+  sleep 1
 done
 
 # Create a configuration file and run the tests. The service name, "xepdb1",
-# is always created for the 18.4.0 XE database, but it would probably change
-# for other database versions (TODO). The test user is created by the
-# startup/01_createUser.sql script
+# is always created for the XE database. It would probably change for other 
+# database editions. The test user is created by the startup/01_createUser.sql
+# script
 cd $GITHUB_WORKSPACE
-echo "DATABASE=xepdb1" > src/test/resources/config.properties
-echo "HOST=localhost" >> src/test/resources/config.properties
-echo "PORT=1521" >> src/test/resources/config.properties
-echo "USER=test" >> src/test/resources/config.properties
-echo "PASSWORD=test" >> src/test/resources/config.properties
-echo "CONNECT_TIMEOUT=60" >> src/test/resources/config.properties
-echo "SQL_TIMEOUT=60" >> src/test/resources/config.properties
-mvn clean compile test
+echo "# Configuration for testing with Oracle Database $1" > src/test/resources/$1.properties
+echo "DATABASE=xepdb1" >> src/test/resources/$1.properties
+echo "HOST=localhost" >> src/test/resources/$1.properties
+echo "PORT=$dbPort" >> src/test/resources/$1.properties
+echo "USER=test" >> src/test/resources/$1.properties
+echo "PASSWORD=test" >> src/test/resources/$1.properties
+echo "CONNECT_TIMEOUT=120" >> src/test/resources/$1.properties
+echo "SQL_TIMEOUT=120" >> src/test/resources/$1.properties
+mvn -Doracle.r2dbc.config=$1.properties clean compile test
+
+# Stop the database container to free up resources
+docker stop $containerName

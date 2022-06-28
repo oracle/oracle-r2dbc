@@ -213,7 +213,13 @@ public final class DatabaseConfig {
   private static final ConnectionFactory CONNECTION_FACTORY;
   private static final ConnectionFactory SHARED_CONNECTION_FACTORY;
 
-  private static final String CONFIG_FILE_NAME = "config.properties";
+  /**
+   * Name of configuration file. It is "config.properties" by default, but can
+   * be set to a none default with: -Doracle.r2dbc.config=something-else
+   */
+  private static final String CONFIG_FILE_NAME =
+    System.getProperty("oracle.r2dbc.config", "config.properties");
+
   static {
     try (InputStream inputStream =
            DatabaseConfig.class.getClassLoader()
