@@ -38,7 +38,6 @@ import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcSupplier;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
-import reactor.core.publisher.DirectProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -59,8 +58,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -75,8 +72,8 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 import static org.reactivestreams.FlowAdapters.toFlowPublisher;
-import static org.reactivestreams.FlowAdapters.toFlowSubscriber;
 import static org.reactivestreams.FlowAdapters.toPublisher;
+import static org.reactivestreams.FlowAdapters.toSubscriber;
 
 /**
  * <p>
@@ -917,28 +914,19 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * contents are always copied into a new byte array. In a later release,
    * avoiding the copy using {@link ByteBuffer#array()} can be worth
    * considering.
-   *
-   * @implNote The 21c {@code OracleBlob} subscriber violates Rule 2.7 of the
-   * Reactive Streams Specification, which prohibits concurrent calls to
-   * {@link Subscription#request(long)}. This can cause undefined behavior by
-   * the {@code contentPublisher}. To work around this bug, this method
-   * proxies the {@link Subscription} between the {@code contentPublisher}
-   * and the {@code OracleBlob} subscriber. The proxy ensures that
-   * {@code request} signals are delivered serially.
    */
   @Override
   public Publisher<Void> publishBlobWrite(
     Publisher<ByteBuffer> contentPublisher, Blob blob) {
     OracleBlob oracleBlob = castAsType(blob, OracleBlob.class);
 
-    // TODO: Move subscriberOracleCall into adaptFlowPublisher, so that it
+    // TODO: Move subscriberOracle Call into adaptFlowPublisher, so that it
     //  avoids lock contention
-    // This processor emits a terminal signal when all blob writing database
-    // calls have completed
-    DirectProcessor<Long> writeOutcomeProcessor = DirectProcessor.create();
+    // This subscriber receives a terminal signal after JDBC completes the
+    // LOB write.
+    CompletionSubscriber<Long> outcomeSubscriber = new CompletionSubscriber<>();
     Flow.Subscriber<byte[]> blobSubscriber = fromJdbc(() ->
-      oracleBlob.subscriberOracle(1L,
-        toFlowSubscriber(writeOutcomeProcessor)));
+      oracleBlob.subscriberOracle(1L, outcomeSubscriber));
 
     // TODO: Acquire async lock before invoking onNext, release when
     //  writeOutcomeProcessor gets onNext with sum equal to sum of buffer
@@ -960,9 +948,10 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
           slice.get(byteArray);
           return byteArray;
         })
-        .subscribe(new SerializedLobSubscriber<>(blobSubscriber));
+        .subscribe(toSubscriber(blobSubscriber));
 
-      return toFlowPublisher(writeOutcomeProcessor.then());
+
+      return toFlowPublisher(outcomeSubscriber.publish());
     });
   }
 
@@ -974,33 +963,24 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * {@link OracleClob#subscriberOracle(long, Flow.Subscriber)} adapted to
    * conform with the R2DBC standards.
    * </p>
-   *
-   * @implNote The 21c {@code OracleClob} subscriber violates Rule 2.7 of the
-   * Reactive Streams Specification, which prohibits concurrent calls to
-   * {@link Subscription#request(long)}. This can cause undefined behavior by
-   * the {@code contentPublisher}. To work around this bug, this method
-   * proxies the {@link Subscription} between the {@code contentPublisher}
-   * and the {@code OracleClob} subscriber. The proxy ensures that
-   * {@code request} signals are delivered serially.
    */
   @Override
   public Publisher<Void> publishClobWrite(
     Publisher<? extends CharSequence> contentPublisher, Clob clob) {
     OracleClob oracleClob = castAsType(clob, OracleClob.class);
 
-    // This processor emits a terminal signal when all clob writing database
-    // calls have completed
-    DirectProcessor<Long> writeOutcomeProcessor = DirectProcessor.create();
+    // This subscriber receives a terminal signal after JDBC completes the
+    // LOB write.
+    CompletionSubscriber<Long> outcomeSubscriber = new CompletionSubscriber<>();
     Flow.Subscriber<String> clobSubscriber = fromJdbc(() ->
-      oracleClob.subscriberOracle(1L,
-        toFlowSubscriber(writeOutcomeProcessor)));
+      oracleClob.subscriberOracle(1L, outcomeSubscriber));
 
     return adaptFlowPublisher(() -> {
       Flux.from(contentPublisher)
         .map(CharSequence::toString)
-        .subscribe(new SerializedLobSubscriber<>(clobSubscriber));
+        .subscribe(toSubscriber(clobSubscriber));
 
-      return toFlowPublisher(writeOutcomeProcessor.then());
+      return toFlowPublisher(outcomeSubscriber.publish());
     });
   }
 
@@ -1276,134 +1256,59 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   }
 
   /**
-   * <p>
-   * A {@code Subscriber} that serializes {@code Subscription} method calls
-   * made by {@link OracleBlob} or {@link OracleClob} subscribers. The purpose
-   * of this class is to work around Oracle JDBC Bug #32097526, in which the
-   * Large Object (LOB) subscribers violate Rule 2.7 of the Reactive Streams
-   * 1.0.3 Specification by invoking subscription methods concurrently. This
-   * violation can lead to unspecified behavior from the upstream LOB content
-   * {@code Publisher}.
-   * </p><p>
-   * This class serves as an intermediary between a LOB content publisher
-   * upstream, and the LOB subscriber downstream. It presents itself as a
-   * subscription to the LOB subscriber so that it can regulate it's
-   * subscription method calls. Each subscription call is regulated by
-   * acquiring a mutually exclusive lock before the call is forwarded to the
-   * content publisher's subscription.
-   * </p>
-   *
-   * @implNote This class is an {@code org.reactivestreams.Subscriber} and a
-   * {@code java.util.concurrent.Flow.Subscription}. These APIs were chosen to
-   * interface with R2DBC Blob/Clob publishers upstream, and with Reactive
-   * Extensions downstream.
-   * @param <T> The type of item subscribed to
+   * A subscriber that relays {@code onComplete} or {@code onError} signals
+   * from an upstream publisher to downstream subscribers. This subscriber
+   * ignores {@code onNext} signals from an upstream publisher. This subscriber
+   * signals unbounded demand to an upstream publisher.
+   * @param <T> Type of values emitted from an upstream publisher.
    */
-  private static class SerializedLobSubscriber<T>
-    implements org.reactivestreams.Subscriber<T>, Flow.Subscription {
+  private static final class CompletionSubscriber<T>
+    implements Flow.Subscriber<T> {
 
-    /** The downstream OracleBlob/OracleClob subscriber */
-    final Flow.Subscriber<T> lobSubscriber;
-
-    /** Guards access to the upstream content publisher's subscription */
-    final ReentrantLock signalLock = new ReentrantLock();
-
-    /** The upstream content publisher's subscription */
-    Subscription contentSubscription;
+    /** Future completed by {@code onSubscribe} */
+    private final CompletableFuture<Flow.Subscription> subscriptionFuture =
+      new CompletableFuture<>();
 
     /**
-     * Constructs a new subscriber that regulates subscription calls from a
-     * {@code lobSubscriber}. The {@code onSubscribe} method of the {@code
-     * lobSubscriber} is invoked when the {@code onSubscribe} method of the
-     * constructed subscriber is invoked.
+     * Future completed normally by {@code onComplete}, or exceptionally by
+     * {@code onError}
      */
-    SerializedLobSubscriber(Flow.Subscriber<T> lobSubscriber) {
-      this.lobSubscriber = lobSubscriber;
-    }
+    private final CompletableFuture<Void> resultFuture =
+      new CompletableFuture<>();
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Retains the {@code subscription} and presents itself as a subscription
-     * to the LOB subscriber. Subscription calls from the LOB subscriber are
-     * then serially forwarded to the {@code subscription}.
-     * </p>
-     */
     @Override
-    public void onSubscribe(Subscription subscription) {
-      contentSubscription = subscription;
-      lobSubscriber.onSubscribe(this);
+    public void onSubscribe(Flow.Subscription subscription) {
+      subscriptionFuture.complete(Objects.requireNonNull(subscription));
+      subscription.request(Long.MAX_VALUE);
     }
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Regulates a request call from the {@code lobSubscriber} by first
-     * blocking until any active {@code request} or {@code cancel} call has
-     * completed, and then forwarding the request to the content publisher.
-     * </p>
-     */
-    @Override
-    public void request(long n) {
-      signalLock.lock();
-      try {
-        contentSubscription.request(n);
-      }
-      finally {
-        signalLock.unlock();
-      }
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Regulates a cancel call from the {@code lobSubscriber} by first
-     * blocking until any active {@code request} or {@code cancel} call has
-     * completed, and then forwarding the cancel to the content publisher.
-     * </p>
-     */
-    @Override
-    public void cancel() {
-      signalLock.lock();
-      try {
-        contentSubscription.cancel();
-      }
-      finally {
-        signalLock.unlock();
-      }
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Forwards the signal to the LOB subscriber without any regulation.
-     * </p>
-     */
     @Override
     public void onNext(T item) {
-      lobSubscriber.onNext(item);
     }
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Forwards the signal to the LOB subscriber without any regulation.
-     * </p>
-     */
     @Override
     public void onError(Throwable throwable) {
-      lobSubscriber.onError(throwable);
+      resultFuture.completeExceptionally(Objects.requireNonNull(throwable));
+    }
+
+    @Override
+    public void onComplete() {
+      resultFuture.complete(null);
     }
 
     /**
-     * {@inheritDoc}
-     * <p>
-     * Forwards the signal to the LOB subscriber without any regulation.
-     * </p>
+     * Returns a publisher that emits the same {@code onComplete} or
+     * {@code onError} signal emitted to this subscriber. Cancelling a
+     * subscription to the returned publisher cancels the subscription of this
+     * subscriber.
+     * @return A publisher that emits the terminal signal emitted to this
+     * subscriber.
      */
-    @Override
-    public void onComplete() {
-      lobSubscriber.onComplete();
+    Publisher<Void> publish() {
+      return Mono.fromCompletionStage(resultFuture)
+        .doOnCancel(() ->
+          subscriptionFuture.thenAccept(Flow.Subscription::cancel));
     }
   }
+
 }
