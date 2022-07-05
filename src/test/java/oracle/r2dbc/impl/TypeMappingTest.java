@@ -24,6 +24,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.Blob;
 import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import oracle.sql.json.OracleJsonFactory;
@@ -50,6 +51,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static io.r2dbc.spi.R2dbcType.NCHAR;
+import static io.r2dbc.spi.R2dbcType.NCLOB;
+import static io.r2dbc.spi.R2dbcType.NVARCHAR;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
@@ -95,6 +99,16 @@ public class TypeMappingTest {
    * <a href="https://r2dbc.io/spec/0.8.3.RELEASE/spec/html/#datatypes.mapping">
    * Table 4 of Section 12 of the R2DBC 0.8.3 Specification.
    * </a>
+   * </p><p>
+   * This test method makes use of {@link io.r2dbc.spi.R2dbcType#NCHAR} and
+   * {@link io.r2dbc.spi.R2dbcType#NVARCHAR} when binding Strings that contain
+   * non-ascii characters. By default, a String bind is mapped to the VARCHAR
+   * SQL type. This default mapping has the driver encode the value using the
+   * database character set. The database character set may not support
+   * non-ascii characters. Binding Strings with the NCHAR/NVARCHAR type
+   * configures the driver to encode the string using the national character set
+   * of the database. The national character set is either UTF16 or UTF8, and so
+   * it must support non-ascii characters.
    * </p>
    */
   @Test
@@ -112,11 +126,18 @@ public class TypeMappingTest {
 
       // Expect NCHAR and String to map
       verifyTypeMapping(connection,
-        String.format("%100s", "你好, Oracle"), "NCHAR(100)");
+        Parameters.in(NCHAR, String.format("%100s", "你好, Oracle")),
+        "NCHAR(100)",
+        (expected, actual) ->
+          assertEquals(expected.getValue(), actual));
 
       // Expect NVARCHAR and String to map. The Oracle type named "NVARCHAR2" is
       // equivalent to the standard type named "NVARCHAR"
-      verifyTypeMapping(connection, "नमस्कार, Oracle", "NVARCHAR2(100)");
+      verifyTypeMapping(connection,
+        Parameters.in(NVARCHAR, "नमस्कार, Oracle"),
+        "NVARCHAR2(100)",
+        (expected, actual) ->
+          assertEquals(expected.getValue(), actual));
 
       // Expect CLOB and String to map
       verifyTypeMapping(connection, "Hola, Oracle", "CLOB");
@@ -130,7 +151,11 @@ public class TypeMappingTest {
 
       // Expect NCLOB and String to map for bind values, but not for row values.
       // For row values, expect Oracle CLOB to be mapped to io.r2dbc.spi.Clob
-      verifyTypeMapping(connection, "こんにちは, Oracle", "NCLOB");
+      verifyTypeMapping(connection,
+        Parameters.in(NVARCHAR, "こんにちは, Oracle"),
+        "NCLOB",
+        (expected, actual) ->
+          assertEquals(expected.getValue(), actual));
 
       // Expect NCLOB and io.r2dbc.spi.Clob to map
       verifyTypeMapping(connection,
