@@ -43,6 +43,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -66,9 +68,11 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.STATEMENT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static java.lang.String.format;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
+import static oracle.r2dbc.test.DatabaseConfig.protocol;
 import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
@@ -213,9 +217,11 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Create an Oracle Net Descriptor
     String descriptor = format(
-      "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=tcp))" +
+      "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=%s))" +
         "(CONNECT_DATA=(SERVICE_NAME=%s)))",
-      host(), port(), serviceName());
+      host(), port(),
+      Objects.requireNonNullElse(protocol(), "tcp"),
+      serviceName());
 
     // Create a tnsnames.ora file with an alias for the descriptor
     Files.writeString(Path.of("tnsnames.ora"),
@@ -365,14 +371,8 @@ public class OracleReactiveJdbcAdapterTest {
   @Test
   public void testStatementTimeout() {
     Connection connection0 =
-      Mono.from(ConnectionFactories.get(ConnectionFactoryOptions
-        .builder()
-        .option(DRIVER, "oracle")
-        .option(HOST, host())
-        .option(PORT, port())
-        .option(DATABASE, serviceName())
-        .option(USER, user())
-        .option(PASSWORD, password())
+      Mono.from(ConnectionFactories.get(connectionFactoryOptions()
+        .mutate()
         .option(STATEMENT_TIMEOUT, Duration.ofSeconds(2))
         // Disable OOB to support testing with an 18.x database
         .option(Option.valueOf(
@@ -442,14 +442,9 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Create a connection that is configured to use the custom executor
     Connection connection = awaitOne(ConnectionFactories.get(
-      ConnectionFactoryOptions.builder()
+      connectionFactoryOptions()
+        .mutate()
         .option(OracleR2dbcOptions.EXECUTOR, testExecutor)
-        .option(DRIVER, "oracle")
-        .option(HOST, host())
-        .option(PORT, port())
-        .option(DATABASE, serviceName())
-        .option(USER, user())
-        .option(PASSWORD, password())
         .build())
         .create());
 
@@ -490,12 +485,15 @@ public class OracleReactiveJdbcAdapterTest {
     // Verify configuration with URL parameters
     Connection connection = awaitOne(ConnectionFactories.get(
       ConnectionFactoryOptions.parse(
-        format("r2dbc:oracle://%s:%d/%s" +
+        format("r2dbc:oracle:%s//%s:%d/%s" +
           "?v$session.osuser=%s" +
           "&v$session.terminal=%s" +
           "&v$session.process=%s" +
           "&v$session.program=%s" +
           "&v$session.machine=%s",
+          Optional.ofNullable(protocol())
+            .map(protocol -> protocol + ":")
+            .orElse(""),
           host(), port(), serviceName(),
           osuser, terminal, process, program, machine))
       .mutate()

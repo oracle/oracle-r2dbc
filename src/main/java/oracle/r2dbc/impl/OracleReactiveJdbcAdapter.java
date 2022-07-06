@@ -66,6 +66,7 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
 import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PROTOCOL;
 import static io.r2dbc.spi.ConnectionFactoryOptions.SSL;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
@@ -431,9 +432,40 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   }
 
   /**
+   * <p>
    * Composes an Oracle JDBC URL from {@code ConnectionFactoryOptions}, as
    * specified in the javadoc of
    * {@link #createDataSource(ConnectionFactoryOptions)}
+   * </p><p>
+   * If the {@link ConnectionFactoryOptions#SSL} option is set, then the JDBC
+   * URL is composed with the tcps protocol, as in:
+   * {@code jdbc:oracle:thins:@tcps:...}. The {@code SSL} option is interpreted
+   * as a strict directive to use TLS, and so it takes precedence over any value
+   * that may otherwise be specified by the {@code PROTOCOL} option.
+   * </p><p>
+   * If the {@code SSL} option is not set, then URL is composed with the any
+   * value set for {@link ConnectionFactoryOptions#PROTOCOL} option. For
+   * instance, if the {@code PROTOCOL} option is set to "ldap" then the URL
+   * is composed as: {@code jdbc:oracle:thins:@ldap://...}.
+   * </p><p>
+   * For consistency with the Oracle JDBC URL, an Oracle R2DBC URL might include
+   * multiple space separated LDAP addresses, like this:
+   * <pre>
+   * r2dbc:oracle:ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb%20ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb
+   * </pre>
+   * The %20 encoding of the space character must be used in order for
+   * {@link ConnectionFactoryOptions#parse(CharSequence)} to recognize the URL
+   * syntax. When multiple address are specified this way, the {@code DATABASE}
+   * option will have the value of:
+   * <pre>
+   * cn=salesdept,cn=OracleContext,dc=com/salesdb ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb
+   * </pre>
+   * This is unusual, but it is what Oracle JDBC expects to see in the path
+   * element of a
+   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/data-sources-and-URLs.html#GUID-F1841136-BE7C-47D4-8AEE-E9E78CA1213D">
+   * multi-address LDAP URL.
+   * </a>
+   * </p>
    * @param options R2DBC options. Not null.
    * @return An Oracle JDBC URL composed from R2DBC options
    * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
@@ -448,15 +480,18 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       return "jdbc:oracle:thin:@" + descriptor.toString();
     }
     else {
+      Object protocol =
+        Boolean.TRUE.equals(parseOptionValue(
+          SSL, options, Boolean.class, Boolean::valueOf))
+          ? "tcps"
+          : options.getValue(PROTOCOL);
       Object host = options.getRequiredValue(HOST);
       Integer port = parseOptionValue(
         PORT, options, Integer.class, Integer::valueOf);
       Object serviceName = options.getValue(DATABASE);
-      Boolean isTcps = parseOptionValue(
-        SSL, options, Boolean.class, Boolean::valueOf);
 
       return String.format("jdbc:oracle:thin:@%s%s%s%s",
-        Boolean.TRUE.equals(isTcps) ? "tcps:" : "",
+        protocol == null ? "" : protocol + "://",
         host,
         port != null ? (":" + port) : "",
         serviceName != null ? ("/" + serviceName) : "");
