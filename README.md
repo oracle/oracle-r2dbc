@@ -191,22 +191,22 @@ are supported by Oracle R2DBC:
  - `HOST`
  - `PORT`
  - `DATABASE`
+   - The database option is interpreted as the
+     [service name](https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-153861C1-16AD-41EC-A179-074146B722E6)
+      of an Oracle Database instance. _System Identifiers (SID) are not recognized_.
  - `USER`
  - `PASSWORD`
  - `SSL`
  - `CONNECT_TIMEOUT`
  - `STATEMENT_TIMEOUT`.
-
-> Oracle R2DBC interprets the `DATABASE` option as the
-> [service name](https://docs.oracle.com/en/database/oracle/oracle-database/21/netag/identifying-and-accessing-database.html#GUID-153861C1-16AD-41EC-A179-074146B722E6)
-> of an Oracle Database instance. _System Identifiers (SID) are not recognized_.
+ - `PROTOCOL`
+   - (For inclusion in the next release) Accepted protocol values are "tcps", "ldap", and "ldaps"
 
 #### Support for Extended R2DBC Options
 Oracle R2DBC extends the standard set of R2DBC options to offer functionality 
 that is specific to Oracle Database and the Oracle JDBC Driver. Extended options
 are declared in the
-[OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java)
-class.
+[OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java) class.
 
 #### Configuring an Oracle Net Descriptor
 The `oracle.r2dbc.OracleR2dbcOptions.DESCRIPTOR` option may be used to configure
@@ -233,6 +233,22 @@ located:
 ```
 r2dbc:oracle://?oracle.r2dbc.descriptor=myAlias&TNS_ADMIN=/path/to/tnsnames/
 ```
+
+#### (For inclusion in the next release) Configuring an LDAP URL
+Use `ldap` or `ldaps` as the URL protocol to have an Oracle Net Descriptor 
+retrieved from an LDAP server:
+```
+r2dbc:oracle:ldap://ldap.example.com:7777/sales,cn=OracleContext,dc=com
+r2dbc:oracle:ldaps://ldap.example.com:7778/sales,cn=OracleContext,dc=com
+```
+Use a space separated list of LDAP URIs for fail over and load balancing:
+```
+r2dbc:oracle:ldap://ldap1.example.com:7777/sales,cn=OracleContext,dc=com%20ldap://ldap2.example.com:7777/sales,cn=OracleContext,dc=com%20ldap://ldap3.example.com:7777/sales,cn=OracleContext,dc=com
+```
+> Space characters in a URL must be percent encoded as `%20`
+
+An LDAP server request will **block a thread for network I/O** when Oracle R2DBC
+creates a new connection.
 
 #### Configuring a java.util.concurrent.Executor
 The `oracle.r2dbc.OracleR2dbcOptions.EXECUTOR` option configures a 
