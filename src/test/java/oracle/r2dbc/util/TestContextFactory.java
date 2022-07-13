@@ -33,6 +33,7 @@ import javax.naming.directory.DirContext;
 import javax.naming.directory.ModificationItem;
 import javax.naming.directory.SearchControls;
 import javax.naming.directory.SearchResult;
+import javax.naming.spi.NamingManager;
 import java.util.HashMap;
 import java.util.Hashtable;
 
@@ -94,6 +95,17 @@ import java.util.Hashtable;
 public final class TestContextFactory
   implements javax.naming.spi.InitialContextFactory {
 
+  static {
+    // Set a factory builder that overrides any configuration of
+    // Context.INITIAL_FACTORY_CONTEXT.
+    try {
+      NamingManager.setInitialContextFactoryBuilder(environment ->
+        new TestContextFactory());
+    }
+    catch (Exception exception) {
+      throw new RuntimeException(exception);
+    }
+  }
   /**
    * The {@code DirContext} object constructed by Oracle JDBC will delegate to
    * this instance of {@code TestDirContext}.

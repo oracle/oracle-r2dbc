@@ -123,92 +123,6 @@ import static org.reactivestreams.FlowAdapters.toSubscriber;
  */
 final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
-  /**
-   * <p>
-   * The set of JDBC connection properties that this adapter supports. Each
-   * property in this set is represented as an {@link Option} having the name
-   * of the supported JDBC connection property. When a property is configured
-   * with a sensitive value, such as a password, it is represented in this
-   * set as a {@linkplain Option#sensitiveValueOf(String) sensitive Option}.
-   * </p><p>
-   * If a new Option is added to this set, then it <i>must</i> be documented
-   * in the javadoc of {@link #createDataSource(ConnectionFactoryOptions)},
-   * and in any other reference that lists which options the Oracle R2DBC Driver
-   * supports. Undocumented options are useless; Other programmers won't be
-   * able to use an option if they have no way to understand what the option
-   * does or how it should be configured.
-   * </p>
-   */
-  private static final Set<Option<CharSequence>>
-    JDBC_CONNECTION_PROPERTY_OPTIONS = Set.of(
-
-      // Support TNS_ADMIN (tnsnames.ora, ojdbc.properties).
-      OracleR2dbcOptions.TNS_ADMIN,
-
-      // Support wallet properties for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_WALLET_LOCATION,
-      OracleR2dbcOptions.TLS_WALLET_PASSWORD,
-
-      // Support keystore properties for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_KEYSTORE,
-      OracleR2dbcOptions.TLS_KEYSTORE_TYPE,
-      Option.sensitiveValueOf(
-        OracleConnection
-          .CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_KEYSTOREPASSWORD),
-
-      // Support truststore properties for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_TRUSTSTORE,
-      OracleR2dbcOptions.TLS_TRUSTSTORE_TYPE,
-      OracleR2dbcOptions.TLS_TRUSTSTORE_PASSWORD,
-
-      // Support authentication services (RADIUS, KERBEROS, and TCPS)
-      OracleR2dbcOptions.AUTHENTICATION_SERVICES,
-
-      // Support fine grained configuration for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_CERTIFICATE_ALIAS,
-      OracleR2dbcOptions.TLS_SERVER_DN_MATCH,
-      OracleR2dbcOptions.TLS_SERVER_CERT_DN,
-      OracleR2dbcOptions.TLS_VERSION,
-      OracleR2dbcOptions.TLS_CIPHER_SUITES,
-      OracleR2dbcOptions.TLS_KEYMANAGERFACTORY_ALGORITHM,
-      OracleR2dbcOptions.TLS_TRUSTMANAGERFACTORY_ALGORITHM,
-      OracleR2dbcOptions.SSL_CONTEXT_PROTOCOL,
-
-      // Because of bug 32378754, the FAN support in the driver may cause a 10s
-      // delay to connect. As a workaround the following property can be set
-      // to false to disable FAN support in the driver.
-      OracleR2dbcOptions.FAN_ENABLED,
-
-      // Support statement cache configuration
-      OracleR2dbcOptions.IMPLICIT_STATEMENT_CACHE_SIZE,
-
-      // Support LOB prefetch size configuration. A large size is configured
-      // by default to support cases where memory is available to store entire
-      // LOB values. A non-default size may be configured when LOB values are
-      // too large to be prefetched and must be streamed from Blob/Clob objects.
-      OracleR2dbcOptions.DEFAULT_LOB_PREFETCH_SIZE,
-
-      // Allow out-of-band (OOB) breaks to be disabled. Oracle JDBC uses OOB
-      // breaks to interrupt a SQL call after a timeout expires. This option 
-      // may need to be disabled when connecting to an 18.x database. Starting
-      // in 19.x, the database can detect when it's running on a system where
-      // OOB is not supported and automatically disable OOB. This automated 
-      // detection is not implemented in 18.x.
-      OracleR2dbcOptions.DISABLE_OUT_OF_BAND_BREAK,
-
-      // Allow the client-side ResultSet cache to be disabled. It is
-      // necessary to do so when using the serializable transaction isolation
-      // level in order to prevent phantom reads.
-      OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE,
-
-      // Allow v$session attributes to be configured for tracing
-      OracleR2dbcOptions.VSESSION_OSUSER,
-      OracleR2dbcOptions.VSESSION_TERMINAL,
-      OracleR2dbcOptions.VSESSION_PROCESS,
-      OracleR2dbcOptions.VSESSION_PROGRAM,
-      OracleR2dbcOptions.VSESSION_MACHINE
-    );
-
   /** Guards access to a JDBC {@code Connection} created by this adapter */
   private final AsyncLock asyncLock = new AsyncLock();
 
@@ -583,7 +497,13 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     }
 
     // Apply any JDBC connection property options
-    for (Option<CharSequence> option : JDBC_CONNECTION_PROPERTY_OPTIONS) {
+    for (Option<?> option : OracleR2dbcOptions.options()) {
+
+      // Skip options in the oracle.r2dbc namespace. These are not JDBC
+      // connection properties
+      if (option.name().startsWith("oracle.r2dbc."))
+        continue;
+
       // Using Object as the value type allows options to be set as types like
       // Boolean or Integer. These types make sense for numeric or boolean
       // connection property values, such as statement cache size, or enable x.

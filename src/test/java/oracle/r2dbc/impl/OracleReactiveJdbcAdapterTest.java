@@ -542,8 +542,6 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Set up the mock LDAP context factory. See JavaDoc of TestContextFactory
     // for details about this.
-    NamingManager.setInitialContextFactoryBuilder(environment ->
-      new TestContextFactory());
     TestContextFactory.bind(ldapPath, createDescriptor());
 
     // Now verify that the LDAP URL is resolved to the descriptor
@@ -586,8 +584,6 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Set up the mock LDAP context factory. A descriptor is bound to the last
     // endpoint only. See JavaDoc of TestContextFactory for details about this.
-    NamingManager.setInitialContextFactoryBuilder(environment ->
-      new TestContextFactory());
     TestContextFactory.bind("salesdb", createDescriptor());
 
     // Now verify that the LDAP URL is resolved to the descriptor
