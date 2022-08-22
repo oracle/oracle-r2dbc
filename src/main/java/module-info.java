@@ -36,4 +36,5 @@ module com.oracle.database.r2dbc {
   requires transitive r2dbc.spi;
 
   exports oracle.r2dbc;
+  exports oracle.r2dbc.impl;
 }

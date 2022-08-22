@@ -694,7 +694,7 @@ final class OracleStatementImpl implements Statement {
     if (object == null){
       bindValues[index] = NULL_BIND;
     }
-    else if (object instanceof Parameter) {
+    else if (object instanceof Parameter || object instanceof UserDefinedType) {
       bindParameter(index, (Parameter)object);
     }
     else if (object instanceof Parameter.In
@@ -716,7 +716,7 @@ final class OracleStatementImpl implements Statement {
    * @throws IllegalArgumentException If the Java or SQL type of the
    * {@code parameter} is not supported.
    */
-  private void bindParameter(int index, Parameter parameter) {
+  private void bindParameter(int index, Object parameter) {
 
     if (parameter instanceof Parameter.Out) {
       if (! batch.isEmpty())
@@ -725,21 +725,35 @@ final class OracleStatementImpl implements Statement {
         throw outParameterWithGeneratedValues();
     }
 
+    Type parameterType;
+    Object parameterValue;
+    if(parameter instanceof Parameter){
+      parameterType= ((Parameter) parameter).getType();
+      parameterValue= ((Parameter) parameter).getValue();
+    } else {
+      throw new IllegalArgumentException("Invalid parameter type: "+parameter);
+    }
+
     // TODO: This method should check if Java type can be converted to the
     //  specified SQL type. If the conversion is unsupported, then JDBC
     //  setObject(...) will throw when this statement is executed. The correct
     //  behavior is to throw IllegalArgumentException here, and not from
     //  execute()
-    Type r2dbcType =
-      requireNonNull(parameter.getType(), "Parameter type is null");
-    SQLType jdbcType = toJdbcType(r2dbcType);
+    Type r2dbcType= requireNonNull(parameterType, "Parameter type is null");
+    
+    SQLType jdbcType;
+    if(r2dbcType instanceof UserDefinedType){
+      jdbcType = toJdbcType(r2dbcType.getJavaType());
+    } else {
+      jdbcType = toJdbcType(r2dbcType); 
+    }
 
     if (jdbcType == null) {
       throw new IllegalArgumentException(
         "Unsupported SQL type: " + r2dbcType);
     }
 
-    requireSupportedJavaType(parameter.getValue());
+    requireSupportedJavaType(parameterValue);
     bindValues[index] = parameter;
   }
 
@@ -983,7 +997,7 @@ final class OracleStatementImpl implements Statement {
         List<Publisher<Void>> bindPublishers = null;
         for (int i = 0; i < binds.length; i++) {
 
-          if (binds[i] instanceof Parameter.Out
+          if ((((binds[i] instanceof Parameter.Out) || (binds[i] instanceof UserDefinedType)))
             && !(binds[i] instanceof Parameter.In))
             continue;
 
@@ -1339,7 +1353,7 @@ final class OracleStatementImpl implements Statement {
       super(callableStatement, bindValues);
 
       outBindIndexes = IntStream.range(0, bindValues.length)
-        .filter(i -> bindValues[i] instanceof Parameter.Out)
+        .filter(i -> bindValues[i] instanceof Parameter.Out || bindValues[i] instanceof UserDefinedType)
         .toArray();
 
       OutParameterMetadata[] metadataArray =
@@ -1351,8 +1365,10 @@ final class OracleStatementImpl implements Statement {
         // Use the parameter name, or the index if the parameter is unnamed
         String name = requireNonNullElse(
           parameterNames.get(bindIndex), String.valueOf(i));
-        metadataArray[i] = createParameterMetadata(
-          name, ((Parameter)bindValues[bindIndex]).getType());
+        if(bindValues[bindIndex] instanceof Parameter){
+          metadataArray[i] = createParameterMetadata(
+            name, ((Parameter)bindValues[bindIndex]).getType());
+        }
       }
 
       this.metadata = createOutParametersMetadata(metadataArray);
@@ -1377,8 +1393,15 @@ final class OracleStatementImpl implements Statement {
 
         for (int i : outBindIndexes) {
           Type type = ((Parameter) binds[i]).getType();
-          SQLType jdbcType = toJdbcType(type);
-          callableStatement.registerOutParameter(i + 1, jdbcType);
+          SQLType jdbcType;
+
+          if(type instanceof UserDefinedType){
+            jdbcType = toJdbcType(type.getJavaType());
+            callableStatement.registerOutParameter(i+1,jdbcType,type.getName());
+          } else {
+            jdbcType = toJdbcType(type);
+            callableStatement.registerOutParameter(i+1, jdbcType);
+          }
         }
       });
     }

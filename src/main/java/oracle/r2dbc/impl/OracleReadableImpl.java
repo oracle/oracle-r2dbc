@@ -212,7 +212,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       // Use the default type mapping if Object.class has been specified.
       // This method is invoked recursively with the default mapping, so long
       // as Object.class is not also the default mapping.
-      Class<?> defaultType = readablesMetadata.get(index).getJavaType();
+      Class<?> defaultType = readablesMetadata.get(index).getType().getJavaType();
+      
       value = Object.class.equals(defaultType)
         ? jdbcReadable.getObject(index, Object.class)
         : convert(index, defaultType);

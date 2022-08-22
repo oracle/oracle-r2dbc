@@ -215,6 +215,9 @@ final class SqlTypeMap {
    * @return A JDBC SQL type
    */
   static SQLType toJdbcType(Type r2dbcType) {
+    if(r2dbcType instanceof UserDefinedType){
+      return JAVA_TO_SQL_TYPE_MAP.get(r2dbcType.getClass());
+    }
     return r2dbcType instanceof Type.InferredType
       ? toJdbcType(r2dbcType.getJavaType())
       : R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
