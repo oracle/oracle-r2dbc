@@ -39,6 +39,7 @@ import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.SQLWarning;
 import java.time.Duration;
@@ -55,6 +56,7 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 
+import static java.sql.Statement.CLOSE_ALL_RESULTS;
 import static java.sql.Statement.KEEP_CURRENT_RESULT;
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
 import static java.util.Objects.requireNonNullElse;
@@ -1158,24 +1160,54 @@ final class OracleStatementImpl implements Statement {
      */
     private Publisher<Void> deallocate(Collection<OracleResultImpl> results) {
 
-      // Close the statement after all results are consumed
+      // Set up a counter that is decremented as each result is consumed.
       AtomicInteger unconsumed = new AtomicInteger(results.size());
+
+      // Set up a publisher that decrements the counter, and closes the
+      // statement when it reaches zero
       Publisher<Void> closeStatement = adapter.getLock().run(() -> {
         if (unconsumed.decrementAndGet() == 0)
-          preparedStatement.close();
+          closeStatement();
       });
 
+      // Tell each unconsumed result to decrement the unconsumed count, and then
+      // close the statement when the count reaches zero.
       for (OracleResultImpl result : results) {
         if (!result.onConsumed(closeStatement))
           unconsumed.decrementAndGet();
       }
 
-      // If all results have already been consumed, the returned
-      // publisher closes the statement
+      // If there are no results, or all results have already been consumed,
+      // then the returned publisher closes the statement.
       if (unconsumed.get() == 0)
-        addDeallocation(adapter.getLock().run(preparedStatement::close));
+        addDeallocation(adapter.getLock().run(this::closeStatement));
 
       return deallocators;
+    }
+
+    /**
+     * Closes the JDBC {@link #preparedStatement}. This method should only be
+     * called while holding the
+     * {@linkplain ReactiveJdbcAdapter#getLock() connection lock}
+     * @throws SQLException If the statement fails to close.
+     */
+    private void closeStatement() throws SQLException {
+      try {
+        // Workaround Oracle JDBC bug #34545179: ResultSet references are
+        // retained even when the statement is closed. Calling getMoreResults
+        // with the CLOSE_ALL_RESULTS argument forces the driver to
+        // de-reference them.
+        preparedStatement.getMoreResults(CLOSE_ALL_RESULTS);
+      }
+      catch (SQLException sqlException) {
+        // It may be the case that the JDBC connection was closed, and so the
+        // statement was closed with it. Check for this, and ignore the
+        // SQLException if so.
+        if (!jdbcConnection.isClosed())
+          throw sqlException;
+      }
+
+      preparedStatement.close();
     }
 
     /**
@@ -1454,7 +1486,7 @@ final class OracleStatementImpl implements Statement {
      */
     @Override
     protected Publisher<Void> bind() {
-      @SuppressWarnings({"unchecked","rawtypes"})
+      @SuppressWarnings({"unchecked"})
       Publisher<Void>[] bindPublishers = new Publisher[batchSize];
       for (int i = 0; i < batchSize; i++) {
         bindPublishers[i] = Flux.concat(
