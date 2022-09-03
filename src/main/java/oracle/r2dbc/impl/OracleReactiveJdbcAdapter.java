@@ -205,7 +205,13 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       OracleR2dbcOptions.VSESSION_TERMINAL,
       OracleR2dbcOptions.VSESSION_PROCESS,
       OracleR2dbcOptions.VSESSION_PROGRAM,
-      OracleR2dbcOptions.VSESSION_MACHINE
+      OracleR2dbcOptions.VSESSION_MACHINE,
+
+      // Allow JDBC to configure the session timezone as an offset of UTC
+      // (ie: +09:00), rather than a name (ie: Etc/UTC). This avoids
+      // "ORA-01882: timezone region not found" when the name of the JVM's
+      // default timezone is not recognized by Oracle Database.
+      OracleR2dbcOptions.TIMEZONE_AS_REGION
     );
 
   /** Guards access to a JDBC {@code Connection} created by this adapter */
@@ -401,16 +407,11 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    *   </li><li>
    *   {@linkplain OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE
    *     v$session.machine}
+   *   </li><li>
+   *   {@linkplain OracleConnection#CONNECTION_PROPERTY_TIMEZONE_AS_REGION
+   *     oracle.jdbc.timezoneAsRegion}
    *   </li>
    * </ul>
-   *
-   * @implNote The returned {@code DataSource} is configured to create
-   * connections that encode character bind values using the National
-   * Character Set of an Oracle Database. In 21c, the National Character Set
-   * must be either UTF-8 or UTF-16; This ensures that unicode bind data is
-   * properly encoded by Oracle JDBC. If the data source is not configured
-   * this way, the Oracle JDBC Driver uses the default character set of the
-   * database, which may not support Unicode characters.
    *
    * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have

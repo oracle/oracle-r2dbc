@@ -259,4 +259,11 @@ public final class OracleR2dbcOptions {
   public static final Option<CharSequence> VSESSION_PROCESS =
     Option.valueOf(OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_PROCESS);
 
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_TIMEZONE_AS_REGION}
+   */
+  public static final Option<CharSequence> TIMEZONE_AS_REGION =
+    Option.valueOf(OracleConnection.CONNECTION_PROPERTY_TIMEZONE_AS_REGION);
+
 }
