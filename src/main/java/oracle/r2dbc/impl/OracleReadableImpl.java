@@ -28,6 +28,7 @@ import io.r2dbc.spi.OutParametersMetadata;
 import io.r2dbc.spi.R2dbcException;
 
 import io.r2dbc.spi.R2dbcType;
+import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
 import io.r2dbc.spi.Type;
@@ -37,6 +38,7 @@ import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
 
 import java.nio.ByteBuffer;
+import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.NoSuchElementException;
@@ -208,6 +210,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     else if (LocalDateTime.class.equals(type)) {
       value = getLocalDateTime(index);
     }
+    else if (Result.class.equals(type)) {
+      value = getResult(index);
+    }
     else if (Object.class.equals(type)) {
       // Use the default type mapping if Object.class has been specified.
       // This method is invoked recursively with the default mapping, so long
@@ -325,6 +330,27 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     else {
       return jdbcReadable.getObject(index, LocalDateTime.class);
     }
+  }
+
+  /**
+   * <p>
+   * Converts the value of a column at the specified {@code index} to a
+   * {@code Result}. This method is intended for mapping REF CURSOR values,
+   * which JDBC will map to a {@link ResultSet}.
+   * </p><p>
+   * A REF CURSOR is closed when the statement that returned it is closed. It is
+   * required that user code fully consume the returned result before the
+   * statement is closed.
+   * </p>
+   * @param index 0 based column index
+   * @return A column value as a {@code Result}, or null if the column value is
+   * NULL.
+   */
+  private Result getResult(int index) {
+    ResultSet resultSet = jdbcReadable.getObject(index, ResultSet.class);
+    return resultSet == null
+      ? null
+      : OracleResultImpl.createQueryResult(resultSet, adapter);
   }
 
   /**

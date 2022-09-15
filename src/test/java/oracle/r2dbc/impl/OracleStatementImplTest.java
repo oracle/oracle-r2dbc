@@ -35,6 +35,7 @@ import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.r2dbc.OracleR2dbcOptions;
+import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.test.DatabaseConfig;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
@@ -67,6 +68,7 @@ import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
 import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.showErrors;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.user;
 import static oracle.r2dbc.util.Awaits.awaitError;
@@ -2232,6 +2234,93 @@ public class OracleStatementImplTest {
       assertEquals(badSql, r2dbcException.getSql());
     }
     finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that SYS_REFCURSOR out parameters can be consumed as
+   * {@link Result} objects.
+   */
+  @Test
+  public void testRefCursorOut() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      class TestRow {
+        final int id;
+        final String value;
+
+        TestRow(int id, String value) {
+          this.id = id;
+          this.value = value;
+        }
+      }
+
+      List<TestRow> rows = IntStream.range(0, 100)
+        .mapToObj(id -> new TestRow(id, String.valueOf(id)))
+        .collect(Collectors.toList());
+
+      // Create a table with some rows to query
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testRefCursorTable(id NUMBER, value VARCHAR(10))"));
+      Statement insertStatement = connection.createStatement(
+        "INSERT INTO testRefCursorTable VALUES (:id, :value)");
+      rows.stream()
+        .limit(rows.size() - 1)
+        .forEach(row ->
+          insertStatement
+            .bind("id", row.id)
+            .bind("value", row.value)
+            .add());
+      insertStatement
+        .bind("id", rows.get(rows.size() - 1).id)
+        .bind("value", rows.get(rows.size() - 1).value);
+      awaitUpdate(
+        rows.stream()
+          .map(row -> 1)
+          .collect(Collectors.toList()),
+        insertStatement);
+
+      // Create a procedure that returns a cursor over the rows
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testRefCursorProcedure(" +
+          " countCursor OUT SYS_REFCURSOR)" +
+          " IS" +
+          " BEGIN" +
+          " OPEN countCursor FOR " +
+          "   SELECT id, value FROM testRefCursorTable" +
+          "   ORDER BY id DESC;" +
+          " END;"));
+
+      // Call the procedure with the cursor registered as an out parameter, and
+      // expect it to map to a Result. Then consume the rows of the Result and
+      // verify they have the expected values inserted above.
+      awaitMany(
+        rows,
+        Flux.from(connection.createStatement(
+          "BEGIN testRefCursorProcedure(:countCursor); END;")
+          .bind("countCursor", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+          .execute())
+          .flatMap(result ->
+            result.map(outParameters ->
+              outParameters.get("countCursor")))
+          .cast(Result.class)
+          .flatMap(countCursor ->
+            countCursor.map(row ->
+              new TestRow(
+                row.get("id", Integer.class),
+                row.get("value", String.class)))));
+    }
+    catch (Exception exception) {
+      showErrors(connection);
+      throw exception;
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testRefCursorProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testRefCursorTable"));
       tryAwaitNone(connection.close());
     }
   }

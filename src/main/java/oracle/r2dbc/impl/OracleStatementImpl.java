@@ -736,10 +736,8 @@ final class OracleStatementImpl implements Statement {
       requireNonNull(parameter.getType(), "Parameter type is null");
     SQLType jdbcType = toJdbcType(r2dbcType);
 
-    if (jdbcType == null) {
-      throw new IllegalArgumentException(
-        "Unsupported SQL type: " + r2dbcType);
-    }
+    if (jdbcType == null)
+      throw new IllegalArgumentException("Unsupported SQL type: " + r2dbcType);
 
     requireSupportedJavaType(parameter.getValue());
     bindValues[index] = parameter;
