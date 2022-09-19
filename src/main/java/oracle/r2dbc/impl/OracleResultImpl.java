@@ -53,10 +53,10 @@ import static oracle.r2dbc.impl.ReadablesMetadata.createRowMetadata;
  * <p>
  * Abstract class providing a base implementation of the R2DBC SPI
  * {@link Result} interface. Concrete subclasses implement
- * {@link #publishSegments(Function)} to return a {@link Publisher} that emits
- * the output of a {@link Segment} mapping function for each {@code Segment} of
- * the {@code Result}. Implementations of R2DBC SPI methods in the base
- * class invoke {@code publishSegments} with a mapping function that
+ * {@link #mapSegments(Class, Function)} to return a {@link Publisher} that
+ * emits the output of a {@link Segment} mapping function for each
+ * {@code Segment} of the {@code Result}. Implementations of R2DBC SPI methods
+ * in the base class invoke {@code mapSegments} with a mapping function that
  * filters the emitted {@code Segment}s according to the specification of the
  * SPI method.
  * </p>
@@ -64,136 +64,40 @@ import static oracle.r2dbc.impl.ReadablesMetadata.createRowMetadata;
 abstract class OracleResultImpl implements Result {
 
   /**
-   * Object output by mapping functions provided to
-   * {@link #publishSegments(Function)} for {@code Segment}s that do not
-   * satisfy a filter. Downstream operators of
-   * {@link #publishSegments(Function)} filter this object so that it is not
-   * emitted to user code.
-   */
-  private static final Object FILTERED = new Object();
-
-  /**
-   * This field is set to {@code true} if this result depends on a JDBC
-   * statement to remain open until this result is consumed. For instance,
-   * if this result retains an JDBC {@code ResultSet}, then the statement which
-   * created that {@code ResultSet} must remain open until this result is
-   * consumed; Closing the JDBC statement would close any {@code ResultSet}
-   * it had created. As a counter example, if this result only retains an
-   * update count, then the JDBC statement does not need to remain open. The
-   * update count is simply stored as a {@code long} value, and closing the
-   * JDBC statement has no effect on that.
-   */
-  private final boolean isDependent;
-
-  /**
-   * A collection of results that depend on a JDBC statement to remain open
-   * until they are consumed. This field is initialized to a placeholder value
-   * that does nothing, and this placeholder is retained if this result does not
-   * depend on a JDBC statement. Otherwise, if this result does depend on a
-   * JDBC statement, then this field is set to the {@code DependentResults}
-   * object passed to {@link #addDependent(DependentResults)}
-   * {@linkplain #isDependent has such a dependency}, then it adds itself to
-   * the
-   */
-  private DependentResults dependentResults =
-    new DependentResults(Mono.empty());
-
-  /**
    * Indicates if a method call on this {@code Result} has already returned a
    * {@code Publisher} that allows this {@code Result} to be consumed. In
-   * conformance with the R2DBC SPI, multiple attempts to consume the this
-   * result will yield an {@code IllegalStateException}.
+   * conformance with the R2DBC SPI, an {@code IllegalStateException} is thrown
+   * if multiple attempts are made to consume this result; A result may only be
+   * consumed once.
    */
   private boolean isPublished = false;
 
-
   /** Private constructor invoked by inner subclasses */
-  private OracleResultImpl(boolean isDependent) {
-    this.isDependent = isDependent;
-  }
-
-  /**
-   * Publishes the output of a {@code mappingFunction} for each {@code Segment}
-   * of this {@code Result}.
-   * @param mappingFunction {@code Segment} mapping function. Not null.
-   * @param <T> Output type of the {@code mappingFunction}
-   * @return {@code Publisher} of values output by the {@code mappingFunction}
-   */
-  abstract <T> Publisher<T> publishSegments(
-    Function<Segment, T> mappingFunction);
-
-  /**
-   * <p>
-   * Publishes the output of a {@code mappingFunction} for each {@code Segment}
-   * of this {@code Result}, where the {@code Segment} is an instance of the
-   * specified {@code type}.
-   * </p><p>
-   * This method sets {@link #isPublished} to prevent multiple consumptions
-   * of this {@code Result}. In case this is a {@link FilteredResult}, this
-   * method must invoke {@link #publishSegments(Function)}, before returning,
-   * in order to update {@code isPublished} of the {@link FilteredResult#result}
-   * as well.
-   * </p><p>
-   * When the returned publisher terminates with {@code onComplete},
-   * {@code onError}, or {@code cancel}, the {@link #onConsumed} publisher is
-   * subscribed to. The {@code onConsumed} reference is updated to {@code null}
-   * so that post-consumption calls to {@link #onConsumed(Publisher)} can detect
-   * that this result is already consumed.
-   * </p><p>
-   * This method uses a doOnNext operator to catch any Results output by a user
-   * defined mapping function (this can happen with REF CURSOR out parameters).
-   * Output results may be added to the collection of {@link #dependentResults}.
-   *
-   * </p><p>
-   * The returned {@code Publisher} emits {@code onError} with an
-   * {@link R2dbcException} if this {@code Result} has a {@link Message} segment
-   * and the {@code type} is not a super-type of {@code Message}. This
-   * corresponds to the specified behavior of R2DBC SPI methods
-   * {@link #map(BiFunction)}, {@link #map(BiFunction)}, and
-   * {@link #getRowsUpdated()}
-   * </p>
-   * @param segmentType {@code Segment} type to be mapped. Not null.
-   * @param segmentMapper {@code Segment} mapping function. Not null.
-   * @param <T> {@code Segment} type to be mapped
-   * @param <U> Output type of the {@code mappingFunction}
-   * @return {@code Publisher} of mapped {@code Segment}s
-   */
-  @SuppressWarnings("unchecked")
-  private <T extends Segment, U> Publisher<U> publishSegments(
-    Class<T> segmentType, Function<? super T, U> segmentMapper) {
-    return Flux.concatDelayError(
-      Flux.from(mapSegments(segmentType, segmentMapper))
-        .doOnNext(next -> {
-          if (next instanceof OracleResultImpl)
-            ((OracleResultImpl)next).addDependent(dependentResults);
-        }),
-      (Publisher<U>)removeDependent())
-      .doOnCancel(() -> Mono.from(removeDependent()).subscribe());
-  }
+  private OracleResultImpl() { }
 
   /**
    * <p>
    * Returns a publisher that emits the output of a segment mapping function for
-   * each segment of this result. The mapping function accepts segments of a
-   * specified type. This method is called from the public API to create
-   * publishers of different value types, such as a {@code Publisher<Long>}
-   * for {@link #getRowsUpdated()}, or a publisher of mapped rows for
-   * {@link #map(BiFunction)}.
+   * each segment of this result. The mapping function only accepts segments of
+   * a specified type. This method is called from methods of the public API to
+   * create publishers of different value types. For instance, the
+   * {@link #getRowsUpdated()} method creates a {@code Publisher<Long>} by
+   * calling this method with an {@code UpdateCount.class} segment type and a
+   * function that maps {@code UpdateCount} segments to a {@code Long}.
    * </p><p>
-   * This result may not have any segments of the specified type. In this case,
-   * the returned publisher emits an error for any {@code Message} segments, are
+   * Any segments, other than {@code Message} segments, that are not an instance
+   * of the {@code segmentType} should not be passed to the
+   * {@code segmentMapper}, and should not emitted by the returned publisher in
+   * any form. However, {@code Message} segments are an exception. The error of
+   * a {@code Message} segment must be emitted as an {@code onError} signal,
+   * even if the {@code segmentType} is not assignable to {@code Message}
+   * segments.
    * </p>
-   * If this result has no segments of the specified type, the
-   * publisher emits nothing to onNext. If
-   * if this result has no segment of the given type. If the segment type is not
-   * {@link Message}, and this publisher has a message segment, then publisher emits an
-   * error if this result has a message segment and the type is this result has no
-   * message segments
-   * @param segmentType
-   * @param segmentMapper
-   * @return
-   * @param <T>
-   * @param <U>
+   * @param segmentType Class of {@code Segment} to map. Not null.
+   * @param segmentMapper Maps segments to published values.
+   * @return A publisher that emits the mapped values.
+   * @param <T> Segment type to map
+   * @param <U> Type of mapped value
    */
   protected abstract <T extends Segment, U> Publisher<U> mapSegments(
     Class<T> segmentType, Function<? super T, U> segmentMapper);
@@ -201,12 +105,11 @@ abstract class OracleResultImpl implements Result {
   /**
    * {@inheritDoc}
    * <p>
-   * Implements the R2DBC SPI method to return a {@code Publisher} emitting the
-   * flat-mapped output of {@code Publisher}s output by a
-   * {@code mappingFunction} for all {@code Segments} this {@code Result}.
-   * {@code Publisher}s output by the {@code mappingFunction} are subscribed to
-   * serially with the completion of the {@code Publisher} output for any
-   * previous {@code Segment}.
+   * Implements the R2DBC SPI method to return a flat-mapping of publishers
+   * generated by a {@code mappingFunction}. Publishers output by the
+   * {@code mappingFunction} are subscribed to serially. Serial subscription is
+   * implemented by the {@code Flux.concat(Publisher<Publisher>)} factory called
+   * by this method.
    * </p><p>
    * The returned {@code Publisher} does not support multiple
    * {@code Subscriber}s
@@ -218,7 +121,7 @@ abstract class OracleResultImpl implements Result {
     requireNonNull(mappingFunction, "mappingFunction is null");
     setPublished();
     return singleSubscriber(Flux.concat(
-      publishSegments(Segment.class, mappingFunction)));
+      mapSegments(Segment.class, mappingFunction)));
   }
 
   /**
@@ -236,7 +139,7 @@ abstract class OracleResultImpl implements Result {
   @Override
   public Publisher<Long> getRowsUpdated() {
     setPublished();
-    return publishSegments(UpdateCount.class, UpdateCount::value);
+    return mapSegments(UpdateCount.class, UpdateCount::value);
   }
 
   /**
@@ -255,8 +158,8 @@ abstract class OracleResultImpl implements Result {
     BiFunction<Row, RowMetadata, ? extends T> mappingFunction) {
     requireNonNull(mappingFunction, "mappingFunction is null");
     setPublished();
-    return singleSubscriber(publishSegments(RowSegment.class,
-      rowSegment -> {
+    return singleSubscriber(mapSegments(
+      RowSegment.class, rowSegment -> {
         Row row = rowSegment.row();
         return mappingFunction.apply(row, row.getMetadata());
       }));
@@ -278,8 +181,8 @@ abstract class OracleResultImpl implements Result {
     Function<? super Readable, ? extends T> mappingFunction) {
     requireNonNull(mappingFunction, "mappingFunction is null");
     setPublished();
-    return singleSubscriber(publishSegments(ReadableSegment.class,
-      readableSegment ->
+    return singleSubscriber(mapSegments(
+      ReadableSegment.class, readableSegment ->
         mappingFunction.apply(readableSegment.getReadable())));
   }
 
@@ -288,13 +191,8 @@ abstract class OracleResultImpl implements Result {
    * <p>
    * Implements the R2DBC SPI method to return a new instance of
    * {@code OracleResultImpl} that implements
-   * {@link OracleResultImpl#publishSegments(Function)} to call
-   * {@link OracleResultImpl#publishSegments(Class, Function)} on this instance
-   * of {@code OracleResultImpl}. The invocation of {@code publishSegments}
-   * on this instance ensures that its consumption state is updated correctly.
-   * The invocation of {@code publishSegments} is provided with a mapping
-   * function that outputs the {@link #FILTERED} object for {@code Segment}s
-   * rejected by the {@code filter}.
+   * {@link OracleResultImpl#mapSegments(Class, Function)} to filter segments of
+   * this result with the specified {@code filter} predicate.
    * </p>
    */
   @Override
@@ -305,13 +203,24 @@ abstract class OracleResultImpl implements Result {
 
   /**
    * <p>
-   * Adds this result to a collection of results that depend on the JDBC
-   * statement they came from to remain open. Depending on the type of this
-   * result, this method may or may not add a result to the collection. For
-   * instance, an update count result would not be added because it does not
-   * depend on the JDBC statement to remain open. Conversely, a result backed by
-   * a JDBC ResultSet would be added, as the ResultSet would otherwise be closed
-   * when JDBC statement is closed.
+   * Adds this result to a collection of results that depend on a JDBC
+   * statement. After this method is called, the JDBC statement must remain open
+   * until this result signals that it has been closed.
+   * </p><p>
+   * This method must only be invoked when it is certain that this
+   * result will be received by user code. If user code never receives this
+   * result, then it can never consume it, and the JDBC statement is never
+   * closed. Otherwise, once this result reaches user code, that code is
+   * responsible for consuming it. The R2DBC specification requires results to
+   * be fully consumed; There is no other way for Oracle R2DBC to know when
+   * it is safe to close the JDBC statement.
+   * </p><p>
+   * Depending on the type of this result, this method may or may not actually
+   * do anything. For instance, if this result is an update count, then it
+   * doesn't depend on a JDBC statement, and so it won't actually register
+   * itself as a dependent. This result registers itself only if it retains
+   * something like {@code ResultSet} which depends on the JDBC statement to
+   * remain open.
    * </p><p>
    * Additional results may be added to the collection after this method
    * returns. In particular, a REF CURSOR is backed by a ResultSet, and that
@@ -324,22 +233,10 @@ abstract class OracleResultImpl implements Result {
    * nothing. Subclasses that depend on the JDBC statement override this method
    * and add themselves to the collection of dependent results.
    * </p>
-   * @param onConsumed Publisher to subscribe to when consumed. Not null.
-   * @return true if this result has not already been consumed, and the
-   * publisher will be subscribed to. Returns false if the publisher will not
-   * be subscribed to because this result is already consumed.
    */
-  final void addDependent(DependentResults dependentResults) {
-    if (isDependent)
-      dependentResults.increment();
-
-    this.dependentResults = dependentResults;
-  }
-
-  private Publisher<Void> removeDependent() {
-    return isDependent
-      ? dependentResults.decrement()
-      : Mono.empty();
+  void addDependent() {
+    // Do nothing for non-dependent results. This method is overridden by the
+    // DependentResult subclass to add a dependent result.
   }
 
   /**
@@ -354,46 +251,43 @@ abstract class OracleResultImpl implements Result {
    * @throws IllegalStateException If this result has already been consumed.
    */
   protected void setPublished() {
-    if (! isPublished)
-      isPublished = true;
-    else
-      throw multipleConsumptionException();
-  }
-
-  /**
-   * Returns an {@code IllegalStateException} to be thrown when user code
-   * attempts to consume a {@code Result} more than once with invocations of
-   * {@link #map(BiFunction)}, {@link #map(Function)},
-   * {@link #flatMap(Function)}, or {@link #getRowsUpdated()}.
-   * @return {@code IllegalStateException} indicating multiple consumptions
-   */
-  private static IllegalStateException multipleConsumptionException() {
-    return new IllegalStateException(
-      "A result can not be consumed more than once");
+    if (isPublished) {
+      throw new IllegalStateException(
+        "A result can not be consumed more than once");
+    }
+    isPublished = true;
   }
 
   /**
    * Creates a {@code Result} that publishes a JDBC {@code resultSet} as
    * {@link RowSegment}s
+   * @param dependentCounter Collection of results that depend on the JDBC
+   * statement which created the {@code ResultSet} to remain open until all
+   * results are consumed.
    * @param resultSet {@code ResultSet} to publish. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    * @return A {@code Result} for a ResultSet
    */
   public static OracleResultImpl createQueryResult(
-    ResultSet resultSet, ReactiveJdbcAdapter adapter) {
-    return new ResultSetResult(resultSet, adapter);
+    DependentCounter dependentCounter, ResultSet resultSet,
+    ReactiveJdbcAdapter adapter) {
+    return new ResultSetResult(dependentCounter, resultSet, adapter);
   }
 
   /**
    * Creates a {@code Result} that publishes {@code outParameters} as
    * {@link OutSegment}s
+   * @param dependentCounter Collection of results that depend on the JDBC
+   * statement which created the {@code OutParameters} to remain open until all
+   * results are consumed.
    * @param outParameters {@code OutParameters} to publish. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    * @return A {@code Result} for {@code OutParameters}
    */
   static OracleResultImpl createCallResult(
-    OutParameters outParameters, ReactiveJdbcAdapter adapter) {
-    return new CallResult(outParameters, adapter);
+    DependentCounter dependentCounter, OutParameters outParameters,
+    ReactiveJdbcAdapter adapter) {
+    return new CallResult(dependentCounter, outParameters, adapter);
   }
 
   /**
@@ -402,12 +296,17 @@ abstract class OracleResultImpl implements Result {
    * {@code ResultSet} as {@link RowSegment}s
    * @return A {@code Result} for values generated by DML
    * @param updateCount Update count to publish
+   * @param dependentCounter Collection of results that depend on the JDBC
+   * statement which created the {@code generatedKeys} {@code ResultSet} to
+   * remain open until all results are consumed.
    * @param generatedKeys Generated values to publish. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   static OracleResultImpl createGeneratedValuesResult(
-    long updateCount, ResultSet generatedKeys, ReactiveJdbcAdapter adapter) {
-    return new GeneratedKeysResult(updateCount, generatedKeys, adapter);
+    long updateCount, DependentCounter dependentCounter,
+    ResultSet generatedKeys, ReactiveJdbcAdapter adapter) {
+    return new GeneratedKeysResult(
+      updateCount, dependentCounter, generatedKeys, adapter);
   }
 
   /**
@@ -477,16 +376,7 @@ abstract class OracleResultImpl implements Result {
     private final long updateCount;
 
     private UpdateCountResult(long updateCount) {
-      super(false);
       this.updateCount = updateCount;
-    }
-
-    @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return updateCount >= 0
-        ? Mono.just(new UpdateCountImpl(updateCount))
-            .map(mappingFunction)
-        : Mono.empty();
     }
 
     /**
@@ -540,35 +430,23 @@ abstract class OracleResultImpl implements Result {
    * values from that method.
    * </p>
    */
-  private static final class ResultSetResult extends OracleResultImpl {
+  private static final class ResultSetResult extends DependentResult {
 
     private final ResultSet resultSet;
     private final RowMetadataImpl metadata;
     private final ReactiveJdbcAdapter adapter;
 
     private ResultSetResult(
-      ResultSet resultSet, ReactiveJdbcAdapter adapter) {
-      super(true);
+      DependentCounter dependentCounter, ResultSet resultSet,
+      ReactiveJdbcAdapter adapter) {
+      super(dependentCounter);
       this.resultSet = resultSet;
       this.metadata = createRowMetadata(fromJdbc(resultSet::getMetaData));
       this.adapter = adapter;
     }
 
     @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-
-      // Avoiding object allocating by reusing the same Row object
-      ReusableJdbcReadable reusableJdbcReadable = new ReusableJdbcReadable();
-      Row row = createRow(reusableJdbcReadable, metadata, adapter);
-
-      return adapter.publishRows(resultSet, jdbcReadable -> {
-        reusableJdbcReadable.current = jdbcReadable;
-        return mappingFunction.apply(new RowSegmentImpl(row));
-      });
-    }
-
-    @Override
-    protected <T extends Segment, U> Publisher<U> mapSegments(
+    protected <T extends Segment, U> Publisher<U> mapDependentSegments(
       Class<T> segmentType, Function<? super T, U> segmentMapper) {
 
       if (!segmentType.isAssignableFrom(RowSegmentImpl.class))
@@ -576,7 +454,8 @@ abstract class OracleResultImpl implements Result {
 
       // Avoiding object allocation by reusing the same Row object
       ReusableJdbcReadable reusableJdbcReadable = new ReusableJdbcReadable();
-      Row row = createRow(reusableJdbcReadable, metadata, adapter);
+      Row row =
+        createRow(dependentCounter, reusableJdbcReadable, metadata, adapter);
 
       return adapter.publishRows(resultSet, jdbcReadable -> {
         reusableJdbcReadable.current = jdbcReadable;
@@ -618,16 +497,16 @@ abstract class OracleResultImpl implements Result {
     private final OracleResultImpl generatedKeysResult;
 
     private GeneratedKeysResult(
-      long updateCount, ResultSet generatedKeys, ReactiveJdbcAdapter adapter) {
-      super(true);
+      long updateCount, DependentCounter dependentCounter,
+      ResultSet generatedKeys, ReactiveJdbcAdapter adapter) {
       updateCountResult = createUpdateCountResult(updateCount);
-      generatedKeysResult = createQueryResult(generatedKeys, adapter);
+      generatedKeysResult =
+        createQueryResult(dependentCounter, generatedKeys, adapter);
     }
 
     @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return Flux.concat(updateCountResult.publishSegments(mappingFunction))
-        .concatWith(generatedKeysResult.publishSegments(mappingFunction));
+    void addDependent() {
+      generatedKeysResult.addDependent();
     }
 
     @Override
@@ -643,29 +522,21 @@ abstract class OracleResultImpl implements Result {
    * {@link OracleResultImpl} subclass that publishes a single instance of
    * {@link OutParameters} as an {@link OutSegment}.
    */
-  private static final class CallResult extends OracleResultImpl {
+  private static final class CallResult extends DependentResult {
 
     private final OutParameters outParameters;
     private final ReactiveJdbcAdapter adapter;
 
     private CallResult(
-      OutParameters outParameters, ReactiveJdbcAdapter adapter) {
-      super(true);
+      DependentCounter dependentCounter, OutParameters outParameters,
+      ReactiveJdbcAdapter adapter) {
+      super(dependentCounter);
       this.outParameters = outParameters;
       this.adapter = adapter;
     }
 
     @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      // Acquire the JDBC lock asynchronously as the outParameters are backed
-      // by a JDBC CallableStatement, and it may block a thread when values
-      // are accessed with CallableStatement.getObject(...)
-      return adapter.getLock().get(() ->
-        mappingFunction.apply(new OutSegmentImpl(outParameters)));
-    }
-
-    @Override
-    protected <T extends Segment, U> Publisher<U> mapSegments(
+    protected <T extends Segment, U> Publisher<U> mapDependentSegments(
       Class<T> segmentType, Function<? super T, U> segmentMapper) {
 
       if (!segmentType.isAssignableFrom(OutSegmentImpl.class))
@@ -689,15 +560,7 @@ abstract class OracleResultImpl implements Result {
     private final long[] updateCounts;
 
     private BatchUpdateResult(long[] updateCounts) {
-      super(false);
       this.updateCounts = updateCounts;
-    }
-
-    @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return Flux.fromStream(LongStream.of(updateCounts)
-        .mapToObj(UpdateCountImpl::new))
-        .map(mappingFunction);
     }
 
     @Override
@@ -727,20 +590,11 @@ abstract class OracleResultImpl implements Result {
     private final BatchUpdateResult batchUpdateResult;
     private final ErrorResult errorResult;
 
-    private BatchUpdateErrorResult(
-      BatchUpdateException batchUpdateException) {
-      super(false);
+    private BatchUpdateErrorResult(BatchUpdateException batchUpdateException) {
       batchUpdateResult = new BatchUpdateResult(
         batchUpdateException.getLargeUpdateCounts());
       errorResult =
         new ErrorResult(toR2dbcException(batchUpdateException));
-    }
-
-    @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return Flux.concat(
-        batchUpdateResult.publishSegments(mappingFunction),
-        errorResult.publishSegments(mappingFunction));
     }
 
     @Override
@@ -762,21 +616,14 @@ abstract class OracleResultImpl implements Result {
     private final R2dbcException r2dbcException;
 
     private ErrorResult(R2dbcException r2dbcException) {
-      super(false);
       this.r2dbcException = r2dbcException;
-    }
-
-    @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return Mono.just(new MessageImpl(r2dbcException))
-        .map(mappingFunction);
     }
 
     /**
      * {@inheritDoc}
      * <p>
      * Emits the mapping of a message segment, or emits an error if another
-     * segment type is specified. Unlike other segment types, message segements
+     * segment type is specified. Unlike other segment types, message segments
      * represent an error that must be delivered to user code. Even when user
      * code is calling for some other segment type, like rows with
      * {@link #map(BiFunction)}, or update counts with
@@ -826,26 +673,14 @@ abstract class OracleResultImpl implements Result {
      * @param warning Warning to publish. Not null.
      * @param result Result of segments to publish after the warning. Not null.
      */
-    private WarningResult(
-      SQLWarning warning, OracleResultImpl result) {
-      super(result.isDependent);
+    private WarningResult(SQLWarning warning, OracleResultImpl result) {
       this.warning = warning;
       this.result = result;
     }
 
     @Override
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return Flux.fromStream(Stream.iterate(
-        warning, Objects::nonNull, SQLWarning::getNextWarning)
-        .map(OracleR2dbcExceptions::toR2dbcException)
-        .map(MessageImpl::new))
-        .map(mappingFunction)
-        // Invoke publishSegments(Class, Function) rather than
-        // publishSegments(Function) to update the state of the result; Namely,
-        // the state that has the onConsumed Publisher emit a terminal signal.
-        .concatWith(result != null
-          ? result.publishSegments(Segment.class,mappingFunction)
-          : Mono.empty());
+    void addDependent() {
+      result.addDependent();
     }
 
     /**
@@ -884,6 +719,13 @@ abstract class OracleResultImpl implements Result {
    */
   private static final class FilteredResult extends OracleResultImpl {
 
+    /**
+     * An object that represents a filtered {@code Segment}. This object is
+     * output by a segment mapping function defined in
+     * {@link #mapSegments(Class, Function)}.
+     */
+    private static final Object FILTERED = new Object();
+
     /** Result of segments to publish after applying the {@link #filter} */
     private final OracleResultImpl result;
 
@@ -894,20 +736,14 @@ abstract class OracleResultImpl implements Result {
      * Constructs a new result that applies a {@code filter} when publishing
      * segments of a {@code result}.
      */
-    private FilteredResult(
-      OracleResultImpl result, Predicate<Segment> filter) {
-      super(result.isDependent);
+    private FilteredResult(OracleResultImpl result, Predicate<Segment> filter) {
       this.result = result;
       this.filter = filter;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
-      return result.publishSegments(Segment.class, segment ->
-        filter.test(segment)
-          ? mappingFunction.apply(segment)
-          : (T)FILTERED);
+    void addDependent() {
+      result.addDependent();
     }
 
     /**
@@ -917,45 +753,48 @@ abstract class OracleResultImpl implements Result {
      * filtered {@link #result} to map all segments with the filtering
      * predicate. Mapping functions must return a non-null value, so it will
      * return a dummy object, {@link #FILTERED}, for segments that are filtered
-     * by the predicate. A downstream filter operator will then filter out the
-     * {@code FILTERED} objects. It is important that {@code Segment.class}
-     * be passed to the {@code mapSegments} method of the filtered result, other
-     * wise a {@code Message} segment will have its error be emitted with
-     * {@code onError}, and bypass the filtering.
+     * by the predicate. The {@code FILTERED} object is then filtered by a
+     * downstream filter operator.
+     * </p><p>
+     * It is important that {@code Segment.class} be passed to the
+     * {@code mapSegments} method of the filtered result, otherwise
+     * {@code Message} segments would be emitted with {@code onError} and bypass
+     * the filtering function. If the filter does not exclude a message segment,
+     * and the {@code segmentMapper} does not accept message segments, only then
+     * will the exception of the message segment be emitted with onError.
      * </p>
-     * @param segmentType
-     * @param segmentMapper
-     * @return
-     * @param <T>
-     * @param <U>
      */
     @Override
     protected <T extends Segment, U> Publisher<U> mapSegments(
       Class<T> segmentType, Function<? super T, U> segmentMapper) {
-      return Flux.from(result.publishSegments(
-        Segment.class,
-        segment -> {
+
+      @SuppressWarnings("unchecked")
+      U filtered = (U)FILTERED;
+
+      return Flux.from(result.mapSegments(
+        Segment.class, segment -> {
           if (!filter.test(segment))
-            return (U)FILTERED;
+            return filtered;
 
           if (segmentType.isAssignableFrom(segment.getClass()))
             return segmentMapper.apply(segmentType.cast(segment));
           else if (segment instanceof Message)
             throw ((Message)segment).exception();
           else
-            return (U)FILTERED;
+            return filtered;
         }))
         .filter(next -> next != FILTERED);
     }
 
     /**
-     * Override to check if the filtered result is already consumed. This
-     * override is necessary to have {@code IllegalStateException} thrown
-     * *before* a publisher is returned to user code. The check will happen
-     * again when {@link #mapSegments(Class, Function)} invokes
-     * {@link #publishSegments(Class, Function)} on the filtered result, but
-     * this only happens *after* a publisher is returned to user code and
-     * subscribed to.
+     * {@inheritDoc}
+     * <p>
+     * Overridden to also set the filtered result as published. If this method
+     * is called, then a method of the public API has been called to return
+     * a publisher from this result. If user code somehow has a reference to the
+     * filtered result as well, then the filtered result should also throw
+     * {@code IllegalStateException} if one of its public methods are invoked.
+     * </p>
      */
     @Override
     protected void setPublished() {
@@ -1023,6 +862,94 @@ abstract class OracleResultImpl implements Result {
     public Readable getReadable() {
       return outParameters;
     }
+  }
+
+
+  /**
+   * A base class for results that depend on a JDBC statement to remain open
+   * until the result is consumed. This base class handles interactions with
+   * a {@link DependentCounter} object representing a collection of results
+   * that depend on a JDBC statement. Subclasses implement
+   * {@link #mapDependentSegments(Class, Function)} following the same
+   * specification as {@link #mapSegments(Class, Function)}.
+   */
+  private static abstract class DependentResult extends OracleResultImpl {
+
+    /**
+     * A collection of results that depend on the JDBC statement which created
+     * this result to remain open until all results are consumed.
+     */
+    protected final DependentCounter dependentCounter;
+
+    /**
+     * Constructs a new result that registers and deregisters itself with a
+     * collection of dependent results.
+     * @param dependentCounter Collection of dependent results. Not null.
+     */
+    private DependentResult(DependentCounter dependentCounter) {
+      this.dependentCounter = dependentCounter;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Adds this result to the collection of dependent results.
+     * </p>
+     */
+    @Override
+    void addDependent() {
+      dependentCounter.increment();
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Delegates to the {@code mapDependentSegments(Class, Function)} method of
+     * a subclass to perform actual segment mapping. This method ensures that
+     * this result is removed from the collection of dependent results when the
+     * segment mapping publisher terminates with {@code onComplete},
+     * {@code onError}, or {@code cancel}.
+     * </p><p>
+     * It may be possible that a user defined segment mapper outputs a new
+     * {@code Result}. For instance, this can happen when user code maps a
+     * REF CURSOR. If a {@code Result} is emitted, then that result is added to
+     * the collection of dependent results. This method uses a {@code doOnNext}
+     * operator to ensure that the result is not added until it is guaranteed
+     * to reach user code.
+     */
+    @Override
+    protected final <T extends Segment, U> Publisher<U> mapSegments(
+      Class<T> segmentType, Function<? super T, U> segmentMapper) {
+
+      @SuppressWarnings("unchecked")
+      Publisher<U> removeDependent = (Publisher<U>) dependentCounter.decrement();
+
+      return Flux.concatDelayError(
+        Flux.from(mapDependentSegments(segmentType, segmentMapper))
+          .doOnNext(next -> {
+            if (next instanceof OracleResultImpl) // This is a REF CURSOR
+              ((OracleResultImpl)next).addDependent();
+          }),
+        removeDependent)
+        .doOnCancel(() ->
+          Mono.from(removeDependent).subscribe());
+    }
+
+    /**
+     * Maps segments exactly as specified by
+     * {@link #mapSegments(Class, Function)}. This method is called from the
+     * base class implementation of {@link #mapSegments(Class, Function)}. The
+     * base class implementation ensures that this result is removed from the
+     * collection of dependents when the segment mapping publisher is
+     * terminated.
+     * @param segmentType Class of {@code Segment} to map. Not null.
+     * @param segmentMapper Maps segments to published values.
+     * @return A publisher that emits the mapped values.
+     * @param <T> Segment type to map
+     * @param <U> Type of mapped value
+     */
+    protected abstract <T extends Segment, U> Publisher<U> mapDependentSegments(
+      Class<T> segmentType, Function<? super T, U> segmentMapper);
   }
 
   /**
