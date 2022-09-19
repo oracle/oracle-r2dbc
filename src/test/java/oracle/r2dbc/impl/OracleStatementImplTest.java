@@ -48,6 +48,7 @@ import java.sql.SQLWarning;
 import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -2022,15 +2023,16 @@ public class OracleStatementImplTest {
             result.flatMap(segment -> {
               int index = segmentCount.getAndIncrement();
               if (index == 0) {
-                assertTrue(segment instanceof Message,
-                  "Unexpected Segment: " + segment);
-                return Mono.just(((Message)segment).exception());
-              }
-              else if (index == 1) {
                 assertTrue(segment instanceof UpdateCount,
                   "Unexpected Segment: " + segment);
                 assertEquals(0, ((UpdateCount)segment).value());
                 return Mono.empty();
+
+              }
+              else if (index == 1) {
+                assertTrue(segment instanceof Message,
+                "Unexpected Segment: " + segment);
+                return Mono.just(((Message)segment).exception());
               }
               else {
                 fail("Unexpected Segment: " + segment);
@@ -2255,6 +2257,18 @@ public class OracleStatementImplTest {
           this.id = id;
           this.value = value;
         }
+
+        @Override
+        public boolean equals(Object other) {
+          return other instanceof TestRow
+            && id == ((TestRow)other).id
+            && Objects.equals(value, ((TestRow)other).value);
+        }
+
+        @Override
+        public String toString() {
+          return "[id=" + id + ", value=" + value + "]";
+        }
       }
 
       List<TestRow> rows = IntStream.range(0, 100)
@@ -2290,7 +2304,7 @@ public class OracleStatementImplTest {
           " BEGIN" +
           " OPEN countCursor FOR " +
           "   SELECT id, value FROM testRefCursorTable" +
-          "   ORDER BY id DESC;" +
+          "   ORDER BY id;" +
           " END;"));
 
       // Call the procedure with the cursor registered as an out parameter, and

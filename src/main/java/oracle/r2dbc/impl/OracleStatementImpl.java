@@ -45,7 +45,6 @@ import java.sql.SQLWarning;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -943,20 +942,39 @@ final class OracleStatementImpl implements Statement {
      * emitted from the {@code bind} or {@code getResults} publishers, or if
      * {@link PreparedStatement#getWarnings()} yields a warning.
      * </p><p>
-     * After all {@code Results} have been consumed, the
-     * {@link #preparedStatement} is closed.
+     * The {@link #preparedStatement} needs to be closed only after all results
+     * that depend on it are consumed. A result can only be consumed if it
+     * reaches user code. For this reason, the
+     * {@link OracleResultImpl#addDependent(DependentResults)} method is invoked
+     * by an doOnNext operator. Examining the source code of Reactor, it is
+     * guaranteed that any result which is consumed by this operator will be
+     * emitted to a downstream subscriber. A cancel signal might occur after a
+     * result is constructed in {@link #getResults(boolean)}. For this reason,
+     * results are not added as dependents until they actually get emitted in
+     * onNext.
      * </p>
      * @return A publisher that emits the result of executing this statement
      */
     final Publisher<OracleResultImpl> execute() {
-      return Flux.usingWhen(Mono.just(new ArrayList<>(1)),
-        results ->
+      return Flux.usingWhen(
+        Mono.fromSupplier(() -> {
+          // Add this statement as a "party" (think j.u.c.Phaser) to the dependent
+          // results. After the result publisher terminates, "arrive". This ensures
+          // that all results are emitted before any result can count down
+          // DependentResults to 0, and close the statement before another result
+          // even gets emitted.
+          DependentResults dependentResults =
+            new DependentResults(closeStatement());
+          dependentResults.increment();
+          return dependentResults;
+        }),
+        dependentResults ->
           Mono.from(bind())
             .thenMany(executeJdbc())
             .map(this::getWarnings)
-            .doOnNext(results::add)
             .onErrorResume(R2dbcException.class, r2dbcException ->
-              Mono.just(createErrorResult(r2dbcException))),
+              Mono.just(createErrorResult(r2dbcException)))
+            .doOnNext(result -> result.addDependent(dependentResults)),
         this::deallocate);
     }
 
@@ -1151,35 +1169,13 @@ final class OracleStatementImpl implements Statement {
      * {@link #preparedStatement} must remain open until all results have
      * been consumed.
      * </p>
-     * @param results Results that must be consumed before closing the
+     * @param dependentResults Results that must be consumed before closing the
      * {@link #preparedStatement}
      * @return A publisher that completes when all resources have been
      * deallocated
      */
-    private Publisher<Void> deallocate(Collection<OracleResultImpl> results) {
-
-      // Set up a counter that is decremented as each result is consumed.
-      AtomicInteger unconsumed = new AtomicInteger(results.size());
-
-      // Set up a publisher that decrements the counter, and closes the
-      // statement when it reaches zero
-      Publisher<Void> closeStatement = adapter.getLock().run(() -> {
-        if (unconsumed.decrementAndGet() == 0)
-          closeStatement();
-      });
-
-      // Tell each unconsumed result to decrement the unconsumed count, and then
-      // close the statement when the count reaches zero.
-      for (OracleResultImpl result : results) {
-        if (!result.onConsumed(closeStatement))
-          unconsumed.decrementAndGet();
-      }
-
-      // If there are no results, or all results have already been consumed,
-      // then the returned publisher closes the statement.
-      if (unconsumed.get() == 0)
-        addDeallocation(adapter.getLock().run(this::closeStatement));
-
+    private Publisher<Void> deallocate(DependentResults dependentResults) {
+      addDeallocation(dependentResults.decrement());
       return deallocators;
     }
 
@@ -1189,23 +1185,25 @@ final class OracleStatementImpl implements Statement {
      * {@linkplain ReactiveJdbcAdapter#getLock() connection lock}
      * @throws SQLException If the statement fails to close.
      */
-    private void closeStatement() throws SQLException {
-      try {
-        // Workaround Oracle JDBC bug #34545179: ResultSet references are
-        // retained even when the statement is closed. Calling getMoreResults
-        // with the CLOSE_ALL_RESULTS argument forces the driver to
-        // de-reference them.
-        preparedStatement.getMoreResults(CLOSE_ALL_RESULTS);
-      }
-      catch (SQLException sqlException) {
-        // It may be the case that the JDBC connection was closed, and so the
-        // statement was closed with it. Check for this, and ignore the
-        // SQLException if so.
-        if (!jdbcConnection.isClosed())
-          throw sqlException;
-      }
+    private Publisher<Void> closeStatement() {
+      return adapter.getLock().run(() -> {
+        try {
+          // Workaround Oracle JDBC bug #34545179: ResultSet references are
+          // retained even when the statement is closed. Calling getMoreResults
+          // with the CLOSE_ALL_RESULTS argument forces the driver to
+          // de-reference them.
+          preparedStatement.getMoreResults(CLOSE_ALL_RESULTS);
+        }
+        catch (SQLException sqlException) {
+          // It may be the case that the JDBC connection was closed, and so the
+          // statement was closed with it. Check for this, and ignore the
+          // SQLException if so.
+          if (!jdbcConnection.isClosed())
+            throw sqlException;
+        }
 
-      preparedStatement.close();
+        preparedStatement.close();
+      });
     }
 
     /**

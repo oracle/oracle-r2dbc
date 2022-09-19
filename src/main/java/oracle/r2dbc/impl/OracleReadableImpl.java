@@ -73,6 +73,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * {@code jdbcReadable} and obtains metadata of the values from
    * {@code resultMetadata}.
    * </p>
+   *
    * @param jdbcReadable Readable values from a JDBC Driver. Not null.
    * @param readablesMetadata Metadata of each value. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
@@ -348,6 +349,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    */
   private Result getResult(int index) {
     ResultSet resultSet = jdbcReadable.getObject(index, ResultSet.class);
+
     return resultSet == null
       ? null
       : OracleResultImpl.createQueryResult(resultSet, adapter);
