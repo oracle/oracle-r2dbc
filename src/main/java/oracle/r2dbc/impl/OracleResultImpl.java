@@ -909,13 +909,7 @@ abstract class OracleResultImpl implements Result {
      * this result is removed from the collection of dependent results when the
      * segment mapping publisher terminates with {@code onComplete},
      * {@code onError}, or {@code cancel}.
-     * </p><p>
-     * It may be possible that a user defined segment mapper outputs a new
-     * {@code Result}. For instance, this can happen when user code maps a
-     * REF CURSOR. If a {@code Result} is emitted, then that result is added to
-     * the collection of dependent results. This method uses a {@code doOnNext}
-     * operator to ensure that the result is not added until it is guaranteed
-     * to reach user code.
+     * </p>
      */
     @Override
     protected final <T extends Segment, U> Publisher<U> mapSegments(
@@ -925,11 +919,7 @@ abstract class OracleResultImpl implements Result {
       Publisher<U> removeDependent = (Publisher<U>) dependentCounter.decrement();
 
       return Flux.concatDelayError(
-        Flux.from(mapDependentSegments(segmentType, segmentMapper))
-          .doOnNext(next -> {
-            if (next instanceof OracleResultImpl) // This is a REF CURSOR
-              ((OracleResultImpl)next).addDependent();
-          }),
+        mapDependentSegments(segmentType, segmentMapper),
         removeDependent)
         .doOnCancel(() ->
           Mono.from(removeDependent).subscribe());

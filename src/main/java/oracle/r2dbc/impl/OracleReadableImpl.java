@@ -347,9 +347,14 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * {@code Result}. This method is intended for mapping REF CURSOR values,
    * which JDBC will map to a {@link ResultSet}.
    * </p><p>
-   * A REF CURSOR is closed when the statement that returned it is closed. It is
-   * required that user code fully consume the returned result before the
-   * statement is closed.
+   * A REF CURSOR is closed when the JDBC statement that created it is closed.
+   * To prevent the cursor from getting closed, the Result returned by this
+   * method is immediately added to the collection of results that depend on the
+   * JDBC statement.
+   * </p><p>
+   * The Result returned by this method is received by user code, and user code
+   * MUST then fully consume it. The JDBC statement is not closed until the
+   * result is fully consumed.
    * </p>
    * @param index 0 based column index
    * @return A column value as a {@code Result}, or null if the column value is
@@ -361,6 +366,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     if (resultSet == null)
       return null;
 
+    dependentCounter.increment();
     return OracleResultImpl.createQueryResult(
       dependentCounter, resultSet, adapter);
   }

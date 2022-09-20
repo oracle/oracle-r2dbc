@@ -45,6 +45,8 @@ import reactor.core.publisher.Signal;
 
 import java.sql.RowId;
 import java.sql.SQLWarning;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -56,6 +58,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -2241,60 +2244,25 @@ public class OracleStatementImplTest {
   }
 
   /**
-   * Verifies that SYS_REFCURSOR out parameters can be consumed as
-   * {@link Result} objects.
+   * Verifies that a SYS_REFCURSOR out parameter can be consumed as a
+   * {@link Result} object.
    */
   @Test
   public void testRefCursorOut() {
     Connection connection = awaitOne(sharedConnection());
     try {
-
-      class TestRow {
-        final int id;
-        final String value;
-
-        TestRow(int id, String value) {
-          this.id = id;
-          this.value = value;
-        }
-
-        @Override
-        public boolean equals(Object other) {
-          return other instanceof TestRow
-            && id == ((TestRow)other).id
-            && Objects.equals(value, ((TestRow)other).value);
-        }
-
-        @Override
-        public String toString() {
-          return "[id=" + id + ", value=" + value + "]";
-        }
-      }
-
-      List<TestRow> rows = IntStream.range(0, 100)
-        .mapToObj(id -> new TestRow(id, String.valueOf(id)))
-        .collect(Collectors.toList());
+      List<TestRow> rows = createRows(100);
 
       // Create a table with some rows to query
       awaitExecution(connection.createStatement(
         "CREATE TABLE testRefCursorTable(id NUMBER, value VARCHAR(10))"));
       Statement insertStatement = connection.createStatement(
         "INSERT INTO testRefCursorTable VALUES (:id, :value)");
-      rows.stream()
-        .limit(rows.size() - 1)
-        .forEach(row ->
-          insertStatement
-            .bind("id", row.id)
-            .bind("value", row.value)
-            .add());
-      insertStatement
-        .bind("id", rows.get(rows.size() - 1).id)
-        .bind("value", rows.get(rows.size() - 1).value);
       awaitUpdate(
         rows.stream()
           .map(row -> 1)
           .collect(Collectors.toList()),
-        insertStatement);
+        bindRows(rows, insertStatement));
 
       // Create a procedure that returns a cursor over the rows
       awaitExecution(connection.createStatement(
@@ -2313,9 +2281,9 @@ public class OracleStatementImplTest {
       awaitMany(
         rows,
         Flux.from(connection.createStatement(
-          "BEGIN testRefCursorProcedure(:countCursor); END;")
-          .bind("countCursor", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
-          .execute())
+              "BEGIN testRefCursorProcedure(:countCursor); END;")
+            .bind("countCursor", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .execute())
           .flatMap(result ->
             result.map(outParameters ->
               outParameters.get("countCursor")))
@@ -2325,6 +2293,25 @@ public class OracleStatementImplTest {
               new TestRow(
                 row.get("id", Integer.class),
                 row.get("value", String.class)))));
+
+      // Verify the procedure call again. This time using an explicit
+      // Result.class argument to Row.get(...). Also, this time using
+      // Result.flatMap to create the publisher within the segment mapping
+      // function
+      awaitMany(
+        rows,
+        Flux.from(connection.createStatement(
+            "BEGIN testRefCursorProcedure(:countCursor); END;")
+          .bind("countCursor", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+          .execute())
+          .flatMap(result ->
+            result.flatMap(segment ->
+              ((Result.OutSegment)segment).outParameters()
+                  .get(0, Result.class)
+                  .map(row ->
+                    new TestRow(
+                      row.get("id", Integer.class),
+                      row.get("value", String.class))))));
     }
     catch (Exception exception) {
       showErrors(connection);
@@ -2335,6 +2322,107 @@ public class OracleStatementImplTest {
         "DROP PROCEDURE testRefCursorProcedure"));
       tryAwaitExecution(connection.createStatement(
         "DROP TABLE testRefCursorTable"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that SYS_REFCURSOR out parameters can be consumed as
+   * {@link Result} objects.
+   */
+  @Test
+  public void testMultipleRefCursorOut() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      List<TestRow> rows = createRows(100);
+
+      // Create a table with some rows to query
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testMultiRefCursorTable(id NUMBER, value VARCHAR(10))"));
+      Statement insertStatement = connection.createStatement(
+        "INSERT INTO testMultiRefCursorTable VALUES (:id, :value)");
+      awaitUpdate(
+        rows.stream()
+          .map(row -> 1)
+          .collect(Collectors.toList()),
+        bindRows(rows, insertStatement));
+
+      // Create a procedure that returns a multiple cursors over the rows
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testMultiRefCursorProcedure(" +
+          " countCursor0 OUT SYS_REFCURSOR," +
+          " countCursor1 OUT SYS_REFCURSOR)" +
+          " IS" +
+          " BEGIN" +
+          " OPEN countCursor0 FOR " +
+          "   SELECT id, value FROM testMultiRefCursorTable" +
+          "   ORDER BY id;" +
+          " OPEN countCursor1 FOR " +
+          "   SELECT id, value FROM testMultiRefCursorTable" +
+          "   ORDER BY id DESC;" +
+          " END;"));
+
+      // Call the procedure with the cursors registered as out parameters, and
+      // expect them to map to Results. Then consume the rows of each Result and
+      // verify they have the expected values inserted above.
+      List<TestRow> expectedRows = new ArrayList<>(rows);
+      Collections.reverse(rows);
+      expectedRows.addAll(rows);
+      awaitMany(
+        expectedRows,
+        Flux.from(connection.createStatement(
+              "BEGIN testMultiRefCursorProcedure(:countCursor0, :countCursor1); END;")
+            .bind("countCursor0", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .bind("countCursor1", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .execute())
+          .flatMap(result ->
+            result.map(outParameters ->
+              List.of(
+                (Result)outParameters.get("countCursor0"),
+                (Result)outParameters.get("countCursor1"))))
+          .flatMap(results ->
+            Flux.concat(
+              results.get(0).map(row ->
+                new TestRow(
+                  row.get("id", Integer.class),
+                  row.get("value", String.class))),
+              results.get(1).map(row ->
+                new TestRow(
+                  row.get("id", Integer.class),
+                  row.get("value", String.class))))));
+
+      // Run the same verification, this time with Result.class argument to
+      // Row.get(...), and mapping the REF CURSOR Results into a Publisher
+      // within the row mapping function
+      awaitMany(
+        expectedRows,
+        Flux.from(connection.createStatement(
+              "BEGIN testMultiRefCursorProcedure(:countCursor0, :countCursor1); END;")
+            .bind("countCursor0", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .bind("countCursor1", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .execute())
+          .flatMap(result ->
+            result.map(outParameters ->
+              Flux.concat(
+                outParameters.get("countCursor0", Result.class).map(row ->
+                  new TestRow(
+                    row.get(0, Integer.class),
+                    row.get(1, String.class))),
+                outParameters.get("countCursor1", Result.class).map(row ->
+                  new TestRow(
+                    row.get(0, Integer.class),
+                    row.get(1, String.class))))))
+          .flatMap(Function.identity()));
+    }
+    catch (Exception exception) {
+      showErrors(connection);
+      throw exception;
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testMultiRefCursorProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testMultiRefCursorTable"));
       tryAwaitNone(connection.close());
     }
   }
@@ -2502,6 +2590,57 @@ public class OracleStatementImplTest {
     finally {
       tryAwaitExecution(connection.createStatement(
         "DROP TABLE testConcurrentFetch"));
+    }
+  }
+
+  /**
+   * Creates list of a specified length of test table rows
+   */
+  private static List<TestRow> createRows(int length) {
+    return IntStream.range(0, 100)
+      .mapToObj(id -> new TestRow(id, String.valueOf(id)))
+      .collect(Collectors.toList());
+  }
+
+  /** Binds a list of rows to a batch statement */
+  private Statement bindRows(List<TestRow> rows, Statement statement) {
+    rows.stream()
+      .limit(rows.size() - 1)
+      .forEach(row ->
+        statement
+          .bind("id", row.id)
+          .bind("value", row.value)
+          .add());
+
+    statement
+      .bind("id", rows.get(rows.size() - 1).id)
+      .bind("value", rows.get(rows.size() - 1).value);
+
+    return statement;
+  }
+
+  /**
+   * A row of a test table.
+   */
+  private static class TestRow {
+    final int id;
+    final String value;
+
+    TestRow(int id, String value) {
+      this.id = id;
+      this.value = value;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof TestRow
+        && id == ((TestRow)other).id
+        && Objects.equals(value, ((TestRow)other).value);
+    }
+
+    @Override
+    public String toString() {
+      return "[id=" + id + ", value=" + value + "]";
     }
   }
 }
