@@ -28,6 +28,8 @@ import io.r2dbc.spi.Result.RowSegment;
 import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
+import io.r2dbc.spi.Statement;
+import oracle.r2dbc.OracleR2dbcWarning;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -55,6 +57,9 @@ import static oracle.r2dbc.util.Awaits.consumeOne;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -620,6 +625,62 @@ public class OracleResultImplTest {
     }
     finally {
       tryAwaitExecution(connection.createStatement("DROP TABLE testFlatMap"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that a warnings are emitted as {@code Message} segments with an
+   * {@link oracle.r2dbc.OracleR2dbcWarning}.
+   */
+  @Test
+  public void testOracleR2dbcWarning() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      // Expect a warning for forcing a view that references a non-existant
+      // table
+      String sql = "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarning AS" +
+          " SELECT x FROM thisdoesnotexist";
+      Statement warningStatement = connection.createStatement(sql);
+
+      // Collect the segments
+      List<Result.Segment> segments =
+        awaitMany(Flux.from(warningStatement.execute())
+          .flatMap(result -> result.flatMap(Mono::just)));
+
+      // Expect the update count segment first. Warnings are always emitted
+      // after any result values.
+      Result.Segment firstSegment = segments.get(0);
+      assertEquals(0,
+        assertInstanceOf(UpdateCount.class, firstSegment).value());
+      assertFalse(OracleR2dbcWarning.isWarning(firstSegment));
+      assertThrows(IllegalArgumentException.class, () ->
+        OracleR2dbcWarning.getWarning(firstSegment));
+
+      // Expect the message segment next. Expect it to have the fixed message
+      // and error number used by Oracle JDBC for all warnings.
+      Result.Segment secondSegment = segments.get(1);
+      Message message = assertInstanceOf(Message.class, secondSegment);
+      assertEquals(
+        message.message(), "Warning: execution completed with warning");
+      assertEquals(message.errorCode(), 17110);
+      assertEquals("", message.sqlState());
+      OracleR2dbcWarning warning =
+        assertInstanceOf(OracleR2dbcWarning.class, message.exception());
+      assertEquals(message.message(), warning.getMessage());
+      assertEquals(message.errorCode(), warning.getErrorCode());
+      assertEquals(message.sqlState(), warning.getSqlState());
+      assertEquals(sql, warning.getSql());
+      assertTrue(OracleR2dbcWarning.isWarning(secondSegment));
+      assertSame(warning, OracleR2dbcWarning.getWarning(secondSegment));
+
+      // Verify that there are not any more segments
+      assertEquals(2, segments.size());
+    }
+    finally {
+      tryAwaitExecution(
+        connection.createStatement("DROP VIEW testOracleR2dbcWarning"));
       tryAwaitNone(connection.close());
     }
   }

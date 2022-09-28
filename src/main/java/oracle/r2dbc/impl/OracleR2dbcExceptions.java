@@ -31,6 +31,7 @@ import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.R2dbcTransientException;
 import io.r2dbc.spi.R2dbcTransientResourceException;
 import oracle.jdbc.OracleDatabaseException;
+import oracle.r2dbc.OracleR2dbcWarning;
 
 import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
@@ -42,6 +43,7 @@ import java.sql.SQLTimeoutException;
 import java.sql.SQLTransactionRollbackException;
 import java.sql.SQLTransientConnectionException;
 import java.sql.SQLTransientException;
+import java.sql.SQLWarning;
 import java.util.function.Supplier;
 
 /**
@@ -213,6 +215,9 @@ final class OracleR2dbcExceptions {
       // expresses the same conditions.
       return new R2dbcTransientResourceException(
         message, sqlState, errorCode, sql, sqlException);
+    }
+    else if (sqlException instanceof SQLWarning) {
+      return new OracleR2dbcWarning(sql, (SQLWarning)sqlException);
     }
     else {
       return new OracleR2dbcException(
