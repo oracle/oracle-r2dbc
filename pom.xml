@@ -65,12 +65,12 @@
 
   <properties>
     <java.version>11</java.version>
-    <ojdbc.version>21.5.0.0</ojdbc.version>
+    <ojdbc.version>21.7.0.0</ojdbc.version>
     <r2dbc.version>1.0.0.RELEASE</r2dbc.version>
-    <reactor.version>2020.0.19</reactor.version>
+    <reactor.version>2020.0.23</reactor.version>
     <reactive-streams.version>1.0.3</reactive-streams.version>
-    <junit.version>5.8.2</junit.version>
-    <spring-jdbc.version>5.2.6.RELEASE</spring-jdbc.version>
+    <junit.version>5.9.1</junit.version>
+    <spring-jdbc.version>5.3.19</spring-jdbc.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
