@@ -31,7 +31,6 @@ import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.R2dbcTransientException;
 import io.r2dbc.spi.R2dbcTransientResourceException;
 import oracle.jdbc.OracleDatabaseException;
-import oracle.r2dbc.OracleR2dbcWarning;
 
 import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
@@ -43,7 +42,6 @@ import java.sql.SQLTimeoutException;
 import java.sql.SQLTransactionRollbackException;
 import java.sql.SQLTransientConnectionException;
 import java.sql.SQLTransientException;
-import java.sql.SQLWarning;
 import java.util.function.Supplier;
 
 /**
@@ -165,12 +163,26 @@ final class OracleR2dbcExceptions {
    * as the specified {@code sqlException}. Not null.
    */
   static R2dbcException toR2dbcException(SQLException sqlException) {
+    return toR2dbcException(sqlException, getSql(sqlException));
+  }
+
+  /**
+   * Converts a {@link SQLException} into an {@link R2dbcException}, as
+   * specified by {@link #toR2dbcException(SQLException)}. This method accepts
+   * a SQL string argument. It should be used in cases where the SQL can not
+   * be extracted by {@link #getSql(SQLException)}.
+   * @param sqlException A {@code SQLException} to convert. Not null.
+   * @param sql SQL that caused the exception
+   * @return an {@code R2dbcException} that indicates the same error conditions
+   * as the specified {@code sqlException}. Not null.
+   */
+  static R2dbcException toR2dbcException(
+    SQLException sqlException, String sql) {
     assert sqlException != null : "sqlException is null";
 
     final String message = sqlException.getMessage();
     final String sqlState = sqlException.getSQLState();
     final int errorCode = sqlException.getErrorCode();
-    final String sql = getSql(sqlException);
 
     if (sqlException instanceof SQLNonTransientException) {
       if (sqlException instanceof SQLSyntaxErrorException) {
@@ -215,9 +227,6 @@ final class OracleR2dbcExceptions {
       // expresses the same conditions.
       return new R2dbcTransientResourceException(
         message, sqlState, errorCode, sql, sqlException);
-    }
-    else if (sqlException instanceof SQLWarning) {
-      return new OracleR2dbcWarning(sql, (SQLWarning)sqlException);
     }
     else {
       return new OracleR2dbcException(

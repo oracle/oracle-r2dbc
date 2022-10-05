@@ -27,6 +27,7 @@ import io.r2dbc.spi.Readable;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
+import oracle.r2dbc.OracleR2dbcWarning;
 import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -398,14 +399,15 @@ abstract class OracleResultImpl implements Result {
    * Creates a {@code Result} that publishes a {@code warning} as a
    * {@link Message} segment, followed by any {@code Segment}s of a
    * {@code result}.
+   * @param sql The SQL that resulted in a waring. Not null.
    * @param warning Warning to publish. Not null.
    * @param result Result to publisher. Not null.
    * @return A {@code Result} for a {@code Statement} execution that
    * completed with a warning.
    */
   static OracleResultImpl createWarningResult(
-    SQLWarning warning, OracleResultImpl result) {
-    return new WarningResult(warning, result);
+    String sql, SQLWarning warning, OracleResultImpl result) {
+    return new WarningResult(sql, warning, result);
   }
 
   /**
@@ -627,6 +629,9 @@ abstract class OracleResultImpl implements Result {
    */
   private static final class WarningResult extends OracleResultImpl {
 
+    /** The SQL that resulted in a warning */
+    private final String sql;
+
     /** The warning of this result */
     private final SQLWarning warning;
 
@@ -636,11 +641,13 @@ abstract class OracleResultImpl implements Result {
     /**
      * Constructs a result that publishes a {@code warning} as a
      * {@link Message}, and then publishes the segments of a {@code result}.
+     * @param sql The SQL that resulted in a warning
      * @param warning Warning to publish. Not null.
      * @param result Result of segments to publish after the warning. Not null.
      */
     private WarningResult(
-      SQLWarning warning, OracleResultImpl result) {
+      String sql, SQLWarning warning, OracleResultImpl result) {
+      this.sql = sql;
       this.warning = warning;
       this.result = result;
     }
@@ -649,8 +656,11 @@ abstract class OracleResultImpl implements Result {
     <T> Publisher<T> publishSegments(Function<Segment, T> mappingFunction) {
       return Flux.fromStream(Stream.iterate(
         warning, Objects::nonNull, SQLWarning::getNextWarning)
-        .map(OracleR2dbcExceptions::toR2dbcException)
-        .map(MessageImpl::new))
+        .map(nextWarning ->
+          // It is noted that SQL can not be extracted from Oracle JDBC's
+          // SQLWarning objects, so it must be explicitly provided here.
+          OracleR2dbcExceptions.toR2dbcException(warning, sql))
+        .map(WarningImpl::new))
         .map(mappingFunction)
         // Invoke publishSegments(Class, Function) rather than
         // publishSegments(Function) to update the state of the result; Namely,
@@ -800,6 +810,38 @@ abstract class OracleResultImpl implements Result {
     @Override
     public String message() {
       return exception.getMessage();
+    }
+  }
+
+  /**
+   * Implementation of {@link OracleR2dbcWarning}.
+   */
+  private static final class WarningImpl implements OracleR2dbcWarning {
+
+    private final R2dbcException warning;
+
+    private WarningImpl(R2dbcException exception) {
+      this.warning = exception;
+    }
+
+    @Override
+    public R2dbcException exception() {
+      return warning;
+    }
+
+    @Override
+    public int errorCode() {
+      return warning.getErrorCode();
+    }
+
+    @Override
+    public String sqlState() {
+      return warning.getSqlState();
+    }
+
+    @Override
+    public String message() {
+      return warning.getMessage();
     }
   }
 

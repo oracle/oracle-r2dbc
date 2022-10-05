@@ -3,24 +3,35 @@ package oracle.r2dbc;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 
-import java.sql.SQLWarning;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
-import static io.r2dbc.spi.Result.*;
-
 /**
  * <p>
- * An exception that provides information on warnings raised by Oracle Database.
+ * A subtype of the {@link Result.Segment} interface that provides information
+ * on warnings raised by Oracle Database.
  * </p><p>
- * When a SQL command results in a warning, Oracle R2DBC generates
- * {@link Message} segments having an {@code OracleR2dbcWarning} as the
- * {@linkplain Message#exception() exception}. These segments may be consumed
- * with {@link Result#flatMap(Function)}:
+ * When a SQL command results in a warning, Oracle R2DBC emits a {@link Result}
+ * with an {@code OracleR2dbcWarning} segment in addition to any other segments
+ * that resulted from the SQL command. For example, if a SQL {@code SELECT}
+ * command results in a warning, then an {@code OracleR2dbcWarning} segment is
+ * included with the result, along with any {@link Result.RowSegment}s returned
+ * by the {@code SELECT}.
+ * </p><p>
+ * R2DBC drivers typically emit {@code onError} signals for {@code Message}
+ * segments that are not consumed by {@link Result#filter(Predicate)} or
+ * {@link Result#flatMap(Function)}. Oracle R2DBC does not apply this behavior
+ * for warning messages. If an {@code OracleR2dbcWarning}
+ * segment is not consumed by the {@code filter} or {@code flatMap} methods of
+ * a {@code Result}, then the warning is discarded and the result may be
+ * consumed as normal with with the {@code map} or {@code getRowsUpdated}
+ * methods.
+ * </p><p>
+ * Warning messages may be consumed with {@link Result#flatMap(Function)}:
  * </p><pre>{@code
  * result.flatMap(segment -> {
- *   if (OracleR2dbcWarning.isWarning(segment)) {
- *     logWarning(OracleR2dbcWarning.getWarning(segment));
+ *   if (segment instanceof OracleR2dbcWarning) {
+ *     logWarning(((OracleR2dbcWarning)segment).getMessage());
  *     return emptyPublisher();
  *   }
  *   else {
@@ -28,60 +39,43 @@ import static io.r2dbc.spi.Result.*;
  *   }
  * })
  * }</pre><p>
- * Alternatively, these segments may be ignored using
- * {@link Result#filter(Predicate)}:
- * </p> <pre>{@code
- * result.filter(segment -> !OracleR2dbcWarning.isWarning(segment))
+ * A {@code flatMap} function may also be used to convert a warning into an
+ * {@code onError} signal:
+ * </p><pre>{@code
+ * result.flatMap(segment -> {
+ *   if (segment instanceof OracleR2dbcWarning) {
+ *     return errorPublisher(((OracleR2dbcWarning)segment).warning());
+ *   }
+ *   else {
+ *     ... handle other segment types ...
+ *   }
+ * })
  * }</pre>
- * If these segments are not flat-mapped or filtered from a {@code Result}, then
- * an {@code onError} signal with the {@code OracleR2dbcWarning} is emitted 
- * </p>
+ * @since 1.1.0
  */
-public class OracleR2dbcWarning extends R2dbcException {
+public interface OracleR2dbcWarning extends Result.Segment {
 
   /**
-   * Constructs a new warning having a {@code SQLWarning} from JDBC as its
-   * cause. The constructed warning has the same message, SQL state, and error
-   * code as the given {@code SQLWarning}.
-   * @param sql The SQL command that resulted in a warning. May be null.
-   * @param sqlWarning The SQLWarning thrown by JDBC. Not null.
+   * Returns the warning as an {@link R2dbcException}.
+   * @return The warning as an {@link R2dbcException}. Not null.
    */
-  public OracleR2dbcWarning(String sql, SQLWarning sqlWarning) {
-    super(sqlWarning.getMessage(), sqlWarning.getSQLState(),
-      sqlWarning.getErrorCode(), sql, sqlWarning);
-  }
+  R2dbcException exception();
 
   /**
-   * Checks if a segment is a {@link Message} having an
-   * {@code OracleR2dbcException} as an
-   * {@linkplain Message#exception() exception}.
-   * @param segment Segment to check. May be null, in which case {@code false}
-   * is returned.
-   * @return {@code true} if the segment is a {@code Message} with an
-   * {@code OracleR2dbcException}, or {@code false} if not.
+   * Returns the error code of the warning.
+   * @return The error code of the warning.
    */
-  public static boolean isWarning(Segment segment) {
-    return segment instanceof Message
-      && ((Message)segment).exception() instanceof OracleR2dbcWarning;
-  }
+  int errorCode();
 
   /**
-   * Returns the {@code OracleR2dbcWarning} of a {@link Message} segment. This
-   * method should only be called if {@link #isWarning(Segment)} returned
-   * {@code true} for the given segment.
-   * @param segment A {@code Message} segment with an
-   * {@code OracleR2dbcWarning}. Not null.
-   * @return The {@code OracleR2dbcWarning} of the {@code Message} segment.
-   * @throws IllegalArgumentException If the segment is not a {@code Message}
-   * with an {@code OracleR2dbcWarning}.
+   * Returns the SQLState of the warning.
+   * @return The SQLState of the warning. Not null.
    */
-  public static OracleR2dbcWarning getWarning(Segment segment) {
-    if (!isWarning(segment)) {
-      throw new IllegalArgumentException(
-        "Not a Message segment with an OracleR2dbcWarning: " + segment);
-    }
+  String sqlState();
 
-    return (OracleR2dbcWarning)((Message)segment).exception();
-  }
-
+  /**
+   * Returns the text of the warning message.
+   * @return The text of the warning message. Not null.
+   */
+  String message();
 }
