@@ -306,13 +306,17 @@ supported by Oracle R2DBC:
     - Out of band (OOB) breaks effect statement timeouts. Set this to "true" if statement timeouts are not working correctly.
   - [oracle.jdbc.enableQueryResultCache](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_ENABLE_QUERY_RESULT_CACHE)
     - Cached query results can cause phantom reads even if the serializable
-     transaction isolation level is set. Set this to "false" if using the
+      transaction isolation level is set. Set this to "false" if using the
       serializable isolation level.
   - [v$session.terminal](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL)
   - [v$session.machine](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE)
   - [v$session.osuser](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_OSUSER)
   - [v$session.program](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM)
   - [v$session.process](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS)
+  - (For inclusion in the next release) [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
+    - Setting this option to "false" may resolve "ORA-01882: timezone region not 
+      found". The ORA-01882 error happens when Oracle Database doesn't recognize 
+      the name returned by `java.util.TimeZone.getDefault().getId()`.
 
 ### Thread Safety and Parallel Execution
 Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are the only 

@@ -53,13 +53,13 @@ import java.sql.Wrapper;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
@@ -316,16 +316,11 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    *   </li><li>
    *   {@linkplain OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE
    *     v$session.machine}
+   *   </li><li>
+   *   {@linkplain OracleConnection#CONNECTION_PROPERTY_TIMEZONE_AS_REGION
+   *     oracle.jdbc.timezoneAsRegion}
    *   </li>
    * </ul>
-   *
-   * @implNote The returned {@code DataSource} is configured to create
-   * connections that encode character bind values using the National
-   * Character Set of an Oracle Database. In 21c, the National Character Set
-   * must be either UTF-8 or UTF-16; This ensures that unicode bind data is
-   * properly encoded by Oracle JDBC. If the data source is not configured
-   * this way, the Oracle JDBC Driver uses the default character set of the
-   * database, which may not support Unicode characters.
    *
    * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
    * {@code Option} is provided with any other options that might have
@@ -391,7 +386,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
     if (descriptor != null) {
       validateDescriptorOptions(options);
-      return "jdbc:oracle:thin:@" + descriptor.toString();
+      return "jdbc:oracle:thin:@" + descriptor;
     }
     else {
       Object protocol =
@@ -423,8 +418,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static void validateDescriptorOptions(
     ConnectionFactoryOptions options) {
     Option<?>[] conflictingOptions =
-      Set.of(HOST, PORT, DATABASE, SSL)
-        .stream()
+      Stream.of(HOST, PORT, DATABASE, SSL)
         .filter(options::hasOption)
         .filter(option ->
           // Ignore options having a value that can be represented as a

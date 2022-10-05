@@ -229,6 +229,13 @@ public final class OracleR2dbcOptions {
    * {@link OracleConnection#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS}
    */
   public static final Option<CharSequence> VSESSION_PROCESS;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_TIMEZONE_AS_REGION}
+   */
+  public static final Option<CharSequence> TIMEZONE_AS_REGION;
+
   /**
    * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
    * {@link OracleConnection#CONNECTION_PROPERTY_THIN_LDAP_SECURITY_AUTHENTICATION}
@@ -398,6 +405,8 @@ public final class OracleR2dbcOptions {
       OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM),
     VSESSION_PROCESS = Option.valueOf(
       OracleConnection.CONNECTION_PROPERTY_THIN_VSESSION_PROCESS),
+    TIMEZONE_AS_REGION = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_TIMEZONE_AS_REGION),
     LDAP_SECURITY_AUTHENTICATION = Option.valueOf(
       OracleConnection.CONNECTION_PROPERTY_THIN_LDAP_SECURITY_AUTHENTICATION),
     LDAP_SECURITY_PRINCIPAL = Option.valueOf(
@@ -446,4 +455,5 @@ public final class OracleR2dbcOptions {
   public static Set<Option<?>> options() {
     return OPTIONS;
   }
+
 }

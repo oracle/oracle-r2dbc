@@ -37,7 +37,6 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import javax.naming.spi.NamingManager;
 import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
@@ -46,10 +45,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
@@ -614,6 +615,53 @@ public class OracleReactiveJdbcAdapterTest {
       host(), port(),
       Objects.requireNonNullElse(protocol(), "tcp"),
       serviceName());
+  }
+
+  /**
+   * Verifies the {@link OracleR2dbcOptions#TIMEZONE_AS_REGION} option
+   */
+  @Test
+  public void testTimezoneAsRegion() {
+    // Set the timezone to that of Warsaw. When JDBC opens a connection, it will
+    // read the Warsaw timezone from TimeZone.getDefault().
+    TimeZone warsawTimeZone = TimeZone.getTimeZone("Europe/Warsaw");
+    TimeZone timeZoneRestored = TimeZone.getDefault();
+    TimeZone.setDefault(warsawTimeZone);
+    try {
+
+      // Configure the JDBC connection property with a URL parameter. This has
+      // JDBC express the session timezone as an offset of UTC (+02:00), rather
+      // than a name (Europe/Warsaw).
+      Connection connection = awaitOne(ConnectionFactories.get(
+        ConnectionFactoryOptions.parse(format(
+          "r2dbc:oracle://%s:%d/%s?oracle.jdbc.timezoneAsRegion=false",
+          host(), port(), serviceName()))
+          .mutate()
+          .option(USER, user())
+          .option(PASSWORD, password())
+          .build())
+        .create());
+      try {
+
+        // Query the session timezone, and expect it to be expressed as an
+        // offset, rather than a name.
+        assertEquals(
+          ZonedDateTime.now(warsawTimeZone.toZoneId())
+            .getOffset()
+            .toString(),
+          awaitOne(awaitOne(connection.createStatement(
+            "SELECT sessionTimeZone FROM sys.dual")
+            .execute())
+            .map(row ->
+              row.get(0, String.class))));
+      }
+      finally {
+        tryAwaitNone(connection.close());
+      }
+    }
+    finally {
+      TimeZone.setDefault(timeZoneRestored);
+    }
   }
 
   /**
