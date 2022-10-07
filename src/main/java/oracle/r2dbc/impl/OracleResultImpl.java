@@ -151,6 +151,8 @@ abstract class OracleResultImpl implements Result {
       Flux.from(publishSegments(segment -> {
         if (type.isInstance(segment))
           return mappingFunction.apply(type.cast(segment));
+        else if (segment instanceof OracleR2dbcWarning)
+          return (U)FILTERED;
         else if (segment instanceof Message)
           throw ((Message)segment).exception();
         else
@@ -784,7 +786,7 @@ abstract class OracleResultImpl implements Result {
   /**
    * Implementation of {@link Message}.
    */
-  private static final class MessageImpl implements Message {
+  private static class MessageImpl implements Message {
 
     private final R2dbcException exception;
 
@@ -811,38 +813,24 @@ abstract class OracleResultImpl implements Result {
     public String message() {
       return exception.getMessage();
     }
+
+    @Override
+    public String toString() {
+      return exception.toString();
+    }
   }
 
   /**
    * Implementation of {@link OracleR2dbcWarning}.
    */
-  private static final class WarningImpl implements OracleR2dbcWarning {
-
-    private final R2dbcException warning;
+  private static final class WarningImpl
+    extends MessageImpl
+    implements OracleR2dbcWarning {
 
     private WarningImpl(R2dbcException exception) {
-      this.warning = exception;
+      super(exception);
     }
 
-    @Override
-    public R2dbcException exception() {
-      return warning;
-    }
-
-    @Override
-    public int errorCode() {
-      return warning.getErrorCode();
-    }
-
-    @Override
-    public String sqlState() {
-      return warning.getSqlState();
-    }
-
-    @Override
-    public String message() {
-      return warning.getMessage();
-    }
   }
 
   /**

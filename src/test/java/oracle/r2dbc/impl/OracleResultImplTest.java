@@ -54,13 +54,13 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
+import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.consumeOne;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -631,8 +631,8 @@ public class OracleResultImplTest {
   }
 
   /**
-   * Verifies that a warnings are emitted as {@code Message} segments with an
-   * {@link oracle.r2dbc.OracleR2dbcWarning}.
+   * Verifies that a warnings are emitted as
+   * {@link oracle.r2dbc.OracleR2dbcWarning} segments.
    */
   @Test
   public void testOracleR2dbcWarning() {
@@ -642,7 +642,7 @@ public class OracleResultImplTest {
       // Expect a warning for forcing a view that references a non-existent
       // table
       String sql = "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarning AS" +
-          " SELECT x FROM thisdoesnotexist";
+        " SELECT x FROM thisdoesnotexist";
       Statement warningStatement = connection.createStatement(sql);
 
       // Collect the segments
@@ -680,6 +680,70 @@ public class OracleResultImplTest {
     finally {
       tryAwaitExecution(
         connection.createStatement("DROP VIEW testOracleR2dbcWarning"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that a warnings are not emitted as onError signals
+   */
+  @Test
+  public void testOracleR2dbcWarningIgnored() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      // Expect a warning for forcing a view that references a non-existent
+      // table
+      String sql =
+        "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarningIgnored AS" +
+          " SELECT x FROM thisdoesnotexist";
+      Statement warningStatement = connection.createStatement(sql);
+
+      // Verify that an update count of 0 is returned.
+      awaitUpdate(0, warningStatement);
+
+      // Verify that no rows are returned
+      awaitNone(
+        awaitOne(warningStatement.execute())
+          .map(row -> "UNEXPECTED ROW"));
+
+      // Verify that no rows are returned
+      awaitNone(
+        awaitOne(warningStatement.execute())
+          .map((row, metadata) -> "UNEXPECTED ROW WITH METADATA"));
+    }
+    finally {
+      tryAwaitExecution(
+        connection.createStatement("DROP VIEW testOracleR2dbcWarningIgnored"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that {@link Result#flatMap(Function)} may be used to convert
+   * warnings into onError signals
+   */
+  @Test
+  public void testOracleR2dbcWarningNotIgnored() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      // Expect a warning for forcing a view that references a non-existent
+      // table
+      String sql =
+        "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarningIgnored AS" +
+          " SELECT x FROM thisdoesnotexist";
+      Statement warningStatement = connection.createStatement(sql);
+      awaitError(
+        R2dbcException.class,
+        awaitOne(warningStatement.execute())
+          .flatMap(segment ->
+            Mono.error(
+              assertInstanceOf(OracleR2dbcWarning.class, segment).exception())));
+    }
+    finally {
+      tryAwaitExecution(
+        connection.createStatement("DROP VIEW testOracleR2dbcWarningIgnored"));
       tryAwaitNone(connection.close());
     }
   }

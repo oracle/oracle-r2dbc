@@ -53,29 +53,6 @@ import java.util.function.Predicate;
  * }</pre>
  * @since 1.1.0
  */
-public interface OracleR2dbcWarning extends Result.Segment {
+public interface OracleR2dbcWarning extends Result.Message {
 
-  /**
-   * Returns the warning as an {@link R2dbcException}.
-   * @return The warning as an {@link R2dbcException}. Not null.
-   */
-  R2dbcException exception();
-
-  /**
-   * Returns the error code of the warning.
-   * @return The error code of the warning.
-   */
-  int errorCode();
-
-  /**
-   * Returns the SQLState of the warning.
-   * @return The SQLState of the warning. Not null.
-   */
-  String sqlState();
-
-  /**
-   * Returns the text of the warning message.
-   * @return The text of the warning message. Not null.
-   */
-  String message();
 }
