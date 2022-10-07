@@ -1,6 +1,5 @@
 package oracle.r2dbc;
 
-import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 
 import java.util.function.Function;
@@ -8,8 +7,8 @@ import java.util.function.Predicate;
 
 /**
  * <p>
- * A subtype of the {@link Result.Segment} interface that provides information
- * on warnings raised by Oracle Database.
+ * A subtype of {@link Result.Message} that provides information on warnings
+ * raised by Oracle Database.
  * </p><p>
  * When a SQL command results in a warning, Oracle R2DBC emits a {@link Result}
  * with an {@code OracleR2dbcWarning} segment in addition to any other segments
