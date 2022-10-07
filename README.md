@@ -488,12 +488,13 @@ for the out parameters is emitted last, after the `Result` for each cursor.
 Oracle R2DBC supports type mappings between Java and SQL for non-standard data 
 types of Oracle Database.
 
-| Oracle SQL Type                                                                                                                                         | Java Type |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
-| [JSON](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-E441F541-BA31-4E8C-B7B4-D2FB8C42D0DF)                   |  `javax.json.JsonObject` or `oracle.sql.json.OracleJsonObject` |
-| [DATE](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-5405B652-C30E-4F4F-9D33-9A4CB2110F1B)                                                                                                                                                | `java.time.LocalDateTime` |
-| [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration` |
-| [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period` |
+| Oracle SQL Type                                                                                                                                         | Java Type                                                     |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------|
+| [JSON](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-E441F541-BA31-4E8C-B7B4-D2FB8C42D0DF)                   | `javax.json.JsonObject` or `oracle.sql.json.OracleJsonObject` |
+| [DATE](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-5405B652-C30E-4F4F-9D33-9A4CB2110F1B)                   | `java.time.LocalDateTime`                                     |
+| [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration`                                          |
+| [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period`                                            |
+| [SYS_REFCURSOR](https://docs.oracle.com/en/database/oracle/oracle-database/21/lnpls/static-sql.html#GUID-470A7A99-888A-46C2-BDAF-D4710E650F27)          | `io.r2dbc.spi.Result`                                         |
 > Unlike the standard SQL type named "DATE", the Oracle Database type named 
 > "DATE" stores values for year, month, day, hour, minute, and second. The 
 > standard SQL type only stores year, month, and day. LocalDateTime objects are able 
@@ -532,6 +533,35 @@ prefetched entirely, a smaller prefetch size can be configured using the
 [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
 option, and the LOB can be consumed as a stream. By mapping LOB columns to 
 `Blob` or `Clob` objects, the content can be consumed as a reactive stream. 
+
+### REF Cursors 
+Use `oracle.r2dbc.OracleR2dbTypes.REF_CURSOR` type to bind `SYS_REFCURSOR` out 
+parameters:
+```java
+Publisher<Result> executeProcedure(Connection connection) {
+  connection.createStatement(
+  "BEGIN example_procedure(:cursor_parameter); END;")
+  .bind("cursor_parameter", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+  .execute()
+}
+```
+A `SYS_REFCURSOR` out parameter can be mapped to an `io.r2dbc.spi.Result`:
+```java
+Publisher<Result> mapOutParametersResult(Result outParametersResult) {
+  return outParametersResult.map(outParameters ->
+    outParameters.get("cursor_parameter", Result.class));
+}
+```
+The rows of a `SYS_REFCURSOR` may be then be consumed from the `Result` it is 
+mapped to:
+```java
+Publisher<ExampleObject> mapRefCursorRows(Result refCursorResult) {
+  return refCursorResult.map(row ->
+    new ExampleObject(
+      row.get("id_column", Long.class),
+      row.get("value_column", String.class)));
+}
+```
 
 ## Secure Programming Guidelines
 The following security related guidelines should be adhered to when programming
