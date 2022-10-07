@@ -535,12 +535,12 @@ option, and the LOB can be consumed as a stream. By mapping LOB columns to
 `Blob` or `Clob` objects, the content can be consumed as a reactive stream. 
 
 ### REF Cursors 
-Use `oracle.r2dbc.OracleR2dbTypes.REF_CURSOR` type to bind `SYS_REFCURSOR` out 
+Use the `oracle.r2dbc.OracleR2dbcTypes.REF_CURSOR` type to bind `SYS_REFCURSOR` out 
 parameters:
 ```java
 Publisher<Result> executeProcedure(Connection connection) {
   connection.createStatement(
-  "BEGIN example_procedure(:cursor_parameter); END;")
+    "BEGIN example_procedure(:cursor_parameter); END;")
   .bind("cursor_parameter", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
   .execute()
 }
@@ -552,7 +552,7 @@ Publisher<Result> mapOutParametersResult(Result outParametersResult) {
     outParameters.get("cursor_parameter", Result.class));
 }
 ```
-The rows of a `SYS_REFCURSOR` may be then be consumed from the `Result` it is 
+The rows of a `SYS_REFCURSOR` may be consumed from the `Result` it is 
 mapped to:
 ```java
 Publisher<ExampleObject> mapRefCursorRows(Result refCursorResult) {
