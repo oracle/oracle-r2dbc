@@ -1157,7 +1157,7 @@ final class OracleStatementImpl implements Statement {
         preparedStatement.clearWarnings();
         return warning == null
           ? result
-          : OracleResultImpl.createWarningResult(warning, result);
+          : OracleResultImpl.createWarningResult(sql, warning, result);
       });
     }
 

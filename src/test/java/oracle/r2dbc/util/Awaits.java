@@ -108,7 +108,7 @@ public final class Awaits {
     Class<? extends Throwable> errorType, Publisher<?> errorPublisher) {
     assertThrows(
       errorType,
-      () -> Mono.from(errorPublisher).block(sqlTimeout()),
+      () -> Flux.from(errorPublisher).blockLast(sqlTimeout()),
       "Unexpected signal from Publisher of an error");
   }
 

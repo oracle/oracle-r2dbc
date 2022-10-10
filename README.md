@@ -344,12 +344,32 @@ Oracle R2DBC's implementation of Publishers that emit multiple items will
 typically defer execution until a Subscriber signals demand, and not support 
 multiple subscribers.
 
-### Errors
+### Errors and Warnings
 Oracle R2DBC creates R2dbcExceptions having the same ORA-XXXXX error codes 
-used by Oracle Database and Oracle JDBC.
+used by Oracle Database and Oracle JDBC. The
+[Database Error Messages](https://docs.oracle.com/en/database/oracle/oracle-database/21/errmg/ORA-00000.html#GUID-27437B7F-F0C3-4F1F-9C6E-6780706FB0F6)
+document provides a reference for all ORA-XXXXX error codes.
 
-A reference for the ORA-XXXXX error codes can be found 
-[here](https://docs.oracle.com/en/database/oracle/oracle-database/21/errmg/ORA-00000.html#GUID-27437B7F-F0C3-4F1F-9C6E-6780706FB0F6)
+Warning messages from Oracle Database are emitted as 
+`oracle.r2dbc.OracleR2dbcWarning` segments. These segments may be consumed using
+`Result.flatMap(Function)`:
+```java
+result.flatMap(segment -> {
+  if (segment instanceof OracleR2dbcWarning) {
+    logWarning(((OracleR2dbcWarning)segment).getMessage());
+    return emptyPublisher();
+  }
+  else if (segment instanceof Result.Message){
+    ... handle an error ...
+  }
+  else {
+    ... handle other segment types ...
+  }
+})
+```
+Unlike the errors of standard `Result.Message` segments, if a warning is not
+consumed by `flatMap`, then it will be silently discarded when a `Result` is 
+consumed using the `map` or `getRowsUpdated` methods.
 
 ### Transactions
 Oracle R2DBC uses READ COMMITTED as the default transaction isolation level.

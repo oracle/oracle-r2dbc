@@ -22,12 +22,15 @@
 package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Result.Message;
 import io.r2dbc.spi.Result.RowSegment;
 import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
+import io.r2dbc.spi.Statement;
+import oracle.r2dbc.OracleR2dbcWarning;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -51,10 +54,13 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
+import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.consumeOne;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -620,6 +626,129 @@ public class OracleResultImplTest {
     }
     finally {
       tryAwaitExecution(connection.createStatement("DROP TABLE testFlatMap"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that a warnings are emitted as
+   * {@link oracle.r2dbc.OracleR2dbcWarning} segments.
+   */
+  @Test
+  public void testOracleR2dbcWarning() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      // Expect a warning for forcing a view that references a non-existent
+      // table
+      String sql = "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarning AS" +
+        " SELECT x FROM thisdoesnotexist";
+      Statement warningStatement = connection.createStatement(sql);
+
+      // Collect the segments
+      List<Result.Segment> segments =
+        awaitMany(Flux.from(warningStatement.execute())
+          .flatMap(result -> result.flatMap(Mono::just)));
+
+      // Expect the update count segment first. Warnings are always emitted
+      // last.
+      Result.Segment firstSegment = segments.get(0);
+      assertEquals(0,
+        assertInstanceOf(UpdateCount.class, firstSegment).value());
+      assertFalse(firstSegment instanceof OracleR2dbcWarning);
+
+      // Expect the warning segment after the update count. Expect it to have
+      // the fixed message and error number used by Oracle JDBC for all warnings
+      Result.Segment secondSegment = segments.get(1);
+      OracleR2dbcWarning warning =
+        assertInstanceOf(OracleR2dbcWarning.class, secondSegment);
+      assertEquals(
+        warning.message(), "Warning: execution completed with warning");
+      assertEquals(warning.errorCode(), 17110);
+      assertEquals("99999", warning.sqlState()); // Default SQL state
+      R2dbcException exception =
+        assertInstanceOf(R2dbcException.class, warning.exception());
+      assertEquals(warning.message(), exception.getMessage());
+      assertEquals(warning.errorCode(), exception.getErrorCode());
+      assertEquals(warning.sqlState(), exception.getSqlState());
+      assertEquals(sql, exception.getSql());
+
+      // Verify that there are not any more segments
+      assertEquals(2, segments.size());
+    }
+    finally {
+      tryAwaitExecution(
+        connection.createStatement("DROP VIEW testOracleR2dbcWarning"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that a warnings are not emitted as onError signals
+   */
+  @Test
+  public void testOracleR2dbcWarningIgnored() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+
+      // Expect a warning for forcing a view that references a non-existent
+      // table
+      String sql =
+        "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarningIgnored AS" +
+          " SELECT x FROM thisdoesnotexist";
+      Statement warningStatement = connection.createStatement(sql);
+
+      // Verify that an update count of 0 is returned.
+      awaitUpdate(0, warningStatement);
+
+      // Verify that no rows are returned
+      awaitNone(
+        awaitOne(warningStatement.execute())
+          .map(row -> "UNEXPECTED ROW"));
+
+      // Verify that no rows are returned
+      awaitNone(
+        awaitOne(warningStatement.execute())
+          .map((row, metadata) -> "UNEXPECTED ROW WITH METADATA"));
+    }
+    finally {
+      tryAwaitExecution(
+        connection.createStatement("DROP VIEW testOracleR2dbcWarningIgnored"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that {@link Result#flatMap(Function)} may be used to convert
+   * warnings into onError signals
+   */
+  @Test
+  public void testOracleR2dbcWarningNotIgnored() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      // Expect a warning for forcing a view that references a non-existent
+      // table
+      String sql =
+        "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarningIgnored AS" +
+          " SELECT x FROM thisdoesnotexist";
+      Statement warningStatement = connection.createStatement(sql);
+      AtomicInteger segmentIndex = new AtomicInteger(0);
+      awaitError(
+        R2dbcException.class,
+        awaitOne(warningStatement.execute())
+          .flatMap(segment ->
+            // Expect the update count first, followed by the warning
+            segmentIndex.getAndIncrement() == 0
+              ? Mono.just(assertInstanceOf(UpdateCount.class, segment)
+                  .value())
+              : Mono.error(assertInstanceOf(OracleR2dbcWarning.class, segment)
+                  .exception())));
+      // Expect only two segments
+      assertEquals(2, segmentIndex.get());
+    }
+    finally {
+      tryAwaitExecution(
+        connection.createStatement("DROP VIEW testOracleR2dbcWarningIgnored"));
       tryAwaitNone(connection.close());
     }
   }
