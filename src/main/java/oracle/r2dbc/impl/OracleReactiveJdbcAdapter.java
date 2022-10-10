@@ -352,19 +352,20 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * as a strict directive to use TLS, and so it takes precedence over any value
    * that may otherwise be specified by the {@code PROTOCOL} option.
    * </p><p>
-   * If the {@code SSL} option is not set, then URL is composed with the any
+   * If the {@code SSL} option is not set, then the URL is composed with any
    * value set for {@link ConnectionFactoryOptions#PROTOCOL} option. For
    * instance, if the {@code PROTOCOL} option is set to "ldap" then the URL
-   * is composed as: {@code jdbc:oracle:thins:@ldap://...}.
+   * is composed as: {@code jdbc:oracle:thin:@ldap://...}.
    * </p><p>
    * For consistency with the Oracle JDBC URL, an Oracle R2DBC URL might include
-   * multiple space separated LDAP addresses, like this:
+   * multiple space separated LDAP addresses, where the space is percent encoded,
+   * like this:
    * <pre>
    * r2dbc:oracle:ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb%20ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb
    * </pre>
    * The %20 encoding of the space character must be used in order for
    * {@link ConnectionFactoryOptions#parse(CharSequence)} to recognize the URL
-   * syntax. When multiple address are specified this way, the {@code DATABASE}
+   * syntax. When multiple addresses are specified this way, the {@code DATABASE}
    * option will have the value of:
    * <pre>
    * cn=salesdept,cn=OracleContext,dc=com/salesdb ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb
