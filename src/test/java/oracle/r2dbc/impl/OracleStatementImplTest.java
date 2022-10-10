@@ -35,6 +35,7 @@ import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.r2dbc.OracleR2dbcOptions;
+import oracle.r2dbc.OracleR2dbcWarning;
 import oracle.r2dbc.test.DatabaseConfig;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
@@ -1998,7 +1999,7 @@ public class OracleStatementImplTest {
 
   /**
    * Verifies that {@link OracleStatementImpl#execute()} emits a {@link Result}
-   * with a {@link Message} segment when the execution results in a
+   * with a {@link OracleR2dbcWarning} segment when the execution results in a
    * warning.
    */
   @Test
@@ -2008,9 +2009,10 @@ public class OracleStatementImplTest {
     try {
 
       // Create a procedure using invalid syntax and expect the Result to
-      // have a Message with an R2dbcException having a SQLWarning as it's
-      // initial cause. Expect the Result to have an update count of zero as
-      // well, indicating that the statement completed after the warning.
+      // have an OracleR2dbcWarning with an R2dbcException having a SQLWarning
+      // as it's initial cause. Expect the Result to have an update count of
+      // zero as well, indicating that the statement completed after the
+      // warning.
       AtomicInteger segmentCount = new AtomicInteger(0);
       R2dbcException r2dbcException =
         awaitOne(Flux.from(connection.createStatement(
@@ -2021,9 +2023,9 @@ public class OracleStatementImplTest {
             result.flatMap(segment -> {
               int index = segmentCount.getAndIncrement();
               if (index == 0) {
-                assertTrue(segment instanceof Message,
+                assertTrue(segment instanceof OracleR2dbcWarning,
                   "Unexpected Segment: " + segment);
-                return Mono.just(((Message)segment).exception());
+                return Mono.just(((OracleR2dbcWarning)segment).exception());
               }
               else if (index == 1) {
                 assertTrue(segment instanceof UpdateCount,
