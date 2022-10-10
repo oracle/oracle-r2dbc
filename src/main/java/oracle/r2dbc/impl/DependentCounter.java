@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </p><p>
  * This class offers a solution for tracking the consumption of
  * {@link io.r2dbc.spi.Result} objects that depend on a JDBC statement to remain
- * open until each result is consumed. Further explain can be found in the
+ * open until each result is consumed. Further explanations can be found in the
  * JavaDocs of {@link OracleStatementImpl} and {@link OracleResultImpl}.
  * </p>
  */
@@ -70,7 +70,7 @@ class DependentCounter {
    * subscribe to be safe.
    * </p>
    * @return A publisher that closes the depended upon resource after no
-   * dependents remain.
+   * dependents remain. Not null.
    */
   Publisher<Void> decrement() {
     return Mono.defer(() ->
@@ -78,4 +78,5 @@ class DependentCounter {
         ? Mono.from(closePublisher)
         : Mono.empty());
   }
+
 }

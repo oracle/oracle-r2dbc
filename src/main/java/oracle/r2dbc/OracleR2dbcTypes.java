@@ -94,7 +94,7 @@ public final class OracleR2dbcTypes {
     new TypeImpl(LocalDateTime.class, "TIMESTAMP WITH LOCAL TIME ZONE");
 
   /**
-   * A cursor that is output by a procedural call.
+   * A cursor that is returned by a procedural call.
    */
   public static final Type REF_CURSOR =
     new TypeImpl(Result.class, "SYS_REFCURSOR");
