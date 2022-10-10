@@ -36,12 +36,13 @@
 --   v$transaction (to verify if TransactionDefinitions are applied).
 --   v$session (to verify if VSESSION_* Options are applied).
 ALTER SESSION SET CONTAINER=xepdb1;
-CREATE ROLE r2dbc_test_user;
-GRANT SELECT ON v_$open_cursor TO r2dbc_test_user;
-GRANT SELECT ON v_$transaction TO r2dbc_test_user;
-GRANT SELECT ON v_$session TO r2dbc_test_user;
+CREATE ROLE r2dbc_test_role;
+GRANT SELECT ON v_$open_cursor TO r2dbc_test_role;
+GRANT SELECT ON v_$transaction TO r2dbc_test_role;
+GRANT SELECT ON v_$session TO r2dbc_test_role;
+GRANT CREATE VIEW TO r2dbc_test_role;
 
 CREATE USER test IDENTIFIED BY test;
-GRANT connect, resource, unlimited tablespace, r2dbc_test_user TO test;
+GRANT connect, resource, unlimited tablespace, r2dbc_test_role TO test;
 ALTER USER test DEFAULT TABLESPACE users;
 ALTER USER test TEMPORARY TABLESPACE temp;
