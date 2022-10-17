@@ -53,19 +53,20 @@ import java.sql.Wrapper;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
 import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PROTOCOL;
 import static io.r2dbc.spi.ConnectionFactoryOptions.SSL;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
@@ -121,98 +122,6 @@ import static org.reactivestreams.FlowAdapters.toSubscriber;
  *  @since   0.1.0
  */
 final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
-
-  /**
-   * <p>
-   * The set of JDBC connection properties that this adapter supports. Each
-   * property in this set is represented as an {@link Option} having the name
-   * of the supported JDBC connection property. When a property is configured
-   * with a sensitive value, such as a password, it is represented in this
-   * set as a {@linkplain Option#sensitiveValueOf(String) sensitive Option}.
-   * </p><p>
-   * If a new Option is added to this set, then it <i>must</i> be documented
-   * in the javadoc of {@link #createDataSource(ConnectionFactoryOptions)},
-   * and in any other reference that lists which options the Oracle R2DBC Driver
-   * supports. Undocumented options are useless; Other programmers won't be
-   * able to use an option if they have no way to understand what the option
-   * does or how it should be configured.
-   * </p>
-   */
-  private static final Set<Option<CharSequence>>
-    JDBC_CONNECTION_PROPERTY_OPTIONS = Set.of(
-
-      // Support TNS_ADMIN (tnsnames.ora, ojdbc.properties).
-      OracleR2dbcOptions.TNS_ADMIN,
-
-      // Support wallet properties for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_WALLET_LOCATION,
-      OracleR2dbcOptions.TLS_WALLET_PASSWORD,
-
-      // Support keystore properties for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_KEYSTORE,
-      OracleR2dbcOptions.TLS_KEYSTORE_TYPE,
-      Option.sensitiveValueOf(
-        OracleConnection
-          .CONNECTION_PROPERTY_THIN_JAVAX_NET_SSL_KEYSTOREPASSWORD),
-
-      // Support truststore properties for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_TRUSTSTORE,
-      OracleR2dbcOptions.TLS_TRUSTSTORE_TYPE,
-      OracleR2dbcOptions.TLS_TRUSTSTORE_PASSWORD,
-
-      // Support authentication services (RADIUS, KERBEROS, and TCPS)
-      OracleR2dbcOptions.AUTHENTICATION_SERVICES,
-
-      // Support fine grained configuration for TCPS/SSL/TLS
-      OracleR2dbcOptions.TLS_CERTIFICATE_ALIAS,
-      OracleR2dbcOptions.TLS_SERVER_DN_MATCH,
-      OracleR2dbcOptions.TLS_SERVER_CERT_DN,
-      OracleR2dbcOptions.TLS_VERSION,
-      OracleR2dbcOptions.TLS_CIPHER_SUITES,
-      OracleR2dbcOptions.TLS_KEYMANAGERFACTORY_ALGORITHM,
-      OracleR2dbcOptions.TLS_TRUSTMANAGERFACTORY_ALGORITHM,
-      OracleR2dbcOptions.SSL_CONTEXT_PROTOCOL,
-
-      // Because of bug 32378754, the FAN support in the driver may cause a 10s
-      // delay to connect. As a workaround the following property can be set
-      // to false to disable FAN support in the driver.
-      OracleR2dbcOptions.FAN_ENABLED,
-
-      // Support statement cache configuration
-      OracleR2dbcOptions.IMPLICIT_STATEMENT_CACHE_SIZE,
-
-      // Support LOB prefetch size configuration. A large size is configured
-      // by default to support cases where memory is available to store entire
-      // LOB values. A non-default size may be configured when LOB values are
-      // too large to be prefetched and must be streamed from Blob/Clob objects.
-      OracleR2dbcOptions.DEFAULT_LOB_PREFETCH_SIZE,
-
-      // Allow out-of-band (OOB) breaks to be disabled. Oracle JDBC uses OOB
-      // breaks to interrupt a SQL call after a timeout expires. This option 
-      // may need to be disabled when connecting to an 18.x database. Starting
-      // in 19.x, the database can detect when it's running on a system where
-      // OOB is not supported and automatically disable OOB. This automated 
-      // detection is not implemented in 18.x.
-      OracleR2dbcOptions.DISABLE_OUT_OF_BAND_BREAK,
-
-      // Allow the client-side ResultSet cache to be disabled. It is
-      // necessary to do so when using the serializable transaction isolation
-      // level in order to prevent phantom reads.
-      OracleR2dbcOptions.ENABLE_QUERY_RESULT_CACHE,
-
-      // Allow v$session attributes to be configured for tracing
-      OracleR2dbcOptions.VSESSION_OSUSER,
-      OracleR2dbcOptions.VSESSION_TERMINAL,
-      OracleR2dbcOptions.VSESSION_PROCESS,
-      OracleR2dbcOptions.VSESSION_PROGRAM,
-      OracleR2dbcOptions.VSESSION_MACHINE,
-
-      // Allow JDBC to configure the session timezone as an offset of UTC
-      // (ie: +09:00), rather than a name (ie: Etc/UTC). This avoids
-      // "ORA-01882: timezone region not found" when the name of the JVM's
-      // default timezone is not recognized by Oracle Database.
-      OracleR2dbcOptions.TIMEZONE_AS_REGION
-    );
 
   /** Guards access to a JDBC {@code Connection} created by this adapter */
   private final AsyncLock asyncLock = new AsyncLock();
@@ -432,9 +341,41 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   }
 
   /**
+   * <p>
    * Composes an Oracle JDBC URL from {@code ConnectionFactoryOptions}, as
    * specified in the javadoc of
    * {@link #createDataSource(ConnectionFactoryOptions)}
+   * </p><p>
+   * If the {@link ConnectionFactoryOptions#SSL} option is set, then the JDBC
+   * URL is composed with the tcps protocol, as in:
+   * {@code jdbc:oracle:thins:@tcps:...}. The {@code SSL} option is interpreted
+   * as a strict directive to use TLS, and so it takes precedence over any value
+   * that may otherwise be specified by the {@code PROTOCOL} option.
+   * </p><p>
+   * If the {@code SSL} option is not set, then the URL is composed with any
+   * value set for {@link ConnectionFactoryOptions#PROTOCOL} option. For
+   * instance, if the {@code PROTOCOL} option is set to "ldap" then the URL
+   * is composed as: {@code jdbc:oracle:thin:@ldap://...}.
+   * </p><p>
+   * For consistency with the Oracle JDBC URL, an Oracle R2DBC URL might include
+   * multiple space separated LDAP addresses, where the space is percent encoded,
+   * like this:
+   * <pre>
+   * r2dbc:oracle:ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb%20ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb
+   * </pre>
+   * The %20 encoding of the space character must be used in order for
+   * {@link ConnectionFactoryOptions#parse(CharSequence)} to recognize the URL
+   * syntax. When multiple addresses are specified this way, the {@code DATABASE}
+   * option will have the value of:
+   * <pre>
+   * cn=salesdept,cn=OracleContext,dc=com/salesdb ldap://example.com:3500/cn=salesdept,cn=OracleContext,dc=com/salesdb
+   * </pre>
+   * This is unusual, but it is what Oracle JDBC expects to see in the path
+   * element of a
+   * <a href="https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/data-sources-and-URLs.html#GUID-F1841136-BE7C-47D4-8AEE-E9E78CA1213D">
+   * multi-address LDAP URL.
+   * </a>
+   * </p>
    * @param options R2DBC options. Not null.
    * @return An Oracle JDBC URL composed from R2DBC options
    * @throws IllegalArgumentException If the {@code oracleNetDescriptor}
@@ -446,18 +387,21 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
     if (descriptor != null) {
       validateDescriptorOptions(options);
-      return "jdbc:oracle:thin:@" + descriptor.toString();
+      return "jdbc:oracle:thin:@" + descriptor;
     }
     else {
+      Object protocol =
+        Boolean.TRUE.equals(parseOptionValue(
+          SSL, options, Boolean.class, Boolean::valueOf))
+          ? "tcps"
+          : options.getValue(PROTOCOL);
       Object host = options.getRequiredValue(HOST);
       Integer port = parseOptionValue(
         PORT, options, Integer.class, Integer::valueOf);
       Object serviceName = options.getValue(DATABASE);
-      Boolean isTcps = parseOptionValue(
-        SSL, options, Boolean.class, Boolean::valueOf);
 
       return String.format("jdbc:oracle:thin:@%s%s%s%s",
-        Boolean.TRUE.equals(isTcps) ? "tcps:" : "",
+        protocol == null ? "" : protocol + "://",
         host,
         port != null ? (":" + port) : "",
         serviceName != null ? ("/" + serviceName) : "");
@@ -475,8 +419,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   private static void validateDescriptorOptions(
     ConnectionFactoryOptions options) {
     Option<?>[] conflictingOptions =
-      Set.of(HOST, PORT, DATABASE, SSL)
-        .stream()
+      Stream.of(HOST, PORT, DATABASE, SSL)
         .filter(options::hasOption)
         .filter(option ->
           // Ignore options having a value that can be represented as a
@@ -549,7 +492,13 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     }
 
     // Apply any JDBC connection property options
-    for (Option<CharSequence> option : JDBC_CONNECTION_PROPERTY_OPTIONS) {
+    for (Option<?> option : OracleR2dbcOptions.options()) {
+
+      // Skip options in the oracle.r2dbc namespace. These are not JDBC
+      // connection properties
+      if (option.name().startsWith("oracle.r2dbc."))
+        continue;
+
       // Using Object as the value type allows options to be set as types like
       // Boolean or Integer. These types make sense for numeric or boolean
       // connection property values, such as statement cache size, or enable x.

@@ -67,6 +67,7 @@ import java.util.stream.Stream;
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
 import static oracle.r2dbc.test.DatabaseConfig.password;
@@ -2474,17 +2475,10 @@ public class OracleStatementImplTest {
    * @return Connection that uses the {@code executor}
    */
   private static Publisher<? extends Connection> connect(Executor executor) {
-    return ConnectionFactories.get(
-        ConnectionFactoryOptions.parse(format(
-            "r2dbc:oracle://%s:%d/%s", host(), port(), serviceName()))
-          .mutate()
-          .option(
-            ConnectionFactoryOptions.USER, user())
-          .option(
-            ConnectionFactoryOptions.PASSWORD, password())
-          .option(
-            OracleR2dbcOptions.EXECUTOR, executor)
-          .build())
+    return ConnectionFactories.get(connectionFactoryOptions()
+      .mutate()
+      .option(OracleR2dbcOptions.EXECUTOR, executor)
+      .build())
       .create();
   }
 

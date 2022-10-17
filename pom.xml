@@ -87,6 +87,17 @@
             <arg>-Xlint:-processing</arg>
             <arg>-Xlint:-serial</arg>
           </compilerArgs>
+          <!-- LDAP URL tests require the java.naming module -->
+          <!-- Maven seems to ignore the forceJavacCompilerUse.
+            This results in an error when passing the addModules option to
+            the javax.tools API. For this reason, Oracle R2DBC's module-info is
+            declaring a depency on the java.naming module.
+            TODO: Figure out how to make maven compile tests correctly, and 
+            remove the java.naming depenency from Oracle R2DBC.
+          <fork>true</fork>
+          <forceJavacCompilerUse>true</forceJavacCompilerUse>
+          <testCompilerArgument>- -add-modules java.naming</testCompilerArgument>
+          -->
           <showWarnings>true</showWarnings>
           <release>${java.version}</release>
         </configuration>
@@ -150,6 +161,7 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.0.0-M5</version>
         <configuration>
+          <!-- Include tests in the oracle.r2dbc.test package -->
           <includes>
             <include>**/*Test.java</include>
             <include>**/*TestKit.java</include>
@@ -278,7 +290,6 @@
       <artifactId>reactor-test</artifactId>
       <scope>test</scope>
     </dependency>
-
   </dependencies>
 
   <profiles>
