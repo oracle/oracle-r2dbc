@@ -553,6 +553,29 @@ prefetched entirely, a smaller prefetch size can be configured using the
 option, and the LOB can be consumed as a stream. By mapping LOB columns to 
 `Blob` or `Clob` objects, the content can be consumed as a reactive stream. 
 
+### ARRAY
+Oracle Database supports `ARRAY` as a user defined type only. A `CREATE TYPE` 
+command is used to define an `ARRAY` type:
+```sql
+CREATE TYPE MY_ARRAY AS ARRAY(8) OF NUMBER
+```
+Oracle R2DBC defines `oracle.r2dbc.OracleR2dbcType.ArrayType` as a `Type` for
+representing user defined `ARRAY` types. A `Parameter` with an type of
+`ArrayType` must be used when binding array values to a `Statement` 
+```java
+Publisher<Result> arrayBindExample(Connection connection) {
+  Statement statement =
+    connection.createStatement("INSERT INTO example VALUES (:array_bind)");
+
+  // Use the name defined for an ARRAY type:
+  // CREATE TYPE MY_ARRAY AS ARRAY(8) OF NUMBER
+  ArrayType arrayType = OracleR2dbcTypes.arrayType("MY_ARRAY");
+  Integer[] arrayValues = {1, 2, 3};
+  statement.bind("arrayBind", Parameters.in(arrayType, arrayValues));
+
+  return statement.execute();
+}
+```
 ## Secure Programming Guidelines
 The following security related guidelines should be adhered to when programming
 with the Oracle R2DBC Driver.
