@@ -1143,59 +1143,6 @@ public class TypeMappingTest {
     }
   }
 
-  /**
-   * <p>
-   * Verifies the implementation of Java to SQL and SQL to Java type mappings
-   * for STRUCT types. The Oracle R2DBC Driver is expected to allow OBJECT
-   * values to be mapped to JDBC's {@link java.sql.Struct} type. The current
-   * R2DBC specification does not define a default mapping for OBJECT values, so
-   * the Oracle R2DBC driver does not implement one.
-   * </p>
-   */
-  @Test
-  public void testObjectTypeMappings() {
-    Connection connection =
-      Mono.from(sharedConnection()).block(connectTimeout());
-    try {
-      awaitOne(connection.createStatement(
-          "CREATE OR REPLACE TYPE CHARACTER_ARRAY" +
-            " AS ARRAY(10) OF VARCHAR(100)")
-        .execute());
-      Type characterArrayType = OracleR2dbcTypes.arrayType("CHARACTER_ARRAY");
-
-      // Expect ARRAY of VARCHAR and String[] to map
-      String[] greetings = {"Hello", "Bonjour", "你好"};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(characterArrayType, greetings),
-        characterArrayType.getName(),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            greetings,
-            assertInstanceOf(String[].class, rowValue)));
-
-      // Expect ARRAY of NUMBER and int[] to map
-      awaitOne(connection.createStatement(
-          "CREATE OR REPLACE TYPE NUMBER_ARRAY" +
-            " AS ARRAY(10) OF NUMBER")
-        .execute());
-      Type numberArrayType = OracleR2dbcTypes.arrayType("NUMBER_ARRAY");
-      int[] numbers = {1, 2, 3, 4};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, numbers),
-        numberArrayType.getName(),
-        row -> row.get(0, int[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            numbers,
-            assertInstanceOf(int[].class, rowValue)));
-    }
-    finally {
-      tryAwaitNone(connection.close());
-    }
-  }
-
   // TODO: More tests for JDBC 4.3 mappings like BigInteger to BIGINT,
   //  java.sql.Date to DATE, java.sql.Blob to BLOB? Oracle R2DBC exposes all
   //  type mappings supported by Oracle JDBC.
