@@ -24,9 +24,12 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.Blob;
 import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
+import io.r2dbc.spi.Type;
+import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.sql.json.OracleJsonFactory;
 import oracle.sql.json.OracleJsonObject;
 import org.junit.jupiter.api.Assertions;
@@ -40,12 +43,15 @@ import java.nio.CharBuffer;
 import java.sql.RowId;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.Month;
 import java.time.OffsetDateTime;
 import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -60,12 +66,15 @@ import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
+import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -482,6 +491,711 @@ public class TypeMappingTest {
     }
   }
 
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * for ARRAY types. The Oracle R2DBC Driver is expected to implement the type
+   * mapping listed in
+   * <a href="https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping.collection">
+   * Table 9 of Section 14 of the R2DBC 1.0.0 Specification.
+   * </a>
+   * </p><p>
+   * An ARRAY is expected to map to the Java type mapping of it's element type.
+   * An ARRAY of VARCHAR should map to a Java array of String.
+   * </p>
+   */
+  @Test
+  public void testArrayCharacterTypeMappings() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE CHARACTER_ARRAY" +
+            " AS ARRAY(10) OF VARCHAR(100)")
+        .execute());
+      Type characterArrayType = OracleR2dbcTypes.arrayType("CHARACTER_ARRAY");
+
+      // Expect ARRAY of VARCHAR and String[] to map
+      String[] greetings = {"Hello", "Bonjour", "你好", null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(characterArrayType, greetings),
+        characterArrayType.getName(),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            greetings,
+            assertInstanceOf(String[].class, rowValue)));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE CHARACTER_ARRAY"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * for ARRAY types. The Oracle R2DBC Driver is expected to implement the type
+   * mapping listed in
+   * <a href="https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping.collection">
+   * Table 9 of Section 14 of the R2DBC 1.0.0 Specification.
+   * </a>
+   * </p><p>
+   * An ARRAY is expected to map to the Java type mapping of it's element type.
+   * An ARRAY of NUMBER should map to a Java array of BigDecimal, Byte, Short,
+   * Integer, Long, Float, and Double.
+   * </p>
+   */
+  @Test
+  public void testArrayNumericTypeMappings() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE NUMBER_ARRAY" +
+            " AS ARRAY(10) OF NUMBER")
+        .execute());
+      Type numberArrayType = OracleR2dbcTypes.arrayType("NUMBER_ARRAY");
+
+      // Expect ARRAY of NUMBER and BigDecimal[] to map
+      BigDecimal[] bigDecimals = new BigDecimal[] {
+        BigDecimal.ZERO,
+        new BigDecimal("1.23"),
+        new BigDecimal("4.56"),
+        new BigDecimal("7.89"),
+        null
+      };
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, bigDecimals),
+        numberArrayType.getName(),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            bigDecimals,
+            assertInstanceOf(BigDecimal[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and byte[] to map
+      byte[] bytes = new byte[]{1,2,3,4,5};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, bytes),
+        numberArrayType.getName(),
+        row -> row.get(0, byte[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            bytes,
+            assertInstanceOf(byte[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and short[] to map
+      short[] shorts = new short[]{1,2,3,4,5};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, shorts),
+        numberArrayType.getName(),
+        row -> row.get(0, short[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            shorts,
+            assertInstanceOf(short[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and int[] to map
+      int[] ints = {1,2,3,4,5};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, ints),
+        numberArrayType.getName(),
+        row -> row.get(0, int[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            ints,
+            assertInstanceOf(int[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and long[] to map
+      long[] longs = {1,2,3,4,5};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, longs),
+        numberArrayType.getName(),
+        row -> row.get(0, long[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            longs,
+            assertInstanceOf(long[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and float[] to map
+      float[] floats = {1.1f,2.2f,3.3f,4.4f,5.5f};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, floats),
+        numberArrayType.getName(),
+        row -> row.get(0, float[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            floats,
+            assertInstanceOf(float[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and double[] to map
+      double[] doubles = {1.1,2.2,3.3,4.4,5.5};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, doubles),
+        numberArrayType.getName(),
+        row -> row.get(0, double[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            doubles,
+            assertInstanceOf(double[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and Byte[] to map
+      Byte[] byteObjects = new Byte[]{1,2,3,4,5,null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, byteObjects),
+        numberArrayType.getName(),
+        row -> row.get(0, Byte[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            byteObjects,
+            assertInstanceOf(Byte[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and Short[] to map
+      Short[] shortObjects = new Short[]{1,2,3,4,5,null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, shortObjects),
+        numberArrayType.getName(),
+        row -> row.get(0, Short[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            shortObjects,
+            assertInstanceOf(Short[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and Integer[] to map
+      Integer[] intObjects = {1,2,3,4,5,null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, intObjects),
+        numberArrayType.getName(),
+        row -> row.get(0, Integer[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            intObjects,
+            assertInstanceOf(Integer[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and Long[] to map
+      Long[] longObjects = {1L,2L,3L,4L,5L,null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, longObjects),
+        numberArrayType.getName(),
+        row -> row.get(0, Long[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            longObjects,
+            assertInstanceOf(Long[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and Float[] to map
+      Float[] floatObjects = {1.1f,2.2f,3.3f,4.4f,5.5f,null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, floatObjects),
+        numberArrayType.getName(),
+        row -> row.get(0, Float[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            floatObjects,
+            assertInstanceOf(Float[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and Double[] to map
+      Double[] doubleObjects = {1.1,2.2,3.3,4.4,5.5,null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, doubleObjects),
+        numberArrayType.getName(),
+        row -> row.get(0, Double[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            doubleObjects,
+            assertInstanceOf(Double[].class, rowValue)));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * for ARRAY types. The Oracle R2DBC Driver is expected to implement the type
+   * mapping listed in
+   * <a href="https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping.collection">
+   * Table 9 of Section 14 of the R2DBC 1.0.0 Specification.
+   * </a>
+   * </p><p>
+   * An ARRAY is expected to map to the Java type mapping of it's element type.
+   * An ARRAY of NUMBER should map to a Java array of boolean.
+   * </p>
+   */
+  @Test
+  public void testArrayBooleanTypeMappings() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE BOOLEAN_ARRAY" +
+            " AS ARRAY(10) OF NUMBER")
+        .execute());
+      Type booleanArrayType = OracleR2dbcTypes.arrayType("BOOLEAN_ARRAY");
+
+      // Expect ARRAY of NUMBER and boolean[] to map
+      boolean[] booleans = {true, false, false, true};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(booleanArrayType, booleans),
+        booleanArrayType.getName(),
+        row -> row.get(0, boolean[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            booleans,
+            assertInstanceOf(boolean[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and Boolean[] to map
+      Boolean[] booleanObjects = {true, false, false, true, null};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(booleanArrayType, booleanObjects),
+        booleanArrayType.getName(),
+        row -> row.get(0, Boolean[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            booleanObjects,
+            assertInstanceOf(Boolean[].class, rowValue)));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE BOOLEAN_ARRAY"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * for ARRAY types. The Oracle R2DBC Driver is expected to implement the type
+   * mapping listed in
+   * <a href="https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping.collection">
+   * Table 9 of Section 14 of the R2DBC 1.0.0 Specification.
+   * </a>
+   * </p><p>
+   * An ARRAY is expected to map to the Java type mapping of it's element type.
+   * An ARRAY of RAW should map to a Java array of ByteBuffer.
+   * </p>
+   */
+  @Test
+  public void testArrayBinaryTypeMappings() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE BINARY_ARRAY" +
+            " AS ARRAY(10) OF RAW(100)")
+        .execute());
+      Type binaryArrayType = OracleR2dbcTypes.arrayType("BINARY_ARRAY");
+
+      // Expect ARRAY of RAW and ByteBuffer[] to map
+      ByteBuffer[] byteBuffers = {
+        ByteBuffer.allocate(3 * Integer.BYTES)
+          .putInt(0).putInt(1).putInt(2).clear(),
+        ByteBuffer.allocate(3 * Integer.BYTES)
+          .putInt(3).putInt(4).putInt(5).clear(),
+        ByteBuffer.allocate(3 * Integer.BYTES)
+          .putInt(6).putInt(7).putInt(8).clear(),
+        null
+      };
+      verifyTypeMapping(
+        connection,
+        Parameters.in(binaryArrayType, byteBuffers),
+        binaryArrayType.getName(),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            byteBuffers,
+            assertInstanceOf(ByteBuffer[].class, rowValue)));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE BINARY_ARRAY"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * for ARRAY types. The Oracle R2DBC Driver is expected to implement the type
+   * mapping listed in
+   * <a href="https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping.collection">
+   * Table 9 of Section 14 of the R2DBC 1.0.0 Specification.
+   * </a>
+   * </p><p>
+   * An ARRAY is expected to map to the Java type mapping of it's element type.
+   * An ARRAY of DATE should map to a Java array of LocalDateTime (Oracle DATE
+   * values have a time component).
+   * An ARRAY of TIMESTAMP should map to a Java array of LocalDateTime
+   * An ARRAY of TIMESTAMP WITH TIME ZONE should map to a Java array of
+   * OffsetDateTime.
+   * An ARRAY of TIMESTAMP WITH LOCAL TIME ZONE should map to a Java array of
+   * LocalDateTime.
+   * An ARRAY of INTERVAL YEAR TO MONTH should map to a Java array of Period
+   * An ARRAY of INTERVAL DAY TO SECOND should map to a Java array of Duration
+   * </p>
+   */
+  @Test
+  public void testArrayDatetimeTypeMappings() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      OffsetDateTime dateTimeValue =
+        OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5));
+
+      // Expect ARRAY of DATE and LocalDateTime[] to map
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE DATE_ARRAY" +
+            " AS ARRAY(10) OF DATE")
+        .execute());
+      try {
+        Type dateArrayType = OracleR2dbcTypes.arrayType("DATE_ARRAY");
+
+        LocalDateTime[] localDateTimes = {
+          dateTimeValue.minus(Period.ofDays(7))
+            .toLocalDateTime()
+            .truncatedTo(ChronoUnit.SECONDS),
+          dateTimeValue.toLocalDateTime()
+            .truncatedTo(ChronoUnit.SECONDS),
+          dateTimeValue.plus(Period.ofDays(7))
+            .toLocalDateTime()
+            .truncatedTo(ChronoUnit.SECONDS),
+          null
+        };
+        verifyTypeMapping(
+          connection,
+          Parameters.in(dateArrayType, localDateTimes),
+          dateArrayType.getName(),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localDateTimes,
+              assertInstanceOf(LocalDateTime[].class, rowValue)));
+
+        LocalDate[] localDates =
+          Arrays.stream(localDateTimes)
+            .map(localDateTime ->
+              localDateTime == null ? null : localDateTime.toLocalDate())
+            .toArray(LocalDate[]::new);
+        verifyTypeMapping(
+          connection,
+          Parameters.in(dateArrayType, localDateTimes),
+          dateArrayType.getName(),
+          row -> row.get(0, LocalDate[].class),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localDates,
+              assertInstanceOf(LocalDate[].class, rowValue)));
+
+        LocalTime[] localTimes =
+          Arrays.stream(localDateTimes)
+            .map(localDateTime ->
+              localDateTime == null ? null : localDateTime.toLocalTime())
+            .toArray(LocalTime[]::new);
+        verifyTypeMapping(
+          connection,
+          Parameters.in(dateArrayType, localDateTimes),
+          dateArrayType.getName(),
+          row -> row.get(0, LocalTime[].class),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localTimes,
+              assertInstanceOf(LocalTime[].class, rowValue)));
+      }
+      finally {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TYPE DATE_ARRAY"));
+      }
+
+
+      // Expect ARRAY of TIMESTAMP and LocalDateTime[] to map
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE TIMESTAMP_ARRAY" +
+            " AS ARRAY(10) OF TIMESTAMP")
+        .execute());
+      try {
+        Type timestampArrayType = OracleR2dbcTypes.arrayType("TIMESTAMP_ARRAY");
+
+        LocalDateTime[] localDateTimes = {
+          dateTimeValue.minus(Duration.ofMillis(100))
+            .toLocalDateTime(),
+          dateTimeValue.toLocalDateTime(),
+          dateTimeValue.plus(Duration.ofMillis(100))
+            .toLocalDateTime(),
+          null
+        };
+
+        verifyTypeMapping(
+          connection,
+          Parameters.in(timestampArrayType, localDateTimes),
+          timestampArrayType.getName(),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localDateTimes,
+              assertInstanceOf(LocalDateTime[].class, rowValue)));
+
+        LocalDate[] localDates =
+          Arrays.stream(localDateTimes)
+            .map(localDateTime ->
+              localDateTime == null ? null : localDateTime.toLocalDate())
+            .toArray(LocalDate[]::new);
+        verifyTypeMapping(
+          connection,
+          Parameters.in(timestampArrayType, localDateTimes),
+          timestampArrayType.getName(),
+          row -> row.get(0, LocalDate[].class),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localDates,
+              assertInstanceOf(LocalDate[].class, rowValue)));
+
+        LocalTime[] localTimes =
+          Arrays.stream(localDateTimes)
+            .map(localDateTime ->
+              localDateTime == null ? null : localDateTime.toLocalTime())
+            .toArray(LocalTime[]::new);
+        verifyTypeMapping(
+          connection,
+          Parameters.in(timestampArrayType, localDateTimes),
+          timestampArrayType.getName(),
+          row -> row.get(0, LocalTime[].class),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localTimes,
+              assertInstanceOf(LocalTime[].class, rowValue)));
+      }
+      finally {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TYPE TIMESTAMP_ARRAY"));
+      }
+
+      // Expect ARRAY of TIMESTAMP WITH TIME ZONE and OffsetDateTime[] to map
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE TIMESTAMP_WITH_TIME_ZONE_ARRAY" +
+            " AS ARRAY(10) OF TIMESTAMP WITH TIME ZONE")
+        .execute());
+      try {
+        Type timestampWithTimeZoneArrayType =
+          OracleR2dbcTypes.arrayType("TIMESTAMP_WITH_TIME_ZONE_ARRAY");
+
+        OffsetDateTime[] offsetDateTimes = {
+          dateTimeValue.minus(Duration.ofMillis(100))
+            .toLocalDateTime()
+            .atOffset(ZoneOffset.ofHours(-8)),
+          dateTimeValue.toLocalDateTime()
+            .atOffset(ZoneOffset.ofHours(0)),
+          dateTimeValue.plus(Duration.ofMillis(100))
+            .toLocalDateTime()
+            .atOffset(ZoneOffset.ofHours(8)),
+          null
+        };
+
+        verifyTypeMapping(
+          connection,
+          Parameters.in(timestampWithTimeZoneArrayType, offsetDateTimes),
+          timestampWithTimeZoneArrayType.getName(),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              offsetDateTimes,
+              assertInstanceOf(OffsetDateTime[].class, rowValue)));
+      }
+      finally {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TYPE TIMESTAMP_WITH_TIME_ZONE_ARRAY"));
+      }
+
+      // Expect ARRAY of TIMESTAMP WITH LOCAL TIME ZONE and LocalDateTime[] to
+      // map
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE TIMESTAMP_WITH_LOCAL_TIME_ZONE_ARRAY" +
+            " AS ARRAY(10) OF TIMESTAMP WITH LOCAL TIME ZONE")
+        .execute());
+      try {
+        Type timestampWithLocalTimeZoneArrayType =
+          OracleR2dbcTypes.arrayType("TIMESTAMP_WITH_LOCAL_TIME_ZONE_ARRAY");
+        LocalDateTime[] localDateTimes = {
+          dateTimeValue.minus(Duration.ofMillis(100))
+            .toLocalDateTime(),
+          dateTimeValue.toLocalDateTime(),
+          dateTimeValue.plus(Duration.ofMillis(100))
+            .toLocalDateTime(),
+          null
+        };
+
+        verifyTypeMapping(
+          connection,
+          Parameters.in(timestampWithLocalTimeZoneArrayType, localDateTimes),
+          timestampWithLocalTimeZoneArrayType.getName(),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localDateTimes,
+              assertInstanceOf(LocalDateTime[].class, rowValue)));
+
+        LocalDate[] localDates =
+          Arrays.stream(localDateTimes)
+            .map(localDateTime ->
+              localDateTime == null ? null : localDateTime.toLocalDate())
+            .toArray(LocalDate[]::new);
+        verifyTypeMapping(
+          connection,
+          Parameters.in(timestampWithLocalTimeZoneArrayType, localDateTimes),
+          timestampWithLocalTimeZoneArrayType.getName(),
+          row -> row.get(0, LocalDate[].class),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localDates,
+              assertInstanceOf(LocalDate[].class, rowValue)));
+
+        LocalTime[] localTimes =
+          Arrays.stream(localDateTimes)
+            .map(localDateTime ->
+              localDateTime == null ? null : localDateTime.toLocalTime())
+            .toArray(LocalTime[]::new);
+        verifyTypeMapping(
+          connection,
+          Parameters.in(timestampWithLocalTimeZoneArrayType, localDateTimes),
+          timestampWithLocalTimeZoneArrayType.getName(),
+          row -> row.get(0, LocalTime[].class),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              localTimes,
+              assertInstanceOf(LocalTime[].class, rowValue)));
+      }
+      finally {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TYPE TIMESTAMP_WITH_LOCAL_TIME_ZONE_ARRAY"));
+      }
+
+      // Expect ARRAY of INTERVAL YEAR TO MONTH and Period[] to map
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE INTERVAL_YEAR_TO_MONTH_ARRAY" +
+            " AS ARRAY(10) OF INTERVAL YEAR TO MONTH")
+        .execute());
+      try {
+        Type intervalYearToMonthArrayType =
+          OracleR2dbcTypes.arrayType("INTERVAL_YEAR_TO_MONTH_ARRAY");
+
+        Period[] periods = {
+          Period.of(1, 2, 0),
+          Period.of(3, 4, 0),
+          Period.of(5, 6, 0),
+          null
+        };
+
+        verifyTypeMapping(
+          connection,
+          Parameters.in(intervalYearToMonthArrayType, periods),
+          intervalYearToMonthArrayType.getName(),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              periods,
+              assertInstanceOf(Period[].class, rowValue)));
+      }
+      finally {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TYPE INTERVAL_YEAR_TO_MONTH_ARRAY"));
+      }
+
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE INTERVAL_DAY_TO_SECOND_ARRAY" +
+            " AS ARRAY(10) OF INTERVAL DAY TO SECOND")
+        .execute());
+      try {
+        Type intervalDayToSecondArrayType =
+          OracleR2dbcTypes.arrayType("INTERVAL_DAY_TO_SECOND_ARRAY");
+        Duration[] durations = {
+          Duration.ofDays(1),
+          Duration.ofHours(2),
+          Duration.ofMinutes(3),
+          Duration.ofSeconds(4),
+          null
+        };
+        verifyTypeMapping(
+          connection,
+          Parameters.in(intervalDayToSecondArrayType, durations),
+          intervalDayToSecondArrayType.getName(),
+          (ignored, rowValue) ->
+            assertArrayEquals(
+              durations,
+              assertInstanceOf(Duration[].class, rowValue)));
+      }
+      finally {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TYPE INTERVAL_DAY_TO_SECOND_ARRAY"));
+      }
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * for STRUCT types. The Oracle R2DBC Driver is expected to allow OBJECT
+   * values to be mapped to JDBC's {@link java.sql.Struct} type. The current
+   * R2DBC specification does not define a default mapping for OBJECT values, so
+   * the Oracle R2DBC driver does not implement one.
+   * </p>
+   */
+  @Test
+  public void testObjectTypeMappings() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE CHARACTER_ARRAY" +
+            " AS ARRAY(10) OF VARCHAR(100)")
+        .execute());
+      Type characterArrayType = OracleR2dbcTypes.arrayType("CHARACTER_ARRAY");
+
+      // Expect ARRAY of VARCHAR and String[] to map
+      String[] greetings = {"Hello", "Bonjour", "你好"};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(characterArrayType, greetings),
+        characterArrayType.getName(),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            greetings,
+            assertInstanceOf(String[].class, rowValue)));
+
+      // Expect ARRAY of NUMBER and int[] to map
+      awaitOne(connection.createStatement(
+          "CREATE OR REPLACE TYPE NUMBER_ARRAY" +
+            " AS ARRAY(10) OF NUMBER")
+        .execute());
+      Type numberArrayType = OracleR2dbcTypes.arrayType("NUMBER_ARRAY");
+      int[] numbers = {1, 2, 3, 4};
+      verifyTypeMapping(
+        connection,
+        Parameters.in(numberArrayType, numbers),
+        numberArrayType.getName(),
+        row -> row.get(0, int[].class),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            numbers,
+            assertInstanceOf(int[].class, rowValue)));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
   // TODO: More tests for JDBC 4.3 mappings like BigInteger to BIGINT,
   //  java.sql.Date to DATE, java.sql.Blob to BLOB? Oracle R2DBC exposes all
   //  type mappings supported by Oracle JDBC.
@@ -565,10 +1279,20 @@ public class TypeMappingTest {
       awaitExecution(connection.createStatement(String.format(
         "CREATE TABLE "+table+" (javaValue %s)", sqlTypeDdl)));
 
-      awaitUpdate(asList(1,1), connection.createStatement(
-        "INSERT INTO "+table+"(javaValue) VALUES(:javaValue)")
-        .bind("javaValue", javaValue).add()
-        .bindNull("javaValue", javaValue.getClass()));
+      Statement insert = connection.createStatement(
+          "INSERT INTO "+table+"(javaValue) VALUES(:javaValue)")
+        .bind("javaValue", javaValue)
+        .add();
+
+      if (javaValue instanceof Parameter) {
+        Type type = ((Parameter) javaValue).getType();
+        insert.bind("javaValue", Parameters.in(type));
+      }
+      else {
+        insert.bindNull("javaValue", javaValue.getClass());
+      }
+
+      awaitUpdate(asList(1,1), insert);
 
       verifyEquals.accept(javaValue,
         awaitOne(Flux.from(connection.createStatement(
