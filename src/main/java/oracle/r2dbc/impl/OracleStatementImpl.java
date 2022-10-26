@@ -1574,7 +1574,19 @@ final class OracleStatementImpl implements Statement {
         for (int i : outBindIndexes) {
           Type type = ((Parameter) binds[i]).getType();
           SQLType jdbcType = toJdbcType(type);
-          callableStatement.registerOutParameter(i + 1, jdbcType);
+
+          if (type instanceof OracleR2dbcTypes.ArrayType) {
+            // Call registerOutParameter with the user defined type name
+            // returned by ArrayType.getName(). Oracle JDBC throws an exception
+            // if a name is provided for a built-in type, like VARCHAR, etc. So
+            // this branch should only be taken for user defined types, like
+            // ARRAY.
+            callableStatement.registerOutParameter(
+              i + 1, jdbcType, type.getName());
+          }
+          else {
+            callableStatement.registerOutParameter(i + 1, jdbcType);
+          }
         }
       });
     }

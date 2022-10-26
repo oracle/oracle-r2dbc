@@ -560,8 +560,8 @@ command is used to define an `ARRAY` type:
 CREATE TYPE MY_ARRAY AS ARRAY(8) OF NUMBER
 ```
 Oracle R2DBC defines `oracle.r2dbc.OracleR2dbcType.ArrayType` as a `Type` for
-representing user defined `ARRAY` types. A `Parameter` with an type of
-`ArrayType` must be used when binding array values to a `Statement` 
+representing user defined `ARRAY` types. A `Parameter` with a type of
+`ArrayType` must be used when binding array values to a `Statement`.
 ```java
 Publisher<Result> arrayBindExample(Connection connection) {
   Statement statement =
@@ -574,6 +574,30 @@ Publisher<Result> arrayBindExample(Connection connection) {
   statement.bind("arrayBind", Parameters.in(arrayType, arrayValues));
 
   return statement.execute();
+}
+```
+A `Parameter` with a type of `ArrayType` must also be used when binding OUT
+parameters of a PL/SQL call.
+```java
+Publisher<Result> arrayOutBindExample(Connection connection) {
+  Statement statement =
+    connection.createStatement("BEGIN; exampleCall(:array_bind); END;");
+
+  // Use the name defined for an ARRAY type:
+  // CREATE TYPE MY_ARRAY AS ARRAY(8) OF NUMBER
+  ArrayType arrayType = OracleR2dbcTypes.arrayType("MY_ARRAY");
+  statement.bind("arrayBind", Parameters.out(arrayType));
+
+  return statement.execute();
+}
+```
+`ARRAY` values may be consumed from a `Row` or `OutParameter` as a Java array.
+The element type of the Java array may be any Java type that is supported as
+a mapping for the SQL type of the `ARRAY`. For instance, if the `ARRAY` type is
+`NUMBER`, then a `Integer[]` mapping is supported:
+```java
+Publisher<Integer[]> arrayMapExample(Result result) {
+  return result.map(readable -> readable.get("arrayValue", Integer[].class));
 }
 ```
 ## Secure Programming Guidelines
