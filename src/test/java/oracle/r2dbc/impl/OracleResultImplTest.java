@@ -650,9 +650,16 @@ public class OracleResultImplTest {
         awaitMany(Flux.from(warningStatement.execute())
           .flatMap(result -> result.flatMap(Mono::just)));
 
-      // Expect the warning segment first. Expect it to have the fixed message
-      // and error number used by Oracle JDBC for all warnings.
-      Result.Segment secondSegment = segments.get(0);
+      // Expect the update count segment first. Warnings are always emitted
+      // last.
+      Result.Segment firstSegment = segments.get(0);
+      assertEquals(0,
+        assertInstanceOf(UpdateCount.class, firstSegment).value());
+      assertFalse(firstSegment instanceof OracleR2dbcWarning);
+
+      // Expect the warning segment after the update count. Expect it to have
+      // the fixed message and error number used by Oracle JDBC for all warnings
+      Result.Segment secondSegment = segments.get(1);
       OracleR2dbcWarning warning =
         assertInstanceOf(OracleR2dbcWarning.class, secondSegment);
       assertEquals(
@@ -665,14 +672,6 @@ public class OracleResultImplTest {
       assertEquals(warning.errorCode(), exception.getErrorCode());
       assertEquals(warning.sqlState(), exception.getSqlState());
       assertEquals(sql, exception.getSql());
-
-
-      // Expect the update count segment last. Warnings are always emitted
-      // first.
-      Result.Segment firstSegment = segments.get(1);
-      assertEquals(0,
-        assertInstanceOf(UpdateCount.class, firstSegment).value());
-      assertFalse(firstSegment instanceof OracleR2dbcWarning);
 
       // Verify that there are not any more segments
       assertEquals(2, segments.size());
@@ -727,19 +726,25 @@ public class OracleResultImplTest {
   public void testOracleR2dbcWarningNotIgnored() {
     Connection connection = awaitOne(sharedConnection());
     try {
-
       // Expect a warning for forcing a view that references a non-existent
       // table
       String sql =
         "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarningIgnored AS" +
           " SELECT x FROM thisdoesnotexist";
       Statement warningStatement = connection.createStatement(sql);
+      AtomicInteger segmentIndex = new AtomicInteger(0);
       awaitError(
         R2dbcException.class,
         awaitOne(warningStatement.execute())
           .flatMap(segment ->
-            Mono.error(
-              assertInstanceOf(OracleR2dbcWarning.class, segment).exception())));
+            // Expect the update count first, followed by the warning
+            segmentIndex.getAndIncrement() == 0
+              ? Mono.just(assertInstanceOf(UpdateCount.class, segment)
+                  .value())
+              : Mono.error(assertInstanceOf(OracleR2dbcWarning.class, segment)
+                  .exception())));
+      // Expect only two segments
+      assertEquals(2, segmentIndex.get());
     }
     finally {
       tryAwaitExecution(

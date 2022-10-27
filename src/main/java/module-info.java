@@ -30,6 +30,7 @@ module com.oracle.database.r2dbc {
     with oracle.r2dbc.impl.OracleConnectionFactoryProviderImpl;
 
   requires java.sql;
+  requires java.naming;
   requires com.oracle.database.jdbc;
   requires reactor.core;
   requires transitive org.reactivestreams;

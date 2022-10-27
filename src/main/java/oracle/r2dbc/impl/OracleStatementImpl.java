@@ -50,7 +50,6 @@ import java.time.Duration;
 import java.time.Period;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -58,6 +57,7 @@ import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 
@@ -300,7 +300,7 @@ final class OracleStatementImpl implements Statement {
    * </pre>
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code identifier} does match a
-   * case sensitive parameter name that appears in this {@code Statement's}
+   * case-sensitive parameter name that appears in this {@code Statement's}
    * SQL command.
    * @throws IllegalArgumentException If the JDBC PreparedStatement does not
    * support conversions of the bind value's Java type into a SQL type.
@@ -365,7 +365,7 @@ final class OracleStatementImpl implements Statement {
    * </pre>
    * @throws IllegalArgumentException {@inheritDoc}
    * @throws IllegalArgumentException If the {@code identifier} does match a
-   * case sensitive parameter name that appears in this {@code Statement's}
+   * case-sensitive parameter name that appears in this {@code Statement's}
    * SQL command.
    */
   @Override
@@ -735,12 +735,6 @@ final class OracleStatementImpl implements Statement {
     requireSupportedSqlType(requireNonNull(
       parameter.getType(), "Parameter type is null"));
     requireSupportedJavaType(parameter.getValue());
-
-    // TODO: This method should check if Java type can be converted to the
-    //  specified SQL type. If the conversion is unsupported, then JDBC
-    //  setObject(...) will throw when this statement is executed. The correct
-    //  behavior is to throw IllegalArgumentException here, and not from
-    //  execute()
     bindValues[index] = parameter;
   }
 
@@ -748,7 +742,7 @@ final class OracleStatementImpl implements Statement {
    * Checks that the specified 0-based {@code index} is within the range of
    * valid parameter indexes for this statement.
    * @param index A 0-based parameter index
-   * @throws IndexOutOfBoundsException If the {@code index} is outside of the
+   * @throws IndexOutOfBoundsException If the {@code index} is not within the
    *   valid range.
    */
   private void requireValidIndex(int index) {
@@ -839,8 +833,7 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
-   * Checks that the class type of an {@code object} is supported as a bind
-   * value.
+   * Checks that the class of an {@code object} is supported as a bind value.
    * @param object Object to check. May be null.
    * @throws IllegalArgumentException If the class type of {@code object} is not
    * supported
@@ -922,6 +915,14 @@ final class OracleStatementImpl implements Statement {
     /** The {@code PreparedStatement} that is executed */
     protected final PreparedStatement preparedStatement;
 
+    /**
+     * Collection of results that depend on the JDBC statement to remain open
+     * until they are consumed. For instance, a result that retains a
+     * {@code ResultSet} would depend on the JDBC statement to remain open, as
+     * the {@code ResultSet} is closed when the JDBC statement is closed.
+      */
+    protected final DependentCounter dependentCounter;
+
     /** The bind values that are set on the {@link #preparedStatement} */
     protected final Object[] binds;
 
@@ -940,6 +941,15 @@ final class OracleStatementImpl implements Statement {
     private JdbcStatement(PreparedStatement preparedStatement, Object[] binds) {
       this.preparedStatement = preparedStatement;
       this.binds = binds;
+
+      // Add this statement as a "party" (think j.u.c.Phaser) to the dependent
+      // results by calling increment(). After the Result publisher returned by
+      // execute() terminates, this statement "arrives" by calling decrement().
+      // Calling decrement() after the Result publisher terminates ensures that
+      // the JDBC statement can not be closed until all results have had a
+      // chance to be emitted to user code.
+      dependentCounter = new DependentCounter(closeStatement());
+      dependentCounter.increment();
     }
 
     /**
@@ -957,21 +967,32 @@ final class OracleStatementImpl implements Statement {
      * emitted from the {@code bind} or {@code getResults} publishers, or if
      * {@link PreparedStatement#getWarnings()} yields a warning.
      * </p><p>
-     * After all {@code Results} have been consumed, the
-     * {@link #preparedStatement} is closed.
+     * The {@link #preparedStatement} can only be closed after all results that
+     * depend on it have been consumed by user code. It is not guaranteed that
+     * every result created by this statement will actually reach user code; A
+     * cancel signal may occur at any time. Upon cancellation, no more signals
+     * are emitted downstream. For this reason, the
+     * {@link OracleResultImpl#addDependent()} method must be called only when
+     * it is certain that a result will reach the downstream subscriber. This
+     * certainty is offered by the {@link Flux#doOnNext(Consumer)} operator.
      * </p>
-     * @return A publisher that emits the result of executing this statement
+     * @return A publisher that emits the result of executing this statement.
+     * Not null.
      */
     final Publisher<OracleResultImpl> execute() {
-      return Flux.usingWhen(Mono.just(new ArrayList<>(1)),
-        results ->
-          Mono.from(bind())
-            .thenMany(executeJdbc())
-            .map(this::getWarnings)
-            .doOnNext(results::add)
-            .onErrorResume(R2dbcException.class, r2dbcException ->
-              Mono.just(createErrorResult(r2dbcException))),
-        this::deallocate);
+
+      Mono<OracleResultImpl> deallocate =
+        Mono.from(deallocate()).cast(OracleResultImpl.class);
+
+      return Flux.concatDelayError(
+        Mono.from(bind())
+          .thenMany(executeJdbc())
+          .map(this::getWarnings)
+          .onErrorResume(R2dbcException.class, r2dbcException ->
+            Mono.just(createErrorResult(r2dbcException)))
+          .doOnNext(OracleResultImpl::addDependent),
+          deallocate)
+        .doOnCancel(deallocate::subscribe);
     }
 
     /**
@@ -1181,7 +1202,7 @@ final class OracleStatementImpl implements Statement {
       return fromJdbc(() -> {
         if (isResultSet) {
           return createQueryResult(
-            preparedStatement.getResultSet(), adapter);
+            dependentCounter, preparedStatement.getResultSet(), adapter);
         }
         else {
           long updateCount = preparedStatement.getLargeUpdateCount();
@@ -1220,71 +1241,43 @@ final class OracleStatementImpl implements Statement {
      * made to deallocate any remaining resources before emitting the error.
      * </p><p>
      * The returned publisher subscribes to the {@link #deallocators}
-     * publisher, and may close the {@link #preparedStatement} if all {@code
-     * results} have been consumed when this method is called.
-     * </p><p>
-     * If one or more {@code results} have yet to be consumed, then this method
-     * arranges for the {@link #preparedStatement} to be closed after all
-     * results have been consumed. A result may be backed by a
-     * {@link java.sql.ResultSet} or by {@link CallableStatement}, so the
-     * {@link #preparedStatement} must remain open until all results have
-     * been consumed.
+     * publisher, and may close the {@link #preparedStatement} if all results
+     * have already been consumed when this method is called. This method
+     * calls the {@code decrement()} method of {@link #dependentCounter}, in
+     * balance with the {@code increment()} call that occur in the constructor
+     * of this statement.
      * </p>
-     * @param results Results that must be consumed before closing the
-     * {@link #preparedStatement}
      * @return A publisher that completes when all resources have been
      * deallocated
      */
-    private Publisher<Void> deallocate(Collection<OracleResultImpl> results) {
-
-      // Set up a counter that is decremented as each result is consumed.
-      AtomicInteger unconsumed = new AtomicInteger(results.size());
-
-      // Set up a publisher that decrements the counter, and closes the
-      // statement when it reaches zero
-      Publisher<Void> closeStatement = adapter.getLock().run(() -> {
-        if (unconsumed.decrementAndGet() == 0)
-          closeStatement();
-      });
-
-      // Tell each unconsumed result to decrement the unconsumed count, and then
-      // close the statement when the count reaches zero.
-      for (OracleResultImpl result : results) {
-        if (!result.onConsumed(closeStatement))
-          unconsumed.decrementAndGet();
-      }
-
-      // If there are no results, or all results have already been consumed,
-      // then the returned publisher closes the statement.
-      if (unconsumed.get() == 0)
-        addDeallocation(adapter.getLock().run(this::closeStatement));
-
+    private Publisher<Void> deallocate() {
+      addDeallocation(dependentCounter.decrement());
       return deallocators;
     }
 
     /**
-     * Closes the JDBC {@link #preparedStatement}. This method should only be
-     * called while holding the
-     * {@linkplain ReactiveJdbcAdapter#getLock() connection lock}
-     * @throws SQLException If the statement fails to close.
+     * @return A publisher that closes the JDBC {@link #preparedStatement} when
+     * subscribed to. Not null.
      */
-    private void closeStatement() throws SQLException {
-      try {
-        // Workaround Oracle JDBC bug #34545179: ResultSet references are
-        // retained even when the statement is closed. Calling getMoreResults
-        // with the CLOSE_ALL_RESULTS argument forces the driver to
-        // de-reference them.
-        preparedStatement.getMoreResults(CLOSE_ALL_RESULTS);
-      }
-      catch (SQLException sqlException) {
-        // It may be the case that the JDBC connection was closed, and so the
-        // statement was closed with it. Check for this, and ignore the
-        // SQLException if so.
-        if (!jdbcConnection.isClosed())
-          throw sqlException;
-      }
+    private Publisher<Void> closeStatement() {
+      return adapter.getLock().run(() -> {
+        try {
+          // Workaround Oracle JDBC bug #34545179: ResultSet references are
+          // retained even when the statement is closed. Calling getMoreResults
+          // with the CLOSE_ALL_RESULTS argument forces the driver to
+          // de-reference them.
+          preparedStatement.getMoreResults(CLOSE_ALL_RESULTS);
+        }
+        catch (SQLException sqlException) {
+          // It may be the case that the JDBC connection was closed, and so the
+          // statement was closed with it. Check for this, and ignore the
+          // SQLException if so.
+          if (!jdbcConnection.isClosed())
+            throw sqlException;
+        }
 
-      preparedStatement.close();
+        preparedStatement.close();
+      });
     }
 
     /**
@@ -1526,7 +1519,7 @@ final class OracleStatementImpl implements Statement {
 
     /**
      * Converts a ByteBuffer to a byte array. The {@code byteBuffer} contents,
-     * delimited by it's position and limit, are copied into the returned byte
+     * delimited by its position and limit, are copied into the returned byte
      * array. No state of the {@code byteBuffer} is mutated, including it's
      * position, limit, or mark.
      * @param byteBuffer A ByteBuffer. Not null. Not retained.
@@ -1635,8 +1628,10 @@ final class OracleStatementImpl implements Statement {
       return Flux.concat(
         super.executeJdbc(),
         Mono.just(createCallResult(
+          dependentCounter,
           createOutParameters(
             fromJdbc(preparedStatement::getConnection),
+            dependentCounter,
             new JdbcOutParameters(), metadata, adapter),
           adapter)));
     }
@@ -1703,14 +1698,13 @@ final class OracleStatementImpl implements Statement {
      */
     @Override
     protected Publisher<Void> bind() {
-      @SuppressWarnings({"unchecked"})
-      Publisher<Void>[] bindPublishers = new Publisher[batchSize];
+      Publisher<?>[] bindPublishers = new Publisher[batchSize];
       for (int i = 0; i < batchSize; i++) {
         bindPublishers[i] = Flux.concat(
           bind(batch.remove()),
           adapter.getLock().run(preparedStatement::addBatch));
       }
-      return Flux.concat(bindPublishers);
+      return Flux.concat(bindPublishers).cast(Void.class);
     }
 
     /**
@@ -1822,8 +1816,8 @@ final class OracleStatementImpl implements Statement {
 
               if (generatedKeys.isBeforeFirst()) {
                 return Mono.just(createGeneratedValuesResult(
-                  preparedStatement.getLargeUpdateCount(), generatedKeys,
-                  adapter))
+                  preparedStatement.getLargeUpdateCount(),
+                    dependentCounter, generatedKeys, adapter))
                   .concatWith(super.getResults(
                     preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
               }

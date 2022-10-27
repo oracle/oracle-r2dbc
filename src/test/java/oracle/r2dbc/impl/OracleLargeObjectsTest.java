@@ -47,11 +47,10 @@ import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies the Oracle R2DBC Driver implements behavior related to {@link Blob}
- * and {@link Clob} types that is specified in it's class and method level
+ * and {@link Clob} types that is specified in its class and method level
  * javadocs, in the javadocs of {@code Blob} and {@code Clob}, and in Section
  * 12 of the R2DBC 0.8.2 Specification.
  */
@@ -353,7 +352,7 @@ public class OracleLargeObjectsTest {
 
       // Expect row.get(int/String) to use Clob as the default Java type
       // mapping for CLOB type columns.
-      List<List<Clob>> Clobs = awaitMany(Flux.from(connection.createStatement(
+      List<List<Clob>> clobs = awaitMany(Flux.from(connection.createStatement(
         "SELECT x,y FROM testClobInsert ORDER BY id")
         .execute())
         .flatMap(result -> result.map((row, metadata) ->
@@ -361,10 +360,10 @@ public class OracleLargeObjectsTest {
 
       // Expect bytes written to INSERTed Clobs to match the bytes read from
       // SELECTed Clobs
-      awaitBytes(xBytes0, Clobs.get(0).get(0));
-      awaitBytes(yBytes0, Clobs.get(0).get(1));
-      awaitBytes(xBytes1, Clobs.get(1).get(0));
-      awaitBytes(yBytes1, Clobs.get(1).get(1));
+      awaitBytes(xBytes0, clobs.get(0).get(0));
+      awaitBytes(yBytes0, clobs.get(0).get(1));
+      awaitBytes(xBytes1, clobs.get(1).get(0));
+      awaitBytes(yBytes1, clobs.get(1).get(1));
 
     }
     finally {

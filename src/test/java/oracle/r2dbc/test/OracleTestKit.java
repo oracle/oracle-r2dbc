@@ -45,6 +45,7 @@ import reactor.test.StepVerifier;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 
@@ -54,9 +55,11 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
+import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
+import static oracle.r2dbc.test.DatabaseConfig.protocol;
 import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.user;
 
@@ -91,7 +94,10 @@ public class OracleTestKit implements TestKit<Integer> {
   {
     try {
       OracleDataSource dataSource = new oracle.jdbc.pool.OracleDataSource();
-      dataSource.setURL(String.format("jdbc:oracle:thin:@%s:%d/%s",
+      dataSource.setURL(String.format("jdbc:oracle:thin:@%s%s:%d/%s",
+        Optional.ofNullable(protocol())
+          .map(protocol -> protocol + ":")
+          .orElse(""),
         host(), port(), serviceName()));
       dataSource.setUser(user());
       dataSource.setPassword(password());
@@ -102,18 +108,8 @@ public class OracleTestKit implements TestKit<Integer> {
     }
   }
 
-  private final ConnectionFactory connectionFactory;
-  {
-    connectionFactory = ConnectionFactories.get(
-      ConnectionFactoryOptions.builder()
-        .option(DRIVER, "oracle")
-        .option(DATABASE, serviceName())
-        .option(HOST, host())
-        .option(PORT, port())
-        .option(PASSWORD, password())
-        .option(USER, user())
-        .build());
-  }
+  private final ConnectionFactory connectionFactory =
+    ConnectionFactories.get(connectionFactoryOptions());
 
   public JdbcOperations getJdbcOperations() {
     return jdbcOperations;

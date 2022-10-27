@@ -98,7 +98,8 @@ final class SqlTypeMap {
         R2dbcType.TIMESTAMP_WITH_TIME_ZONE),
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),
       entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
-      entry(JDBCType.VARCHAR, R2dbcType.VARCHAR)
+      entry(JDBCType.VARCHAR, R2dbcType.VARCHAR),
+      entry(JDBCType.REF_CURSOR, OracleR2dbcTypes.REF_CURSOR)
     );
 
   /**

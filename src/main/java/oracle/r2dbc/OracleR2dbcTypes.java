@@ -22,6 +22,7 @@ package oracle.r2dbc;
 
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.R2dbcType;
+import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.sql.json.OracleJsonObject;
@@ -95,6 +96,12 @@ public final class OracleR2dbcTypes {
    */
   public static final Type TIMESTAMP_WITH_LOCAL_TIME_ZONE =
     new TypeImpl(LocalDateTime.class, "TIMESTAMP WITH LOCAL TIME ZONE");
+
+  /**
+   * A cursor that is returned by a procedural call.
+   */
+  public static final Type REF_CURSOR =
+    new TypeImpl(Result.class, "SYS_REFCURSOR");
 
   /**
    * <p>
