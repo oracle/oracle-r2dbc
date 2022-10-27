@@ -653,7 +653,7 @@ public class TypeMappingTest {
         i -> {
           long[] moreLongs = new long[longs.length];
           for (int j = 0; j < longs.length; j++)
-            moreLongs[j] = (long)(longs[j] + i);
+            moreLongs[j] = longs[j] + i;
           return moreLongs;
         },
         false,
