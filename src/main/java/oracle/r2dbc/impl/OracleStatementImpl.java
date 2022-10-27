@@ -31,7 +31,6 @@ import oracle.jdbc.OracleConnection;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
-import oracle.sql.ArrayDescriptor;
 import oracle.sql.INTERVALYM;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -1368,30 +1367,52 @@ final class OracleStatementImpl implements Statement {
     }
 
     /**
-     * Converts a given {@code value} to a JDBC array of the given {@code type}.
+     * Converts a given {@code value} to a JDBC {@link Array} of the given
+     * {@code type}.
      */
     private Array convertArrayBind(
       OracleR2dbcTypes.ArrayType type, Object value) {
 
-      final Object jdbcValue;
-      Class<?> componentType = value.getClass().getComponentType();
-      while (componentType.isArray())
-        componentType = componentType.getComponentType();
+      // TODO: createOracleArray executes a blocking database call the first
+      //  time an OracleArray is created for a given type name. Subsequent
+      //  creations of the same type avoid the database call using a cached type
+      //  descriptor. If possible, rewrite this use a non-blocking call.
+      return fromJdbc(() ->
+        jdbcConnection.unwrap(OracleConnection.class)
+          .createOracleArray(type.getName(), convertJavaArray(value)));
+    }
 
-      if (value instanceof byte[]) {
-        // Oracle JDBC does not support creating SQL arrays from a byte[], so
-        // convert it to an short[].
-        byte[] bytes = (byte[])value;
+    /**
+     * Converts a bind value for an ARRAY to a Java type that is supported by
+     * Oracle JDBC. This method handles cases for standard type mappings of
+     * R2DBC and extended type mapping Oracle R2DBC which are not supported by
+     * Oracle JDBC.
+     */
+    private Object convertJavaArray(Object array) {
+
+      if (array == null)
+        return null;
+
+      // TODO: R2DBC drivers are only required to support ByteBuffer to
+      //  VARBINARY (ie: RAW) conversions. However, a programmer might want to
+      //  use byte[][] as a bind for an ARRAY of RAW. If that happens, they
+      //  might hit this code by accident. Ideally, they can bind ByteBuffer[]
+      //  instead. If absolutely necessary, Oracle R2DBC can do a type look up
+      //  on the ARRAY and determine if the base type is RAW or NUMBER.
+      if (array instanceof byte[]) {
+        // Convert byte to NUMBER. Oracle JDBC does not support creating SQL
+        // arrays from a byte[], so convert the byte[] to an short[].
+        byte[] bytes = (byte[])array;
         short[] shorts = new short[bytes.length];
         for (int i = 0; i < bytes.length; i++)
           shorts[i] = (short)(0xFF & bytes[i]);
 
-        jdbcValue = shorts;
+        return shorts;
       }
-      else if (value instanceof ByteBuffer[]) {
+      else if (array instanceof ByteBuffer[]) {
         // Convert from R2DBC's ByteBuffer representation of binary data into
         // JDBC's byte[] representation
-        ByteBuffer[] byteBuffers = (ByteBuffer[]) value;
+        ByteBuffer[] byteBuffers = (ByteBuffer[]) array;
         byte[][] byteArrays = new byte[byteBuffers.length][];
         for (int i = 0; i < byteBuffers.length; i++) {
           ByteBuffer byteBuffer = byteBuffers[i];
@@ -1400,12 +1421,12 @@ final class OracleStatementImpl implements Statement {
             : convertByteBufferBind(byteBuffers[i]);
         }
 
-        jdbcValue = byteArrays;
+        return byteArrays;
       }
-      else if (value instanceof Period[]) {
+      else if (array instanceof Period[]) {
         // Convert from Oracle R2DBC's Period representation of INTERVAL YEAR TO
         // MONTH to Oracle JDBC's INTERVALYM representation.
-        Period[] periods = (Period[]) value;
+        Period[] periods = (Period[]) array;
         INTERVALYM[] intervalYearToMonths = new INTERVALYM[periods.length];
         for (int i = 0; i < periods.length; i++) {
           Period period = periods[i];
@@ -1424,19 +1445,25 @@ final class OracleStatementImpl implements Statement {
           }
         }
 
-        jdbcValue = intervalYearToMonths;
+        return intervalYearToMonths;
       }
       else {
-        jdbcValue = value;
-      }
+        // Check if the bind value is a multi-dimensional array
+        Class<?> componentType = array.getClass().getComponentType();
 
-      // TODO: createOracleArray executes a blocking database call the first
-      //  time an OracleArray is created for a given type name. Subsequent
-      //  creations of the same type avoid the database call using a cached type
-      //  descriptor. If possible, rewrite this use a non-blocking call.
-      return fromJdbc(() ->
-        jdbcConnection.unwrap(OracleConnection.class)
-          .createOracleArray(type.getName(), jdbcValue));
+        if (componentType == null || !componentType.isArray())
+          return array;
+
+        int length = java.lang.reflect.Array.getLength(array);
+        Object[] converted = new Object[length];
+
+        for (int i = 0; i < length; i++) {
+          converted[i] =
+            convertJavaArray(java.lang.reflect.Array.get(array, i));
+        }
+
+        return converted;
+      }
     }
 
     /**

@@ -546,10 +546,31 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     if (array.length == 0)
       return (T[]) java.lang.reflect.Array.newInstance(desiredType, 0);
 
-    Class<?> elementType = array[0].getClass();
+    // The array's component type could be Object.class; Oracle JDBC returns an
+    // Object[] in some cases. Search for a non-null element to determine the
+    // true type of type objects in the array.
+    Class<?> elementType = null;
+    for (Object element : array) {
+      if (element != null) {
+        elementType = array[0].getClass();
+        break;
+      }
+    }
+
+    // If all array elements are null, then return an array of the desired type
+    // with all null elements.
+    if (elementType == null) {
+      return (T[]) java.lang.reflect.Array.newInstance(
+        desiredType, array.length);
+    }
 
     if (desiredType.isAssignableFrom(elementType)) {
-      return (T[])array;
+      // The elements are of the desired type, but the array type is something
+      // different, like an Object[] full of BigDecimal.
+      return (T[]) mapArray(
+        array,
+        length -> (T[])java.lang.reflect.Array.newInstance(desiredType, length),
+        Function.identity());
     }
     else if (elementType.equals(BigDecimal.class)) {
       if (desiredType.equals(Boolean.class)) {
