@@ -26,24 +26,22 @@ import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.OutParametersMetadata;
 import io.r2dbc.spi.R2dbcException;
-
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleArray;
+import oracle.jdbc.OracleConnection;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
+import oracle.sql.DatumWithConnection;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.Array;
-import java.sql.JDBCType;
 import java.sql.SQLException;
-import java.sql.SQLType;
-import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Duration;
@@ -52,7 +50,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.Period;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Map;
@@ -80,8 +77,9 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
  */
 class OracleReadableImpl implements io.r2dbc.spi.Readable {
 
-  /** Adapts JDBC Driver APIs into Reactive Streams APIs */
-  private final ReactiveJdbcAdapter adapter;
+
+  /** The JDBC connection that created this readable */
+  private final java.sql.Connection jdbcConnection;
 
   /** This values of this {@code Readable}. Values are supplied by a JDBC Driver */
   private final JdbcReadable jdbcReadable;
@@ -89,19 +87,26 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
   /** Metadata of the values of this {@code Readable}. */
   private final ReadablesMetadata<?> readablesMetadata;
 
+  /** Adapts JDBC Driver APIs into Reactive Streams APIs */
+  private final ReactiveJdbcAdapter adapter;
+
   /**
    * <p>
    * Constructs a new {@code Readable} that supplies values of a
    * {@code jdbcReadable} and obtains metadata of the values from
    * {@code resultMetadata}.
    * </p>
+   * @param jdbcConnection JDBC connection that created the
+   *   {@code jdbcReadable}. Not null.
    * @param jdbcReadable Readable values from a JDBC Driver. Not null.
    * @param readablesMetadata Metadata of each value. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   private OracleReadableImpl(
-    JdbcReadable jdbcReadable, ReadablesMetadata<?> readablesMetadata,
+    java.sql.Connection jdbcConnection, JdbcReadable jdbcReadable,
+    ReadablesMetadata<?> readablesMetadata,
     ReactiveJdbcAdapter adapter) {
+    this.jdbcConnection = jdbcConnection;
     this.jdbcReadable = jdbcReadable;
     this.readablesMetadata = readablesMetadata;
     this.adapter = adapter;
@@ -113,6 +118,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * provided {@code jdbcReadable} and {@code metadata}. The metadata
    * object is used to determine the default type mapping of column values.
    * </p>
+   * @param jdbcConnection JDBC connection that created the
+   *   {@code jdbcReadable}. Not null.
    * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
    * @param metadata Meta-data for the specified row. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
@@ -120,9 +127,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    *   {@code metadata}. Not null.
    */
   static Row createRow(
-    JdbcReadable jdbcReadable, RowMetadataImpl metadata,
-    ReactiveJdbcAdapter adapter) {
-    return new RowImpl(jdbcReadable, metadata, adapter);
+    java.sql.Connection jdbcConnection, JdbcReadable jdbcReadable,
+    RowMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+    return new RowImpl(jdbcConnection, jdbcReadable, metadata, adapter);
   }
   /**
    * <p>
@@ -130,6 +137,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * the provided {@code jdbcReadable} and {@code rowMetadata}. The metadata
    * object is used to determine the default type mapping of column values.
    * </p>
+   * @param jdbcConnection JDBC connection that created the
+   *   {@code jdbcReadable}. Not null.
    * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
    * @param metadata Meta-data for the specified row. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
@@ -137,9 +146,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    *   {@code metadata}. Not null.
    */
   static OutParameters createOutParameters(
-    JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata,
-    ReactiveJdbcAdapter adapter) {
-    return new OutParametersImpl(jdbcReadable, metadata, adapter);
+    java.sql.Connection jdbcConnection, JdbcReadable jdbcReadable,
+    OutParametersMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+    return new OutParametersImpl(jdbcConnection, jdbcReadable, metadata, adapter);
   }
 
   /**
@@ -372,179 +381,255 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * @return A Java array, or {@code null} if the column value is null.
    */
   private Object getJavaArray(int index, Class<?> javaType) {
-    final OracleArray jdbcArray =
-      jdbcReadable.getObject(index, OracleArray.class);
+    OracleArray oracleArray = jdbcReadable.getObject(index, OracleArray.class);
 
-    if (jdbcArray == null)
-      return null;
+    return oracleArray == null
+      ? null
+      : convertOracleArray(oracleArray, javaType);
+  }
 
+  private Object convertOracleArray(
+    OracleArray oracleArray, Class<?> javaType) {
     try {
-      // For arrays of primitive types, use API extensions on OracleArray.
-      if (boolean.class.equals(javaType)) {
-        // OracleArray does not support conversion to boolean[], so map shorts
-        // to booleans.
-        short[] shorts = jdbcArray.getShortArray();
-        boolean[] booleans = new boolean[shorts.length];
-        for (int i = 0; i < shorts.length; i++)
-          booleans[i] = shorts[i] != 0;
-        return booleans;
-      }
-      else if (byte.class.equals(javaType)) {
-        // OracleArray does not support conversion to byte[], so map shorts to
-        // bytes
-        short[] shorts = jdbcArray.getShortArray();
-        byte[] bytes = new byte[shorts.length];
-        for (int i = 0; i < shorts.length; i++)
-          bytes[i] = (byte)shorts[i];
-        return bytes;
-      }
-      else if (short.class.equals(javaType)) {
-        return jdbcArray.getShortArray();
-      }
-      else if (int.class.equals(javaType)) {
-        return jdbcArray.getIntArray();
-      }
-      else if (long.class.equals(javaType)) {
-        return jdbcArray.getLongArray();
-      }
-      else if (float.class.equals(javaType)) {
-        return jdbcArray.getFloatArray();
-      }
-      else if (double.class.equals(javaType)) {
-        return jdbcArray.getDoubleArray();
-      }
-      else {
-        // Check if Row.get(int/String) was called without a Class argument.
-        // In this case, the default mapping is declared as Object[] in
-        // SqlTypeMap, and this method gets called with Object.clas
-        if (Object.class.equals(javaType)) {
-          // The correct default mapping for the ARRAY is not actually Object[],
-          // it is the default mapping of the ARRAY's element type.
-          // If the element type is DATE, handle it as if it were TIMESTAMP.
-          // This is consistent with how DATE columns are usually handled, and
-          // reflects the fact that Oracle DATE values have a time component.
-          int jdbcType = jdbcArray.getBaseType();
-          Type arrayType = SqlTypeMap.toR2dbcType(
-            jdbcType == Types.DATE ? Types.TIMESTAMP : jdbcType);
+      // Convert to primitive array types using API extensions on OracleArray
+      if (javaType.isPrimitive())
+        return convertPrimitiveArray(oracleArray, javaType);
 
-          // Use R2DBC's default type mapping, if the SQL type is recognized.
-          // Otherwise, leave the javaType as Object.class and Oracle JDBC's
-          // default type mapping will be used.
-          if (arrayType != null)
-            javaType = arrayType.getJavaType();
-        }
+      // Check if Row.get(int/String) was called without a Class argument.
+      // In this case, the default mapping is declared as Object[] in
+      // SqlTypeMap, and this method gets called with Object.class. A default
+      // mapping is used in this case.
+      Class<?> convertedType = getJavaArrayType(oracleArray, javaType);
 
-        // Oracle JDBC seems to ignore the Map argument in many cases, and just
-        // maps values to their default JDBC type. The convertArray method
-        // should correct this by converting the array to the proper type.
-        return convertArray(
-          (Object[]) jdbcArray.getArray(
-            Map.of(jdbcArray.getBaseTypeName(), javaType)),
-          javaType);
-      }
+      // Attempt to have Oracle JDBC convert to the desired type
+      Object[] javaArray =
+        (Object[]) oracleArray.getArray(
+          Map.of(oracleArray.getBaseTypeName(), convertedType));
+
+      // Oracle JDBC may ignore the Map argument in many cases, and just
+      // maps values to their default JDBC type. The convertArray method
+      // will correct this by converting the array to the desired type.
+      return convertArray(javaArray, convertedType);
     }
     catch (SQLException sqlException) {
       throw toR2dbcException(sqlException);
     }
     finally {
-      runJdbc(jdbcArray::free);
+      runJdbc(oracleArray::free);
+    }
+  }
+
+  /**
+   * Returns the Java array type that an ARRAY will be mapped to. If the
+   * {@code javaType} argument is {@code Object.class}, then this method returns
+   * a default mapping based on the element type of the ARRAY. Otherwise, this
+   * method just returns the {@code javaType}.
+   */
+  private Class<?> getJavaArrayType(
+    OracleArray oracleArray, Class<?> javaType) {
+
+    if (!Object.class.equals(javaType))
+      return javaType;
+
+    // Determine a default Java type mapping for the element type of the ARRAY.
+    // If the element type is DATE, handle it as if it were TIMESTAMP.
+    // This is consistent with how DATE columns are usually handled, and
+    // reflects the fact that Oracle DATE values have a time component.
+    int jdbcType = fromJdbc(oracleArray::getBaseType);
+    if (jdbcType == Types.ARRAY) {
+
+      Object[] oracleArrays = (Object[]) fromJdbc(oracleArray::getArray);
+
+      // TODO: It should be possible to determine the type of next ARRAY
+      //  dimension by calling
+      //  OracleConnection.createArray(
+      //    oracleArray.getSQLTypeName(), new Object[0]).getBaseType())
+      final OracleArray oracleArrayElement;
+      if (oracleArrays.length > 0) {
+        oracleArrayElement = (OracleArray) oracleArrays[0];
+      }
+      else {
+        // Need to create an instance of the OracleArray base type in order to
+        // know its own base type. The information for the base type ARRAY
+        // should already be cached by Oracle JDBC, as the type info was
+        // retrieved when value was returned from the database. If the
+        // information is cached, then createOracleArray should not perform a
+        // blocking call.
+        oracleArrayElement = (OracleArray) fromJdbc(() ->
+          jdbcConnection.unwrap(OracleConnection.class)
+            .createOracleArray(oracleArray.getBaseTypeName(), new Object[0]));
+      }
+
+      return java.lang.reflect.Array.newInstance(
+        getJavaArrayType(oracleArrayElement, Object.class), 0)
+        .getClass();
+    }
+
+    Type r2dbcType = SqlTypeMap.toR2dbcType(
+      jdbcType == Types.DATE ? Types.TIMESTAMP : jdbcType);
+
+    // Use R2DBC's default type mapping, if the SQL type is recognized.
+    // Otherwise, leave the javaType as Object.class and Oracle JDBC's
+    // default type mapping will be used.
+    return r2dbcType != null
+      ? r2dbcType.getJavaType()
+      : javaType;
+  }
+
+  private Object convertPrimitiveArray(
+    OracleArray oracleArray, Class<?> primitiveType) {
+    try {
+      if (boolean.class.equals(primitiveType)) {
+        // OracleArray does not support conversion to boolean[], so map shorts
+        // to booleans.
+        short[] shorts = oracleArray.getShortArray();
+        boolean[] booleans = new boolean[shorts.length];
+        for (int i = 0; i < shorts.length; i++)
+          booleans[i] = shorts[i] != 0;
+        return booleans;
+      }
+      else if (byte.class.equals(primitiveType)) {
+        // OracleArray does not support conversion to byte[], so map shorts to
+        // bytes
+        short[] shorts = oracleArray.getShortArray();
+        byte[] bytes = new byte[shorts.length];
+        for (int i = 0; i < shorts.length; i++)
+          bytes[i] = (byte) shorts[i];
+        return bytes;
+      }
+      else if (short.class.equals(primitiveType)) {
+        return oracleArray.getShortArray();
+      }
+      else if (int.class.equals(primitiveType)) {
+        return oracleArray.getIntArray();
+      }
+      else if (long.class.equals(primitiveType)) {
+        return oracleArray.getLongArray();
+      }
+      else if (float.class.equals(primitiveType)) {
+        return oracleArray.getFloatArray();
+      }
+      else if (double.class.equals(primitiveType)) {
+        return oracleArray.getDoubleArray();
+      }
+      else {
+        // Attempt to have Oracle JDBC convert the array
+        Object javaArray = oracleArray.getArray(
+          Map.of(oracleArray.getSQLTypeName(), primitiveType));
+
+        // Check if Oracle JDBC ignored the Map argument or not
+        Class<?> javaArrayType = javaArray.getClass().getComponentType();
+        if (primitiveType.equals(javaArrayType))
+          return javaArray;
+
+        throw unsupportedArrayConversion(javaArrayType, primitiveType);
+      }
+    }
+    catch (SQLException sqlException) {
+      throw toR2dbcException(sqlException);
     }
   }
 
   /**
    * Converts a given {@code array} to an array of a specified
-   * {@code elementType}. This method handles arrays returned by
-   * {@link Array#getArray(Map)}, which contain objects that are the default
-   * type mapping for a JDBC driver. This method converts the default JDBC
-   * type mappings to the default R2DBC type mappings.
+   * {@code desiredType}. This method handles arrays returned by
+   * {@link Array#getArray(Map)}, which may contain objects that are the default
+   * desiredType mapping for a JDBC driver. This method converts the default JDBC
+   * desiredType mappings to the default R2DBC desiredType mappings.
    */
   @SuppressWarnings("unchecked")
-  private <T> T[] convertArray(Object[] array, Class<T> type) {
+  private <T> T[] convertArray(Object[] array, Class<T> desiredType) {
 
-    Class<?> arrayType = array.getClass().getComponentType();
+    if (desiredType.isAssignableFrom(array.getClass().getComponentType()))
+      return (T[])array;
 
-    if (type.isAssignableFrom(arrayType)) {
+    if (array.length == 0)
+      return (T[]) java.lang.reflect.Array.newInstance(desiredType, 0);
+
+    Class<?> elementType = array[0].getClass();
+
+    if (desiredType.isAssignableFrom(elementType)) {
       return (T[])array;
     }
-    else if (arrayType.equals(BigDecimal.class)) {
-      if (type.equals(Boolean.class)) {
+    else if (elementType.equals(BigDecimal.class)) {
+      if (desiredType.equals(Boolean.class)) {
         return (T[]) mapArray(
           (BigDecimal[])array, Boolean[]::new,
           bigDecimal -> bigDecimal.shortValue() != 0);
       }
-      else if (type.equals(Byte.class)) {
+      else if (desiredType.equals(Byte.class)) {
         return (T[]) mapArray(
           (BigDecimal[])array, Byte[]::new, BigDecimal::byteValue);
       }
-      else if (type.equals(Short.class)) {
+      else if (desiredType.equals(Short.class)) {
         return (T[]) mapArray(
           (BigDecimal[])array, Short[]::new, BigDecimal::shortValue);
       }
-      else if (type.equals(Integer.class)) {
+      else if (desiredType.equals(Integer.class)) {
         return (T[]) mapArray(
           (BigDecimal[])array, Integer[]::new, BigDecimal::intValue);
       }
-      else if (type.equals(Long.class)) {
+      else if (desiredType.equals(Long.class)) {
         return (T[]) mapArray(
           (BigDecimal[])array, Long[]::new, BigDecimal::longValue);
       }
-      else if (type.equals(Float.class)) {
+      else if (desiredType.equals(Float.class)) {
         return (T[]) mapArray(
           (BigDecimal[])array, Float[]::new, BigDecimal::floatValue);
       }
-      else if (type.equals(Double.class)) {
+      else if (desiredType.equals(Double.class)) {
         return (T[]) mapArray(
           (BigDecimal[])array, Double[]::new, BigDecimal::doubleValue);
       }
     }
-    else if (byte[].class.equals(arrayType)
-      && type.isAssignableFrom(ByteBuffer.class)) {
+    else if (byte[].class.equals(elementType)
+      && desiredType.isAssignableFrom(ByteBuffer.class)) {
       return (T[]) mapArray(
         (byte[][])array, ByteBuffer[]::new, ByteBuffer::wrap);
     }
-    else if (java.sql.Timestamp.class.isAssignableFrom(arrayType)) {
+    else if (java.sql.Timestamp.class.isAssignableFrom(elementType)) {
       // Note that DATE values are represented as Timestamp by OracleArray.
       // For this reason, there is no branch for java.sql.Date conversions in
       // this method.
-      if (type.isAssignableFrom(LocalDateTime.class)) {
+      if (desiredType.isAssignableFrom(LocalDateTime.class)) {
         return (T[]) mapArray(
           (java.sql.Timestamp[]) array, LocalDateTime[]::new,
           Timestamp::toLocalDateTime);
       }
-      else if (type.isAssignableFrom(LocalDate.class)) {
+      else if (desiredType.isAssignableFrom(LocalDate.class)) {
         return (T[]) mapArray(
           (java.sql.Timestamp[]) array, LocalDate[]::new,
           timestamp -> timestamp.toLocalDateTime().toLocalDate());
       }
-      else if (type.isAssignableFrom(LocalTime.class)) {
+      else if (desiredType.isAssignableFrom(LocalTime.class)) {
         return (T[]) mapArray(
           (java.sql.Timestamp[]) array, LocalTime[]::new,
           timestamp -> timestamp.toLocalDateTime().toLocalTime());
       }
     }
-    else if (java.time.OffsetDateTime.class.isAssignableFrom(arrayType)) {
+    else if (java.time.OffsetDateTime.class.isAssignableFrom(elementType)) {
       // This branch handles mapping from TIMESTAMP WITH LOCAL TIME ZONE values.
       // OracleArray maps these to OffsetDateTime, regardless of the Map
       // argument to OracleArray.getArray(Map). Oracle R2DBC defines
       // LocalDateTime as their default mapping.
-      if (type.isAssignableFrom(LocalDateTime.class)) {
+      if (desiredType.isAssignableFrom(LocalDateTime.class)) {
         return (T[]) mapArray(
           (java.time.OffsetDateTime[]) array, LocalDateTime[]::new,
           OffsetDateTime::toLocalDateTime);
       }
-      else if (type.isAssignableFrom(LocalDate.class)) {
+      else if (desiredType.isAssignableFrom(LocalDate.class)) {
         return (T[]) mapArray(
           (java.time.OffsetDateTime[]) array, LocalDate[]::new,
           OffsetDateTime::toLocalDate);
       }
-      else if (type.isAssignableFrom(LocalTime.class)) {
+      else if (desiredType.isAssignableFrom(LocalTime.class)) {
         return (T[]) mapArray(
           (java.time.OffsetDateTime[]) array, LocalTime[]::new,
           OffsetDateTime::toLocalTime);
       }
     }
-    else if (oracle.sql.INTERVALYM.class.isAssignableFrom(arrayType)
-      && type.isAssignableFrom(java.time.Period.class)) {
+    else if (oracle.sql.INTERVALYM.class.isAssignableFrom(elementType)
+      && desiredType.isAssignableFrom(java.time.Period.class)) {
       return (T[]) mapArray(
         (oracle.sql.INTERVALYM[]) array, java.time.Period[]::new,
         intervalym -> {
@@ -558,8 +643,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
             0); // day
         });
     }
-    else if (oracle.sql.INTERVALDS.class.isAssignableFrom(arrayType)
-      && type.isAssignableFrom(java.time.Duration.class)) {
+    else if (oracle.sql.INTERVALDS.class.isAssignableFrom(elementType)
+      && desiredType.isAssignableFrom(java.time.Duration.class)) {
       return (T[]) mapArray(
         (oracle.sql.INTERVALDS[]) array, java.time.Duration[]::new,
         intervalds -> {
@@ -577,12 +662,27 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
             ChronoUnit.NANOS);
         });
     }
+    else if (oracle.jdbc.OracleArray.class.isAssignableFrom(elementType)
+      && desiredType.isArray()) {
+      return (T[]) mapArray(
+        array,
+        length ->
+          (Object[]) java.lang.reflect.Array.newInstance(desiredType, length),
+        oracleArray ->
+          convertOracleArray(
+            (OracleArray) oracleArray, desiredType.getComponentType()));
+    }
     // OracleArray seems to support mapping TIMESTAMP WITH TIME ZONE to
     // OffsetDateTime, so that case is not handled in this method
 
-    throw new IllegalArgumentException(format(
+    throw unsupportedArrayConversion(elementType, desiredType);
+  }
+
+  private static IllegalArgumentException unsupportedArrayConversion(
+    Class<?> fromType, Class<?> toType) {
+    return new IllegalArgumentException(format(
       "Conversion from array of %s to array of %s is not supported",
-      arrayType.getName(), type));
+      fromType.getName(), toType.getName()));
   }
 
   private static <T,U> U[] mapArray(
@@ -679,16 +779,16 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * {@code jdbcReadable}, and uses the specified {@code rowMetadata} to
      * determine the default type mapping of column values.
      * </p>
-     *
+     * @param jdbcConnection JDBC connection that created the
+     *   {@code jdbcReadable}. Not null.*
      * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
      * @param metadata Meta-data for the specified row. Not null.
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private RowImpl(
-      JdbcReadable jdbcReadable,
-      RowMetadataImpl metadata,
-      ReactiveJdbcAdapter adapter) {
-      super(jdbcReadable, metadata, adapter);
+      java.sql.Connection jdbcConnection, JdbcReadable jdbcReadable,
+      RowMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+      super(jdbcConnection, jdbcReadable, metadata, adapter);
       this.metadata = metadata;
     }
 
@@ -721,16 +821,16 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * {@code jdbcReadable} and obtains metadata of the values from
      * {@code outParametersMetaData}.
      * </p>
-     *
+     * @param jdbcConnection JDBC connection that created the
+     *   {@code jdbcReadable}. Not null.
      * @param jdbcReadable Readable values from a JDBC Driver. Not null.
      * @param metadata Metadata of each value. Not null.
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OutParametersImpl(
-      JdbcReadable jdbcReadable,
-      OutParametersMetadataImpl metadata,
-      ReactiveJdbcAdapter adapter) {
-      super(jdbcReadable, metadata, adapter);
+      java.sql.Connection jdbcConnection, JdbcReadable jdbcReadable,
+      OutParametersMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+      super(jdbcConnection, jdbcReadable, metadata, adapter);
       this.metadata = metadata;
     }
 

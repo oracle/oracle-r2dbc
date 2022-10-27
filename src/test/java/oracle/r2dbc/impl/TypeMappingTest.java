@@ -51,10 +51,16 @@ import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntFunction;
+import java.util.function.ObjIntConsumer;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static io.r2dbc.spi.R2dbcType.NCHAR;
@@ -513,18 +519,17 @@ public class TypeMappingTest {
           "CREATE OR REPLACE TYPE CHARACTER_ARRAY" +
             " AS ARRAY(10) OF VARCHAR(100)")
         .execute());
-      Type characterArrayType = OracleR2dbcTypes.arrayType("CHARACTER_ARRAY");
 
       // Expect ARRAY of VARCHAR and String[] to map
-      String[] greetings = {"Hello", "Bonjour", "你好", null};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(characterArrayType, greetings),
-        characterArrayType.getName(),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            greetings,
-            assertInstanceOf(String[].class, rowValue)));
+      String[] strings = {"Hello", "Bonjour", "你好", null};
+      verifyArrayTypeMapping(
+        connection, "CHARACTER_ARRAY", String[].class,
+        i ->
+          Arrays.stream(strings)
+            .map(string -> string == null ? null : i + "-" + string)
+            .toArray(String[]::new),
+        true,
+        Assertions::assertArrayEquals);
     }
     finally {
       tryAwaitExecution(connection.createStatement(
@@ -556,9 +561,8 @@ public class TypeMappingTest {
           "CREATE OR REPLACE TYPE NUMBER_ARRAY" +
             " AS ARRAY(10) OF NUMBER")
         .execute());
-      Type numberArrayType = OracleR2dbcTypes.arrayType("NUMBER_ARRAY");
 
-      // Expect ARRAY of NUMBER and BigDecimal[] to map
+      // Expect ARRAY of NUMBER and BigDecimal to map
       BigDecimal[] bigDecimals = new BigDecimal[] {
         BigDecimal.ZERO,
         new BigDecimal("1.23"),
@@ -566,160 +570,170 @@ public class TypeMappingTest {
         new BigDecimal("7.89"),
         null
       };
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, bigDecimals),
-        numberArrayType.getName(),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            bigDecimals,
-            assertInstanceOf(BigDecimal[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", BigDecimal[].class,
+        i ->
+          Arrays.stream(bigDecimals)
+            .map(bigDecimal ->
+              bigDecimal == null
+                ? null
+                :bigDecimal.add(BigDecimal.valueOf(i)))
+            .toArray(BigDecimal[]::new),
+        true,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and byte[] to map
       byte[] bytes = new byte[]{1,2,3,4,5};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, bytes),
-        numberArrayType.getName(),
-        row -> row.get(0, byte[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            bytes,
-            assertInstanceOf(byte[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", byte[].class,
+        i -> {
+          byte[] moreBytes = new byte[bytes.length];
+          for (int j = 0; j < bytes.length; j++)
+            moreBytes[j] = (byte)(bytes[j] + i);
+          return moreBytes;
+        },
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and short[] to map
       short[] shorts = new short[]{1,2,3,4,5};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, shorts),
-        numberArrayType.getName(),
-        row -> row.get(0, short[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            shorts,
-            assertInstanceOf(short[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", short[].class,
+        i -> {
+          short[] moreShorts = new short[shorts.length];
+          for (int j = 0; j < shorts.length; j++)
+            moreShorts[j] = (short)(shorts[j] + i);
+          return moreShorts;
+        },
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and int[] to map
       int[] ints = {1,2,3,4,5};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, ints),
-        numberArrayType.getName(),
-        row -> row.get(0, int[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            ints,
-            assertInstanceOf(int[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", int[].class,
+        i -> {
+          int[] moreInts = new int[ints.length];
+          for (int j = 0; j < ints.length; j++)
+            moreInts[j] = (ints[j] + i);
+          return moreInts;
+        },
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and long[] to map
       long[] longs = {1,2,3,4,5};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, longs),
-        numberArrayType.getName(),
-        row -> row.get(0, long[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            longs,
-            assertInstanceOf(long[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", long[].class,
+        i -> {
+          long[] moreLongs = new long[longs.length];
+          for (int j = 0; j < longs.length; j++)
+            moreLongs[j] = (long)(longs[j] + i);
+          return moreLongs;
+        },
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and float[] to map
       float[] floats = {1.1f,2.2f,3.3f,4.4f,5.5f};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, floats),
-        numberArrayType.getName(),
-        row -> row.get(0, float[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            floats,
-            assertInstanceOf(float[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", float[].class,
+        i -> {
+          float[] moreFloats = new float[floats.length];
+          for (int j = 0; j < floats.length; j++)
+            moreFloats[j] = (floats[j] + (float)i);
+          return moreFloats;
+        },
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and double[] to map
       double[] doubles = {1.1,2.2,3.3,4.4,5.5};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, doubles),
-        numberArrayType.getName(),
-        row -> row.get(0, double[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            doubles,
-            assertInstanceOf(double[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", double[].class,
+        i -> {
+          double[] moreDoubles = new double[doubles.length];
+          for (int j = 0; j < doubles.length; j++)
+            moreDoubles[j] = (doubles[j] + (double)i);
+          return moreDoubles;
+        },
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and Byte[] to map
       Byte[] byteObjects = new Byte[]{1,2,3,4,5,null};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, byteObjects),
-        numberArrayType.getName(),
-        row -> row.get(0, Byte[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            byteObjects,
-            assertInstanceOf(Byte[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", Byte[].class,
+        i ->
+          Arrays.stream(byteObjects)
+            .map(byteObject ->
+              byteObject == null ? null : (byte)(byteObject + i))
+            .toArray(Byte[]::new),
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and Short[] to map
       Short[] shortObjects = new Short[]{1,2,3,4,5,null};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, shortObjects),
-        numberArrayType.getName(),
-        row -> row.get(0, Short[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            shortObjects,
-            assertInstanceOf(Short[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", Short[].class,
+        i ->
+          Arrays.stream(shortObjects)
+            .map(shortObject ->
+              shortObject == null ? null : (short)(shortObject + i))
+            .toArray(Short[]::new),
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and Integer[] to map
       Integer[] intObjects = {1,2,3,4,5,null};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, intObjects),
-        numberArrayType.getName(),
-        row -> row.get(0, Integer[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            intObjects,
-            assertInstanceOf(Integer[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", Integer[].class,
+        i ->
+          Arrays.stream(intObjects)
+            .map(intObject ->
+              intObject == null ? null : intObject + i)
+            .toArray(Integer[]::new),
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and Long[] to map
       Long[] longObjects = {1L,2L,3L,4L,5L,null};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, longObjects),
-        numberArrayType.getName(),
-        row -> row.get(0, Long[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            longObjects,
-            assertInstanceOf(Long[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", Long[].class,
+        i ->
+          Arrays.stream(longObjects)
+            .map(longObject ->
+              longObject == null ? null : longObject + i)
+            .toArray(Long[]::new),
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and Float[] to map
       Float[] floatObjects = {1.1f,2.2f,3.3f,4.4f,5.5f,null};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, floatObjects),
-        numberArrayType.getName(),
-        row -> row.get(0, Float[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            floatObjects,
-            assertInstanceOf(Float[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", Float[].class,
+        i ->
+          Arrays.stream(floatObjects)
+            .map(floatObject ->
+              floatObject == null ? null : floatObject + i)
+            .toArray(Float[]::new),
+        false,
+        Assertions::assertArrayEquals);
 
       // Expect ARRAY of NUMBER and Double[] to map
       Double[] doubleObjects = {1.1,2.2,3.3,4.4,5.5,null};
-      verifyTypeMapping(
-        connection,
-        Parameters.in(numberArrayType, doubleObjects),
-        numberArrayType.getName(),
-        row -> row.get(0, Double[].class),
-        (ignored, rowValue) ->
-          assertArrayEquals(
-            doubleObjects,
-            assertInstanceOf(Double[].class, rowValue)));
+      verifyArrayTypeMapping(
+        connection, "NUMBER_ARRAY", Double[].class,
+        i ->
+          Arrays.stream(doubleObjects)
+            .map(doubleObject ->
+              doubleObject == null ? null : doubleObject + i)
+            .toArray(Double[]::new),
+        false,
+        Assertions::assertArrayEquals);
     }
     finally {
+      tryAwaitExecution(connection.createStatement("DROP TYPE NUMBER_ARRAY"));
       tryAwaitNone(connection.close());
     }
   }
@@ -1140,6 +1154,213 @@ public class TypeMappingTest {
     }
     finally {
       tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * For an ARRAY type of a given {@code typeName}, verifies the following
+   * cases:
+   * <ul>
+   *   <li>1 dimensional array mapping to an array of a {@code javaType}</li>
+   *   <li>Mapping when array is empty.</li>
+   *   <li>
+   *     All cases listed above when the ARRAY type is the type of a a two
+   *     dimensional and three dimensional array.
+   *     </li>
+   * </ul>
+   */
+  private static <T> void verifyArrayTypeMapping(
+    Connection connection, String typeName, boolean isDefaultMapping,
+    Class<T> javaArrayType, IntFunction<T> arrayGenerator) {
+    verifyArrayTypeMapping(
+      connection, typeName, javaArrayType, arrayGenerator,
+      isDefaultMapping,
+      (expectedValue, rowValue) ->
+        assertArrayEquals((Object[]) expectedValue, (Object[]) rowValue));
+  }
+
+  private static <T> void verifyArrayTypeMapping(
+    Connection connection, String typeName,
+    Class<T> javaArrayClass, IntFunction<T> arrayGenerator,
+    boolean isDefaultMapping,
+    BiConsumer<T, T> equalsAssertion) {
+
+    Type arrayType = OracleR2dbcTypes.arrayType(typeName);
+
+    // Verify mapping of 1-dimensional array with values
+    T javaArray1D = arrayGenerator.apply(0);
+    verifyTypeMapping(
+      connection,
+      Parameters.in(arrayType, javaArray1D),
+      arrayType.getName(),
+      isDefaultMapping
+        ? row -> row.get(0)
+        : row -> row.get(0, javaArray1D.getClass()),
+      (ignored, rowValue) ->
+        equalsAssertion.accept(
+          javaArray1D,
+          assertInstanceOf(javaArrayClass, rowValue)));
+
+    // Verify mapping of an empty 1-dimensional array
+    @SuppressWarnings("unchecked")
+    T emptyJavaArray = (T)java.lang.reflect.Array.newInstance(
+      javaArrayClass.getComponentType(), 0);
+    verifyTypeMapping(
+      connection,
+      Parameters.in(arrayType, emptyJavaArray),
+      arrayType.getName(),
+      isDefaultMapping
+        ? row -> row.get(0)
+        : row -> row.get(0, emptyJavaArray.getClass()),
+      (ignored, rowValue) ->
+        assertEquals(
+          0,
+          java.lang.reflect.Array.getLength(
+            assertInstanceOf(javaArrayClass, rowValue))));
+
+    // Create 2 dimensional and 3 dimensional ARRAY types
+    Type arrayType2D = OracleR2dbcTypes.arrayType(arrayType.getName() + "_2D");
+    Type arrayType3D = OracleR2dbcTypes.arrayType(arrayType.getName() + "_3D");
+    awaitOne(connection.createStatement(
+        "CREATE OR REPLACE TYPE " + arrayType2D.getName() +
+          " AS ARRAY(10) OF " + arrayType.getName())
+      .execute());
+    awaitOne(connection.createStatement(
+        "CREATE OR REPLACE TYPE " + arrayType3D.getName() +
+          " AS ARRAY(10) OF " + arrayType2D.getName())
+      .execute());
+    try {
+
+      // Create a 2D Java array
+      @SuppressWarnings("unchecked")
+      T[] javaArray2D =
+        (T[]) java.lang.reflect.Array.newInstance(javaArrayClass, 3);
+      for (int i = 0; i < javaArray2D.length; i++) {
+        javaArray2D[i] = arrayGenerator.apply(i);
+      }
+
+      // Verify mapping of 2-dimensional array with values
+      verifyTypeMapping(
+        connection,
+        Parameters.in(arrayType2D, javaArray2D),
+        arrayType2D.getName(),
+        isDefaultMapping
+          ? row -> row.get(0)
+          : row -> row.get(0, arrayType2D.getClass()),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            javaArray2D,
+            assertInstanceOf(javaArray2D.getClass(), rowValue)));
+
+      // Verify mapping of an empty 2-dimensional array
+      @SuppressWarnings("unchecked")
+      T[] emptyJavaArray2D = (T[]) java.lang.reflect.Array.newInstance(
+        javaArrayClass.getComponentType(), 0, 0);
+      verifyTypeMapping(
+        connection,
+        Parameters.in(arrayType2D, emptyJavaArray2D),
+        arrayType2D.getName(),
+        isDefaultMapping
+          ? row -> row.get(0)
+          : row -> row.get(0, emptyJavaArray2D.getClass()),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            emptyJavaArray2D,
+            assertInstanceOf(emptyJavaArray2D.getClass(), rowValue)));
+
+      // Verify of a 2-dimensional array with empty 1-dimensional arrays
+      @SuppressWarnings("unchecked")
+      T[] empty1DJavaArray2D = (T[]) java.lang.reflect.Array.newInstance(
+        javaArrayClass.getComponentType(), 3, 0);
+      verifyTypeMapping(
+        connection,
+        Parameters.in(arrayType2D, empty1DJavaArray2D),
+        arrayType2D.getName(),
+        isDefaultMapping
+          ? row -> row.get(0)
+          : row -> row.get(0, empty1DJavaArray2D.getClass()),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            empty1DJavaArray2D,
+            assertInstanceOf(empty1DJavaArray2D.getClass(), rowValue)));
+
+      // Create a 3D Java array
+      @SuppressWarnings("unchecked")
+      T[][] javaArray3D =
+        (T[][])java.lang.reflect.Array.newInstance(javaArrayClass, 3, 3);
+      for (int i = 0; i < javaArray3D.length; i++) {
+        for (int j = 0; j < javaArray3D[i].length; j++) {
+          javaArray3D[i][j] =
+            arrayGenerator.apply((i * javaArray3D[i].length) + j);
+        }
+      }
+
+      // Verify mapping of 3-dimensional array with values
+      verifyTypeMapping(
+        connection,
+        Parameters.in(arrayType3D, javaArray3D),
+        arrayType3D.getName(),
+        isDefaultMapping
+          ? row -> row.get(0)
+          : row -> row.get(0, javaArray3D.getClass()),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            javaArray3D,
+            assertInstanceOf(javaArray3D.getClass(), rowValue)));
+
+      // Verify mapping of an empty 2-dimensional array
+      @SuppressWarnings("unchecked")
+      T[][] emptyJavaArray3D = (T[][])java.lang.reflect.Array.newInstance(
+        javaArrayClass.getComponentType(), 0, 0, 0);
+      verifyTypeMapping(
+        connection,
+        Parameters.in(arrayType3D, emptyJavaArray3D),
+        arrayType3D.getName(),
+        isDefaultMapping
+          ? row -> row.get(0)
+          : row -> row.get(0, emptyJavaArray3D.getClass()),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            emptyJavaArray3D,
+            assertInstanceOf(emptyJavaArray3D.getClass(), rowValue)));
+
+      // Verify of a 3-dimensional array with empty 2-dimensional arrays
+      @SuppressWarnings("unchecked")
+      T[][] empty2DJavaArray3D = (T[][])java.lang.reflect.Array.newInstance(
+        javaArrayClass.getComponentType(), 3, 0, 0);
+      verifyTypeMapping(
+        connection,
+        Parameters.in(arrayType3D, empty2DJavaArray3D),
+        arrayType3D.getName(),
+        isDefaultMapping
+          ? row -> row.get(0)
+          : row -> row.get(0, empty2DJavaArray3D.getClass()),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            empty2DJavaArray3D,
+            assertInstanceOf(empty2DJavaArray3D.getClass(), rowValue)));
+
+      // Verify of a 3-dimensional array with empty 1-dimensional arrays
+      @SuppressWarnings("unchecked")
+      T[][] empty1DJavaArray3D = (T[][])java.lang.reflect.Array.newInstance(
+        javaArrayClass.getComponentType(), 3, 3, 0);
+      verifyTypeMapping(
+        connection,
+        Parameters.in(arrayType3D, empty1DJavaArray3D),
+        arrayType3D.getName(),
+        isDefaultMapping
+          ? row -> row.get(0)
+          : row -> row.get(0, empty1DJavaArray3D.getClass()),
+        (ignored, rowValue) ->
+          assertArrayEquals(
+            empty1DJavaArray3D,
+            assertInstanceOf(empty1DJavaArray3D.getClass(), rowValue)));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE " + arrayType3D.getName()));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE " + arrayType2D.getName()));
     }
   }
 

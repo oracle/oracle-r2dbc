@@ -1374,11 +1374,14 @@ final class OracleStatementImpl implements Statement {
       OracleR2dbcTypes.ArrayType type, Object value) {
 
       final Object jdbcValue;
+      Class<?> componentType = value.getClass().getComponentType();
+      while (componentType.isArray())
+        componentType = componentType.getComponentType();
 
       if (value instanceof byte[]) {
         // Oracle JDBC does not support creating SQL arrays from a byte[], so
         // convert it to an short[].
-        byte[] bytes =  (byte[])value;
+        byte[] bytes = (byte[])value;
         short[] shorts = new short[bytes.length];
         for (int i = 0; i < bytes.length; i++)
           shorts[i] = (short)(0xFF & bytes[i]);
@@ -1596,7 +1599,9 @@ final class OracleStatementImpl implements Statement {
       return Flux.concat(
         super.executeJdbc(),
         Mono.just(createCallResult(
-          createOutParameters(new JdbcOutParameters(), metadata, adapter),
+          createOutParameters(
+            fromJdbc(preparedStatement::getConnection),
+            new JdbcOutParameters(), metadata, adapter),
           adapter)));
     }
 
