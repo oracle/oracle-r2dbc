@@ -106,8 +106,8 @@ public final class OracleR2dbcTypes {
    * {@code CREATE TYPE} command that created the type used an "enquoted" type
    * name.
    * </p><p>
-   * The {@code ArrayType} object returned by this method may be used to a
-   * {@link Parameter} that binds an array value to a {@link Statement}.
+   * The {@code ArrayType} object returned by this method may be used to create
+   * a {@link Parameter} that binds an array value to a {@link Statement}.
    * </p><pre>{@code
    * Publisher<Result> arrayBindExample(Connection connection) {
    *   Statement statement =

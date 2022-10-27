@@ -36,7 +36,6 @@ import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
-import oracle.sql.DatumWithConnection;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
@@ -388,6 +387,15 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       : convertOracleArray(oracleArray, javaType);
   }
 
+  /**
+   * Converts an {@code OracleArray} from Oracle JDBC into the Java array
+   * variant of the specified {@code javaType}. If the {@code javaType} is
+   * {@code Object.class}, this method converts to the R2DBC standard mapping
+   * for the SQL type of the ARRAY elements.
+   * @param oracleArray Array from Oracle JDBC. Not null.
+   * @param javaType Type to convert to. Not null.
+   * @return The converted array.
+   */
   private Object convertOracleArray(
     OracleArray oracleArray, Class<?> javaType) {
     try {
@@ -399,7 +407,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       // In this case, the default mapping is declared as Object[] in
       // SqlTypeMap, and this method gets called with Object.class. A default
       // mapping is used in this case.
-      Class<?> convertedType = getJavaArrayType(oracleArray, javaType);
+      Class<?> convertedType = getArrayTypeMapping(oracleArray, javaType);
 
       // Attempt to have Oracle JDBC convert to the desired type
       Object[] javaArray =
@@ -420,51 +428,55 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
   }
 
   /**
-   * Returns the Java array type that an ARRAY will be mapped to. If the
-   * {@code javaType} argument is {@code Object.class}, then this method returns
-   * a default mapping based on the element type of the ARRAY. Otherwise, this
-   * method just returns the {@code javaType}.
+   * Returns the Java array type that an ARRAY will be mapped to. This method
+   * is used to determine a default type mapping when {@link #get(int)} or
+   * {@link #get(String)} are called. In this case, the {@code javaType}
+   * argument is expected to be {@code Object.class} and this method returns
+   * a default mapping based on the element type of the ARRAY. Otherwise, if
+   * the {@code javaType} is something more specific, this method just returns
+   * it.
    */
-  private Class<?> getJavaArrayType(
+  private Class<?> getArrayTypeMapping(
     OracleArray oracleArray, Class<?> javaType) {
 
     if (!Object.class.equals(javaType))
       return javaType;
 
-    // Determine a default Java type mapping for the element type of the ARRAY.
-    // If the element type is DATE, handle it as if it were TIMESTAMP.
-    // This is consistent with how DATE columns are usually handled, and
-    // reflects the fact that Oracle DATE values have a time component.
     int jdbcType = fromJdbc(oracleArray::getBaseType);
+
+    // Check if the array is multi-dimensional
     if (jdbcType == Types.ARRAY) {
 
       Object[] oracleArrays = (Object[]) fromJdbc(oracleArray::getArray);
 
-      // TODO: It should be possible to determine the type of next ARRAY
-      //  dimension by calling
-      //  OracleConnection.createArray(
-      //    oracleArray.getSQLTypeName(), new Object[0]).getBaseType())
+      // An instance of OracleArray representing base type is needed in order to
+      // know the base type of the next dimension.
       final OracleArray oracleArrayElement;
       if (oracleArrays.length > 0) {
         oracleArrayElement = (OracleArray) oracleArrays[0];
       }
       else {
-        // Need to create an instance of the OracleArray base type in order to
-        // know its own base type. The information for the base type ARRAY
-        // should already be cached by Oracle JDBC, as the type info was
-        // retrieved when value was returned from the database. If the
-        // information is cached, then createOracleArray should not perform a
-        // blocking call.
+        // The array is empty, so an OracleArray will need to be created. The
+        // type information for the ARRAY should be cached by Oracle JDBC, and
+        // so createOracleArray should not perform a blocking call.
         oracleArrayElement = (OracleArray) fromJdbc(() ->
           jdbcConnection.unwrap(OracleConnection.class)
             .createOracleArray(oracleArray.getBaseTypeName(), new Object[0]));
       }
 
+      // Recursively call getJavaArrayType, creating a Java array at each level
+      // of recursion until a non-array SQL type is found. Returning back up the
+      // stack, the top level of recursion will then create an array with
+      // the right number of dimensions, and the class of this multi-dimensional
+      // array is returned.
       return java.lang.reflect.Array.newInstance(
-        getJavaArrayType(oracleArrayElement, Object.class), 0)
+        getArrayTypeMapping(oracleArrayElement, Object.class), 0)
         .getClass();
     }
 
+    // If the element type is DATE, handle it as if it were TIMESTAMP.
+    // This is consistent with how DATE columns are usually handled, and
+    // reflects the fact that Oracle DATE values have a time component.
     Type r2dbcType = SqlTypeMap.toR2dbcType(
       jdbcType == Types.DATE ? Types.TIMESTAMP : jdbcType);
 
@@ -476,6 +488,12 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       : javaType;
   }
 
+  /**
+   * Converts an array from Oracle JDBC into a Java array of a primitive type,
+   * such as int[], boolean[], etc. This method is handles the case where user
+   * code explicitly requests a primitive array by passing the class type
+   * to {@link #get(int, Class)} or {@link #get(String, Class)}.
+   */
   private Object convertPrimitiveArray(
     OracleArray oracleArray, Class<?> primitiveType) {
     try {
@@ -531,11 +549,11 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
   }
 
   /**
-   * Converts a given {@code array} to an array of a specified
-   * {@code desiredType}. This method handles arrays returned by
-   * {@link Array#getArray(Map)}, which may contain objects that are the default
-   * desiredType mapping for a JDBC driver. This method converts the default JDBC
-   * desiredType mappings to the default R2DBC desiredType mappings.
+   * Converts a given {@code array} to an array of a {@code desiredType}. This
+   * method handles arrays returned by {@link Array#getArray(Map)}, which may
+   * contain objects that are the default desiredType mapping for a JDBC driver.
+   * This method converts the default JDBC desiredType mappings to the default
+   * R2DBC desiredType mappings.
    */
   @SuppressWarnings("unchecked")
   private <T> T[] convertArray(Object[] array, Class<T> desiredType) {
@@ -685,6 +703,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     }
     else if (oracle.jdbc.OracleArray.class.isAssignableFrom(elementType)
       && desiredType.isArray()) {
+      // Recursively convert a multi-dimensional array.
       return (T[]) mapArray(
         array,
         length ->
@@ -699,6 +718,10 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     throw unsupportedArrayConversion(elementType, desiredType);
   }
 
+  /**
+   * Returns an exception indicating a type of elements in a Java array can
+   * not be converted to a different type.
+   */
   private static IllegalArgumentException unsupportedArrayConversion(
     Class<?> fromType, Class<?> toType) {
     return new IllegalArgumentException(format(
@@ -706,6 +729,21 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       fromType.getName(), toType.getName()));
   }
 
+  /**
+   * <p>
+   * Maps the elements of a given {@code array} using a {@code mappingFunction},
+   * and returns an array generated by an {@code arrayAllocator} that stores the
+   * mapped elements.
+   * </p><p>
+   * The {@code array} may contain {@code null} elements. A {@code null} element
+   * is automatically converted to {@code null}, and not supplied as input to
+   * the {@code mappingFunction}.
+   * </p>
+   * @param array Array of elements to convert. Not null.
+   * @param arrayAllocator Allocates an array of an input length. Not null.
+   * @param mappingFunction Maps elements from the {@code array}. Not null.
+   * @return Array of mapped elements.
+   */
   private static <T,U> U[] mapArray(
     T[] array, IntFunction<U[]> arrayAllocator,
     Function<T, U> mappingFunction) {
@@ -720,49 +758,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     }
 
     return result;
-  }
-
-  /**
-   * Converts an array of {@code BigDecimal} values to objects of a given
-   * type. This method handles the case where Oracle JDBC does not perform
-   * conversions specified by the {@code Map} argument to
-   * {@link Array#getArray(Map)}
-   */
-  private <T> T[] convertBigDecimalArray(
-    BigDecimal[] bigDecimals, Class<T> type) {
-
-    final Function<BigDecimal, T> mapFunction;
-
-    if (type.equals(Byte.class)) {
-      mapFunction = bigDecimal -> type.cast(bigDecimal.byteValue());
-    }
-    else if (type.equals(Short.class)) {
-      mapFunction = bigDecimal -> type.cast(bigDecimal.shortValue());
-    }
-    else if (type.equals(Integer.class)) {
-      mapFunction = bigDecimal -> type.cast(bigDecimal.intValue());
-    }
-    else if (type.equals(Long.class)) {
-      mapFunction = bigDecimal -> type.cast(bigDecimal.longValue());
-    }
-    else if (type.equals(Float.class)) {
-      mapFunction = bigDecimal -> type.cast(bigDecimal.floatValue());
-    }
-    else if (type.equals(Double.class)) {
-      mapFunction = bigDecimal -> type.cast(bigDecimal.doubleValue());
-    }
-    else {
-      throw new IllegalArgumentException(
-        "Can not convert BigDecimal to " + type);
-    }
-
-    return Arrays.stream(bigDecimals)
-      .map(mapFunction)
-      .toArray(length -> {
-        @SuppressWarnings("unchecked")
-        T[] array = (T[])java.lang.reflect.Array.newInstance(type, length);
-        return array;
-      });
   }
 
   /**
@@ -801,7 +796,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * determine the default type mapping of column values.
      * </p>
      * @param jdbcConnection JDBC connection that created the
-     *   {@code jdbcReadable}. Not null.*
+     *   {@code jdbcReadable}. Not null.
      * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
      * @param metadata Meta-data for the specified row. Not null.
      * @param adapter Adapts JDBC calls into reactive streams. Not null.

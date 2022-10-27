@@ -976,7 +976,20 @@ final class OracleStatementImpl implements Statement {
 
     /**
      * <p>
-     * Sets {@link #binds} on the {@link #preparedStatement}. The
+     * Sets {@link #binds} on the {@link #preparedStatement}, as specified by
+     * {@link #bind(Object[])}. This method is called when this statement is
+     * executed. Subclasess override this method to perform additional actions.
+     * </p>
+     * @return A {@code Publisher} that emits {@code onComplete} when all
+     * {@code binds} have been set.
+     */
+    protected Publisher<Void> bind() {
+      return bind(binds);
+    }
+
+    /**
+     * <p>
+     * Sets the given {@code binds} on the {@link #preparedStatement}. The
      * returned {@code Publisher} completes after all bind values have
      * materialized and been set on the {@code preparedStatement}.
      * </p><p>
@@ -988,10 +1001,6 @@ final class OracleStatementImpl implements Statement {
      * @return A {@code Publisher} that emits {@code onComplete} when all
      * {@code binds} have been set.
      */
-    protected Publisher<Void> bind() {
-      return bind(binds);
-    }
-
     protected final Publisher<Void> bind(Object[] binds) {
       return adapter.getLock().flatMap(() -> {
 
