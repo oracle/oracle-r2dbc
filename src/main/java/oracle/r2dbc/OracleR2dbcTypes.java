@@ -104,6 +104,12 @@ public final class OracleR2dbcTypes {
     new TypeImpl(Result.class, "SYS_REFCURSOR");
 
   /**
+   * A user defined OBJECT type.
+   */
+  public static final Type OBJECT =
+    new TypeImpl(OracleR2dbcObject.class, "OBJECT");
+
+  /**
    * <p>
    * Creates an {@link ArrayType} representing a user defined {@code ARRAY}
    * type. The {@code name} passed to this method must identify the name of a
@@ -135,6 +141,10 @@ public final class OracleR2dbcTypes {
    */
   public static ArrayType arrayType(String name) {
     return new ArrayTypeImpl(Objects.requireNonNull(name, "name is null"));
+  }
+
+  public static ObjectType objectType(String name) {
+    return new ObjectTypeImpl(Objects.requireNonNull(name, "name is null"));
   }
 
   /**
@@ -179,6 +189,31 @@ public final class OracleR2dbcTypes {
     String getName();
   }
 
+  public interface ObjectType extends Type {
+
+    /**
+     * {@inheritDoc}
+     * Returns {@code Object[].class}, which is the standard mapping for
+     * {@link R2dbcType#COLLECTION}. The true default type mapping is the array
+     * variant of the default mapping for the element type of the {@code ARRAY}.
+     * For instance, an {@code ARRAY} of {@code VARCHAR} maps to a
+     * {@code String[]} by default.
+     */
+    @Override
+    Class<?> getJavaType();
+
+    /**
+     * {@inheritDoc}
+     * Returns the name of this user defined {@code ARRAY} type. For instance,
+     * this method returns "MY_ARRAY" if the type is declared as:
+     * <pre>{@code
+     * CREATE TYPE MY_ARRAY AS ARRAY(8) OF NUMBER
+     * }</pre>
+     */
+    @Override
+    String getName();
+  }
+
   /** Concrete implementation of the {@code ArrayType} interface */
   private static final class ArrayTypeImpl
     extends TypeImpl implements ArrayType {
@@ -192,6 +227,23 @@ public final class OracleR2dbcTypes {
      */
     ArrayTypeImpl(String name) {
       super(Object[].class, name);
+    }
+  }
+
+  /** Concrete implementation of the {@code ObjectType} interface */
+  private static final class ObjectTypeImpl
+    extends TypeImpl implements ObjectType {
+
+    /**
+     * Constructs an ARRAY type with the given {@code name}. The constructed
+     * {@code ObjectType} as a default Java type mapping of
+     * {@code Object[].class}. This is consistent with the standard
+     * {@link R2dbcType#COLLECTION} type.
+     * @param name User defined name of the type. Not null.
+     */
+    ObjectTypeImpl(String name) {
+      // TODO: Consider defining Readable.class as the default type mapping.
+      super(Object.class, name);
     }
   }
 

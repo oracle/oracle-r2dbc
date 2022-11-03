@@ -27,22 +27,32 @@ import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.OutParametersMetadata;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcType;
+import io.r2dbc.spi.ReadableMetadata;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleArray;
 import oracle.jdbc.OracleConnection;
+import oracle.jdbc.OracleStruct;
+import oracle.r2dbc.OracleR2dbcObject;
+import oracle.r2dbc.OracleR2dbcObjectMetadata;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
+import oracle.r2dbc.impl.ReadablesMetadata.OracleR2dbcObjectMetadataImpl;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
+import oracle.sql.INTERVALDS;
+import oracle.sql.INTERVALYM;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.Array;
+import java.sql.Connection;
+import java.sql.JDBCType;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Struct;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Duration;
@@ -50,6 +60,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.OffsetTime;
 import java.time.Period;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
@@ -256,13 +267,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     else if (Result.class.equals(type)) {
       value = getResult(index);
     }
-    else if (type.isArray()
-      && R2dbcType.COLLECTION.equals(readablesMetadata.get(index).getType())) {
-      // Note that a byte[] would be a valid mapping for a RAW column, so this
-      // branch is only taken if the target type is an array, and the column
-      // type is a SQL ARRAY (ie: COLLECTION).
-      value = getJavaArray(index, type.getComponentType());
-    }
     else if (Object.class.equals(type)) {
       // Use the default type mapping if Object.class has been specified.
       // This method is invoked recursively with the default mapping, so long
@@ -273,7 +277,20 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
         : convert(index, defaultType);
     }
     else {
-      value = jdbcReadable.getObject(index, type);
+      ReadableMetadata metadata = readablesMetadata.get(index);
+      if (type.isArray() && R2dbcType.COLLECTION.equals(metadata.getType())) {
+        // Note that a byte[] would be a valid mapping for a RAW column, so this
+        // branch is only taken if the target type is an array, and the column
+        // type is a SQL ARRAY (ie: COLLECTION).
+        value = getJavaArray(index, type.getComponentType());
+      }
+      else if (type.isAssignableFrom(OracleR2dbcObject.class)
+        && JDBCType.STRUCT.equals(metadata.getNativeTypeMetadata())) {
+        value = getOracleR2dbcObject(index);
+      }
+      else {
+        value = jdbcReadable.getObject(index, type);
+      }
     }
 
     return type.cast(value);
@@ -371,6 +388,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * value is NULL.
    */
   private LocalDateTime getLocalDateTime(int index) {
+    return jdbcReadable.getObject(index, LocalDateTime.class);
+    /*
     if (OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE
           .equals(readablesMetadata.get(index).getType())) {
       // TODO: Remove this when Oracle JDBC implements a correct conversion
@@ -380,6 +399,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     else {
       return jdbcReadable.getObject(index, LocalDateTime.class);
     }
+     */
   }
 
   /**
@@ -397,7 +417,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    */
   private Object getJavaArray(int index, Class<?> javaType) {
     OracleArray oracleArray = jdbcReadable.getObject(index, OracleArray.class);
-
     return oracleArray == null
       ? null
       : convertOracleArray(oracleArray, javaType);
@@ -556,7 +575,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
         if (primitiveType.equals(javaArrayType))
           return javaArray;
 
-        throw unsupportedArrayConversion(javaArrayType, primitiveType);
+        throw unsupportedConversion(javaArrayType, primitiveType);
       }
     }
     catch (SQLException sqlException) {
@@ -598,96 +617,104 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
         desiredType, array.length);
     }
 
-    if (desiredType.isAssignableFrom(elementType)) {
-      // The elements are of the desired type, but the array type is something
-      // different, like an Object[] full of BigDecimal.
-      return (T[]) mapArray(
-        array,
-        length -> (T[])java.lang.reflect.Array.newInstance(desiredType, length),
-        Function.identity());
+    return mapArray(
+      array,
+      length -> (T[]) java.lang.reflect.Array.newInstance(desiredType, length),
+      (Function<Object, T>)getMappingFunction(elementType, desiredType));
+  }
+
+  private OracleR2dbcObject getOracleR2dbcObject(int index) {
+
+    OracleStruct oracleStruct =
+      jdbcReadable.getObject(index, OracleStruct.class);
+
+    if (oracleStruct == null)
+      return null;
+
+    return new OracleR2dbcObjectImpl(
+      jdbcConnection,
+      dependentCounter,
+      new StructJdbcReadable(oracleStruct),
+      ReadablesMetadata.createAttributeMetadata(oracleStruct),
+      adapter);
+  }
+
+  private <T,U> Function<T,U> getMappingFunction(
+    Class<T> fromType, Class<U> toType) {
+
+    Function<? extends Object, Object> mappingFunction = null;
+
+    if (toType.isAssignableFrom(fromType)) {
+      return toType::cast;
     }
-    else if (elementType.equals(BigDecimal.class)) {
-      if (desiredType.equals(Boolean.class)) {
-        return (T[]) mapArray(
-          (BigDecimal[])array, Boolean[]::new,
-          bigDecimal -> bigDecimal.shortValue() != 0);
+    else if (fromType.equals(BigDecimal.class)) {
+      if (toType.equals(Boolean.class)) {
+        mappingFunction = (BigDecimal bigDecimal) ->
+          bigDecimal.shortValue() != 0;
       }
-      else if (desiredType.equals(Byte.class)) {
-        return (T[]) mapArray(
-          (BigDecimal[])array, Byte[]::new, BigDecimal::byteValue);
+      else if (toType.equals(Byte.class)) {
+        mappingFunction = (BigDecimal bigDecimal) -> bigDecimal.byteValue();
       }
-      else if (desiredType.equals(Short.class)) {
-        return (T[]) mapArray(
-          (BigDecimal[])array, Short[]::new, BigDecimal::shortValue);
+      else if (toType.equals(Short.class)) {
+        mappingFunction = (BigDecimal bigDecimal) -> bigDecimal.shortValue();
       }
-      else if (desiredType.equals(Integer.class)) {
-        return (T[]) mapArray(
-          (BigDecimal[])array, Integer[]::new, BigDecimal::intValue);
+      else if (toType.equals(Integer.class)) {
+        mappingFunction = (BigDecimal bigDecimal) -> bigDecimal.intValue();
       }
-      else if (desiredType.equals(Long.class)) {
-        return (T[]) mapArray(
-          (BigDecimal[])array, Long[]::new, BigDecimal::longValue);
+      else if (toType.equals(Long.class)) {
+        mappingFunction = (BigDecimal bigDecimal) -> bigDecimal.longValue();
       }
-      else if (desiredType.equals(Float.class)) {
-        return (T[]) mapArray(
-          (BigDecimal[])array, Float[]::new, BigDecimal::floatValue);
+      else if (toType.equals(Float.class)) {
+        mappingFunction = (BigDecimal bigDecimal) -> bigDecimal.floatValue();
       }
-      else if (desiredType.equals(Double.class)) {
-        return (T[]) mapArray(
-          (BigDecimal[])array, Double[]::new, BigDecimal::doubleValue);
+      else if (toType.equals(Double.class)) {
+        mappingFunction = (BigDecimal bigDecimal) -> bigDecimal.doubleValue();
       }
     }
-    else if (byte[].class.equals(elementType)
-      && desiredType.isAssignableFrom(ByteBuffer.class)) {
-      return (T[]) mapArray(
-        (byte[][])array, ByteBuffer[]::new, ByteBuffer::wrap);
+    else if (byte[].class.equals(fromType)
+      && toType.isAssignableFrom(ByteBuffer.class)) {
+      mappingFunction = (byte[] byteArray) -> ByteBuffer.wrap(byteArray);
     }
-    else if (java.sql.Timestamp.class.isAssignableFrom(elementType)) {
+    else if (Timestamp.class.isAssignableFrom(fromType)) {
       // Note that DATE values are represented as Timestamp by OracleArray.
       // For this reason, there is no branch for java.sql.Date conversions in
       // this method.
-      if (desiredType.isAssignableFrom(LocalDateTime.class)) {
-        return (T[]) mapArray(
-          (java.sql.Timestamp[]) array, LocalDateTime[]::new,
-          Timestamp::toLocalDateTime);
+      if (toType.isAssignableFrom(LocalDateTime.class)) {
+        mappingFunction = (Timestamp timeStamp) -> timeStamp.toLocalDateTime();
       }
-      else if (desiredType.isAssignableFrom(LocalDate.class)) {
-        return (T[]) mapArray(
-          (java.sql.Timestamp[]) array, LocalDate[]::new,
-          timestamp -> timestamp.toLocalDateTime().toLocalDate());
+      else if (toType.isAssignableFrom(LocalDate.class)) {
+        mappingFunction = (Timestamp timeStamp) ->
+          timeStamp.toLocalDateTime().toLocalDate();
       }
-      else if (desiredType.isAssignableFrom(LocalTime.class)) {
-        return (T[]) mapArray(
-          (java.sql.Timestamp[]) array, LocalTime[]::new,
-          timestamp -> timestamp.toLocalDateTime().toLocalTime());
+      else if (toType.isAssignableFrom(LocalTime.class)) {
+        mappingFunction = (Timestamp timeStamp) ->
+          timeStamp.toLocalDateTime().toLocalTime();
       }
     }
-    else if (java.time.OffsetDateTime.class.isAssignableFrom(elementType)) {
+    else if (OffsetDateTime.class.isAssignableFrom(fromType)) {
       // This branch handles mapping from TIMESTAMP WITH LOCAL TIME ZONE values.
-      // OracleArray maps these to OffsetDateTime, regardless of the Map
-      // argument to OracleArray.getArray(Map). Oracle R2DBC defines
+      // Oracle JDBC maps these to OffsetDateTime. Oracle R2DBC defines
       // LocalDateTime as their default mapping.
-      if (desiredType.isAssignableFrom(LocalDateTime.class)) {
-        return (T[]) mapArray(
-          (java.time.OffsetDateTime[]) array, LocalDateTime[]::new,
-          OffsetDateTime::toLocalDateTime);
+      if (toType.isAssignableFrom(OffsetTime.class)) {
+        mappingFunction = (OffsetDateTime offsetDateTime) ->
+          offsetDateTime.toOffsetTime();
       }
-      else if (desiredType.isAssignableFrom(LocalDate.class)) {
-        return (T[]) mapArray(
-          (java.time.OffsetDateTime[]) array, LocalDate[]::new,
-          OffsetDateTime::toLocalDate);
+      else if (toType.isAssignableFrom(LocalDateTime.class)) {
+        mappingFunction = (OffsetDateTime offsetDateTime) ->
+          offsetDateTime.toLocalDateTime();
       }
-      else if (desiredType.isAssignableFrom(LocalTime.class)) {
-        return (T[]) mapArray(
-          (java.time.OffsetDateTime[]) array, LocalTime[]::new,
-          OffsetDateTime::toLocalTime);
+      else if (toType.isAssignableFrom(LocalDate.class)) {
+        mappingFunction = (OffsetDateTime offsetDateTime) ->
+          offsetDateTime.toLocalDate();
+      }
+      else if (toType.isAssignableFrom(LocalTime.class)) {
+        mappingFunction = (OffsetDateTime offsetDateTime) ->
+          offsetDateTime.toLocalTime();
       }
     }
-    else if (oracle.sql.INTERVALYM.class.isAssignableFrom(elementType)
-      && desiredType.isAssignableFrom(java.time.Period.class)) {
-      return (T[]) mapArray(
-        (oracle.sql.INTERVALYM[]) array, java.time.Period[]::new,
-        intervalym -> {
+    else if (INTERVALYM.class.isAssignableFrom(fromType)
+      && toType.isAssignableFrom(Period.class)) {
+      mappingFunction = (INTERVALYM intervalym) -> {
           // The binary representation is specified in the JavaDoc of
           // oracle.sql.INTERVALYM. In 21.x, the JavaDoc has bug: It neglects
           // to mention that the year value is offset by 0x80000000
@@ -696,13 +723,11 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
             byteBuffer.getInt() - 0x80000000, // 4 byte year
             (byte)(byteBuffer.get() - 60), // 1 byte month
             0); // day
-        });
+        };
     }
-    else if (oracle.sql.INTERVALDS.class.isAssignableFrom(elementType)
-      && desiredType.isAssignableFrom(java.time.Duration.class)) {
-      return (T[]) mapArray(
-        (oracle.sql.INTERVALDS[]) array, java.time.Duration[]::new,
-        intervalds -> {
+    else if (INTERVALDS.class.isAssignableFrom(fromType)
+      && toType.isAssignableFrom(Duration.class)) {
+      mappingFunction = (INTERVALDS intervalds) -> {
           // The binary representation is specified in the JavaDoc of
           // oracle.sql.INTERVALDS. In 21.x, the JavaDoc has bug: It neglects
           // to mention that the day and fractional second values are offset by
@@ -710,38 +735,46 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
           ByteBuffer byteBuffer = ByteBuffer.wrap(intervalds.shareBytes());
           return Duration.of(
             TimeUnit.DAYS.toNanos(byteBuffer.getInt() - 0x80000000)// 4 byte day
-            + TimeUnit.HOURS.toNanos(byteBuffer.get() - 60) // 1 byte hour
-            + TimeUnit.MINUTES.toNanos(byteBuffer.get() - 60) // 1 byte minute
-            + TimeUnit.SECONDS.toNanos(byteBuffer.get() - 60) // 1 byte second
-            + byteBuffer.getInt() - 0x80000000, // 4 byte fractional second
+              + TimeUnit.HOURS.toNanos(byteBuffer.get() - 60) // 1 byte hour
+              + TimeUnit.MINUTES.toNanos(byteBuffer.get() - 60) // 1 byte minute
+              + TimeUnit.SECONDS.toNanos(byteBuffer.get() - 60) // 1 byte second
+              + byteBuffer.getInt() - 0x80000000, // 4 byte fractional second
             ChronoUnit.NANOS);
-        });
+        };
     }
-    else if (oracle.jdbc.OracleArray.class.isAssignableFrom(elementType)
-      && desiredType.isArray()) {
+    else if (java.sql.Blob.class.isAssignableFrom(fromType)
+      && byte[].class.equals(toType)) {
+      mappingFunction = (java.sql.Blob blob) ->
+        fromJdbc(() -> blob.getBytes(1L, Math.toIntExact(blob.length())));
+    }
+    else if (java.sql.Clob.class.isAssignableFrom(fromType)
+      && String.class.isAssignableFrom(toType)) {
+      mappingFunction = (java.sql.Clob clob) ->
+        fromJdbc(() -> clob.getSubString(1L, Math.toIntExact(clob.length())));
+    }
+    else if (OracleArray.class.isAssignableFrom(fromType)
+      && toType.isArray()) {
       // Recursively convert a multi-dimensional array.
-      return (T[]) mapArray(
-        array,
-        length ->
-          (Object[]) java.lang.reflect.Array.newInstance(desiredType, length),
-        oracleArray ->
-          convertOracleArray(
-            (OracleArray) oracleArray, desiredType.getComponentType()));
+      mappingFunction = (OracleArray oracleArray) ->
+        convertOracleArray(oracleArray, toType.getComponentType());
     }
-    // OracleArray seems to support mapping TIMESTAMP WITH TIME ZONE to
-    // OffsetDateTime, so that case is not handled in this method
 
-    throw unsupportedArrayConversion(elementType, desiredType);
+    if (mappingFunction == null)
+      throw unsupportedConversion(fromType, toType);
+
+    @SuppressWarnings("unchecked")
+    Function<T, U> typedMappingFunction = (Function<T, U>) mappingFunction;
+    return typedMappingFunction;
   }
 
   /**
-   * Returns an exception indicating a type of elements in a Java array can
-   * not be converted to a different type.
+   * Returns an exception indicating that conversion between from one Java type
+   * to another is not supported.
    */
-  private static IllegalArgumentException unsupportedArrayConversion(
+  private static IllegalArgumentException unsupportedConversion(
     Class<?> fromType, Class<?> toType) {
     return new IllegalArgumentException(format(
-      "Conversion from array of %s to array of %s is not supported",
+      "Conversion from %s to %s is not supported",
       fromType.getName(), toType.getName()));
   }
 
@@ -894,13 +927,70 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       java.sql.Connection jdbcConnection, DependentCounter dependentCounter,
       JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata,
       ReactiveJdbcAdapter adapter) {
-      super(jdbcConnection, dependentCounter,jdbcReadable, metadata, adapter);
+      super(jdbcConnection, dependentCounter, jdbcReadable, metadata, adapter);
       this.metadata = metadata;
     }
 
     @Override
     public OutParametersMetadata getMetadata() {
       return metadata;
+    }
+  }
+
+  private static final class OracleR2dbcObjectImpl
+    extends OracleReadableImpl implements OracleR2dbcObject {
+
+    private final OracleR2dbcObjectMetadata metadata;
+
+    /**
+     * <p>
+     * Constructs a new set of out parameters that supplies values of a
+     * {@code jdbcReadable} and obtains metadata of the values from
+     * {@code outParametersMetaData}.
+     * </p>
+     * @param jdbcConnection JDBC connection that created the
+     *   {@code jdbcReadable}. Not null.
+     * @param jdbcReadable Readable values from a JDBC Driver. Not null.
+     * @param metadata Metadata of each value. Not null.
+     * @param adapter Adapts JDBC calls into reactive streams. Not null.
+     */
+    private OracleR2dbcObjectImpl(
+      java.sql.Connection jdbcConnection, DependentCounter dependentCounter,
+      JdbcReadable jdbcReadable, OracleR2dbcObjectMetadataImpl metadata,
+      ReactiveJdbcAdapter adapter) {
+      super(jdbcConnection, dependentCounter, jdbcReadable, metadata, adapter);
+      this.metadata = metadata;
+    }
+
+    @Override
+    public OracleR2dbcObjectMetadata getMetadata() {
+      return metadata;
+    }
+  }
+
+  private final class StructJdbcReadable implements JdbcReadable {
+
+    /** Attributes of the Struct, mapped to their default Java type for JDBC */
+    private final Object[] attributes;
+
+    private StructJdbcReadable(Struct struct) {
+      attributes = fromJdbc(struct::getAttributes);
+    }
+
+    @Override
+    public <T> T getObject(int index, Class<T> type) {
+      Object attribute = attributes[index];
+
+      if (attribute == null)
+        return null;
+
+      if (type.isInstance(attribute))
+        return type.cast(attribute);
+
+      @SuppressWarnings("unchecked")
+      Function<Object, T> mappingFunction =
+        (Function<Object, T>) getMappingFunction(attribute.getClass(), type);
+      return mappingFunction.apply(attribute);
     }
   }
 

@@ -320,7 +320,7 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
       return new OracleColumnMetadataImpl(type, name, nullability,
         LOCAL_DATE_PRECISION, null);
     }
-    else if (type == R2dbcType.TIMESTAMP
+    if (type == R2dbcType.TIMESTAMP
       || type == OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE) {
       // For the TIMESTAMP types, use the length of LocalDateTime.toString() as
       // the precision. Use the scale from JDBC, even if it's 0 because a

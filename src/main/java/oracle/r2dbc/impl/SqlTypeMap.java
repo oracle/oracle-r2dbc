@@ -33,6 +33,7 @@ import java.sql.JDBCType;
 import java.sql.RowId;
 import java.sql.SQLException;
 import java.sql.SQLType;
+import java.sql.Types;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -99,7 +100,8 @@ final class SqlTypeMap {
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),
       entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
       entry(JDBCType.VARCHAR, R2dbcType.VARCHAR),
-      entry(JDBCType.REF_CURSOR, OracleR2dbcTypes.REF_CURSOR)
+      entry(JDBCType.REF_CURSOR, OracleR2dbcTypes.REF_CURSOR),
+      entry(JDBCType.STRUCT, OracleR2dbcTypes.OBJECT)
     );
 
   /**
@@ -196,6 +198,12 @@ final class SqlTypeMap {
    */
   static Type toR2dbcType(int jdbcTypeNumber) {
 
+    // Always represent an Oracle DATE as the standard TIMESTAMP type. Oracle
+    // JDBC's ResultSetMetadata usually does this implicitly. However, if using
+    // OracleTypeMetadata.Struct.getMetadata(), it will still return DATE.
+    if (jdbcTypeNumber == Types.DATE)
+      return R2dbcType.TIMESTAMP;
+
     // Search for a JDBCType with a matching type number
     for (JDBCType jdbcType : JDBCType.values()) {
       Integer vendorTypeNumber = jdbcType.getVendorTypeNumber();
@@ -232,6 +240,8 @@ final class SqlTypeMap {
       return toJdbcType(r2dbcType.getJavaType());
     else if (r2dbcType instanceof OracleR2dbcTypes.ArrayType)
       return JDBCType.ARRAY;
+    else if (r2dbcType instanceof OracleR2dbcTypes.ObjectType)
+      return JDBCType.STRUCT;
     else
       return R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
   }

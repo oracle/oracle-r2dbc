@@ -26,6 +26,9 @@ import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.OutParametersMetadata;
 import io.r2dbc.spi.ReadableMetadata;
 import io.r2dbc.spi.RowMetadata;
+import oracle.jdbc.OracleStruct;
+import oracle.jdbc.OracleTypeMetaData;
+import oracle.r2dbc.OracleR2dbcObjectMetadata;
 
 import java.sql.ResultSetMetaData;
 import java.util.Collection;
@@ -95,15 +98,20 @@ class ReadablesMetadata<T extends ReadableMetadata> {
    */
   static RowMetadataImpl createRowMetadata(
     ResultSetMetaData resultSetMetaData) {
-    int columnCount = fromJdbc(resultSetMetaData::getColumnCount);
-    ColumnMetadata[] columnMetadataArray = new ColumnMetadata[columnCount];
+    return new RowMetadataImpl(
+      ReadablesMetadata.toColumnMetadata(resultSetMetaData));
+  }
 
-    for (int i = 0; i < columnCount; i++) {
-      columnMetadataArray[i] =
-        OracleReadableMetadataImpl.createColumnMetadata(resultSetMetaData, i);
-    }
-
-    return new RowMetadataImpl(columnMetadataArray);
+  /**
+   * Creates {@code OracleR2dbcObjectMetadata} that supplies attribute metadata
+   * from a JDBC {@code OracleStruct} object.
+   */
+  static OracleR2dbcObjectMetadataImpl createAttributeMetadata(
+    OracleStruct oracleStruct) {
+    return new OracleR2dbcObjectMetadataImpl(
+      ReadablesMetadata.toColumnMetadata(fromJdbc(() ->
+        ((OracleTypeMetaData.Struct)oracleStruct.getOracleMetaData())
+          .getMetaData())));
   }
 
   /**
@@ -115,6 +123,24 @@ class ReadablesMetadata<T extends ReadableMetadata> {
   static OutParametersMetadataImpl createOutParametersMetadata(
     OutParameterMetadata[] metadata) {
     return new OutParametersMetadataImpl(metadata);
+  }
+
+  /**
+   * Converts JDBC {@code ResultSetMetaData} into an array of
+   * {@code ColumnMetadata}
+   */
+  private static ColumnMetadata[] toColumnMetadata(
+    ResultSetMetaData resultSetMetaData) {
+
+    int columnCount = fromJdbc(resultSetMetaData::getColumnCount);
+    ColumnMetadata[] columnMetadataArray = new ColumnMetadata[columnCount];
+
+    for (int i = 0; i < columnCount; i++) {
+      columnMetadataArray[i] =
+        OracleReadableMetadataImpl.createColumnMetadata(resultSetMetaData, i);
+    }
+
+    return columnMetadataArray;
   }
 
   /**
@@ -267,6 +293,38 @@ class ReadablesMetadata<T extends ReadableMetadata> {
 
     @Override
     public List<? extends OutParameterMetadata> getParameterMetadatas() {
+      return getList();
+    }
+  }
+
+  static final class OracleR2dbcObjectMetadataImpl
+    extends ReadablesMetadata<ReadableMetadata>
+    implements OracleR2dbcObjectMetadata {
+
+    /**
+     * Constructs a new instance which supplies metadata from an array of {@code
+     * columnMetadata}.
+     *
+     * @param attributeMetadata Metadata from each column in a row. Not null.
+     *   Retained. Not modified.
+     */
+    private OracleR2dbcObjectMetadataImpl(
+      ReadableMetadata[] attributeMetadata) {
+      super(attributeMetadata);
+    }
+
+    @Override
+    public ReadableMetadata getAttributeMetadata(int index) {
+      return get(index);
+    }
+
+    @Override
+    public ReadableMetadata getAttributeMetadata(String name) {
+      return get(name);
+    }
+
+    @Override
+    public List<? extends ReadableMetadata> getAttributeMetadatas() {
       return getList();
     }
   }

@@ -21,17 +21,25 @@
 
 package oracle.r2dbc.impl;
 
+import io.r2dbc.spi.Blob;
+import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleConnection;
+import oracle.jdbc.OracleStruct;
+import oracle.jdbc.OracleTypeMetaData;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
+import oracle.sql.DATE;
+import oracle.sql.INTERVALDS;
 import oracle.sql.INTERVALYM;
+import oracle.sql.TIMESTAMP;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -43,17 +51,25 @@ import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.SQLWarning;
+import java.sql.Struct;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.Period;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Queue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
@@ -1363,8 +1379,11 @@ final class OracleStatementImpl implements Statement {
       if (type instanceof OracleR2dbcTypes.ArrayType) {
         return convertArrayBind((OracleR2dbcTypes.ArrayType) type, value);
       }
+      else if (type instanceof OracleR2dbcTypes.ObjectType) {
+        return convertObjectBind((OracleR2dbcTypes.ObjectType) type, value);
+      }
       else {
-        return value;
+        return convertBind(value);
       }
     }
 
@@ -1450,7 +1469,7 @@ final class OracleStatementImpl implements Statement {
         return intervalYearToMonths;
       }
       else {
-        // Check if the bind value is a multi-dimensional array
+        // Check if the bind value is a multidimensional array
         Class<?> componentType = array.getClass().getComponentType();
 
         if (componentType == null || !componentType.isArray())
@@ -1466,6 +1485,226 @@ final class OracleStatementImpl implements Statement {
 
         return converted;
       }
+    }
+
+    /**
+     * Converts a given {@code value} to a JDBC {@link Struct} of the given
+     * OBJECT {@code type}.
+     */
+    private Object convertObjectBind(
+      OracleR2dbcTypes.ObjectType type, Object value) {
+
+      if (value == null)
+        return null;
+
+      final Object[] attributes;
+
+      if (value instanceof Object[]) {
+        attributes = ((Object[]) value).clone();
+      }
+      else if (value instanceof Map) {
+        String[] attributeNames = getAttributeNames(type);
+
+        attributes = new Object[attributeNames.length];
+        for (int i = 0; i < attributes.length; i++)
+          attributes[i] = ((Map<?,?>)value).get(attributeNames[i]);
+      }
+      else {
+        // Fallback to a built-in conversion supported by Oracle JDBC
+        return value;
+      }
+
+      Publisher<Void> conversionPublisher = convertUdtValues(attributes);
+
+      OracleR2dbcExceptions.JdbcSupplier<Struct> structSupplier = () ->
+        jdbcConnection.unwrap(OracleConnection.class)
+          .createStruct(type.getName(), attributes);
+
+      if (conversionPublisher == null) {
+        return structSupplier.get();
+      }
+      else {
+        return Mono.from(conversionPublisher)
+          .then(Mono.fromSupplier(structSupplier));
+      }
+    }
+
+    /**
+     * Returns the names of attributes for an OBJECT of a given {@code type}. This
+     * method returns names in order declared by the
+     * {@code CREATE TYPE OBJECT(...)} which created the {@code type}.
+     */
+    private String[] getAttributeNames(OracleR2dbcTypes.ObjectType type) {
+      return fromJdbc(() -> {
+        OracleStruct oracleStruct =
+          (OracleStruct)jdbcConnection.unwrap(OracleConnection.class)
+            .createStruct(type.getName(), new Object[0]);
+
+        OracleTypeMetaData.Struct typeMetaData =
+          (OracleTypeMetaData.Struct)oracleStruct.getOracleMetaData();
+
+        ResultSetMetaData resultSetMetaData = typeMetaData.getMetaData();
+
+        String[] names = new String[resultSetMetaData.getColumnCount()];
+        for (int i = 0; i < names.length; i++)
+          names[i] = resultSetMetaData.getColumnName(i + 1);
+
+        return names;
+      });
+    }
+
+    private Publisher<Void> convertUdtValues(Object[] values) {
+      LinkedList<Publisher<Void>> publishers = null;
+
+      for (int i = 0; i < values.length; i++) {
+
+        // Capture type if the value is explcitily configured with one
+        Type type = values[i] instanceof Parameter
+          ? ((Parameter)values[i]).getType()
+          : null;
+
+        // Apply any conversion for objects not supported by the setObject
+        // methods of OraclePreparedStatement.
+        values[i] = convertBind(values[i]);
+
+        // Apply any conversion for objects not supported by the
+        // createOracleArray or createStruct methods of OracleConnection
+        if (values[i] instanceof Period) {
+          values[i] = convertPeriodUdtValue((Period) values[i]);
+        }
+        else if (values[i] instanceof LocalDateTime) {
+          values[i] = convertLocalDateTimeUdtValue((LocalDateTime) values[i]);
+        }
+        else if (values[i] instanceof LocalDate) {
+          values[i] = convertLocalDateUdtValue((LocalDate) values[i]);
+        }
+        else if (values[i] instanceof LocalTime) {
+          values[i] = convertLocalTimeUdtValue((LocalTime) values[i]);
+        }
+        else if (values[i] instanceof Duration) {
+          values[i] = convertDurationUdtValue((Duration) values[i]);
+        }
+        else if (values[i] instanceof byte[] && R2dbcType.BLOB.equals(type)) {
+          values[i] = convertBlobUdtValue((byte[]) values[i]);
+        }
+        else if (values[i] instanceof CharSequence && R2dbcType.CLOB.equals(type)) {
+          values[i] = convertClobUdtValue((CharSequence) values[i]);
+        }
+
+        // Check if the value is published asynchronously (ie: a BLOB or CLOB)
+        if (values[i] instanceof Publisher<?>) {
+          if (publishers == null)
+            publishers = new LinkedList<>();
+
+          final int valueIndex = i;
+          publishers.add(
+            Mono.from((Publisher<?>)values[i])
+              .doOnSuccess(value -> values[valueIndex] = value)
+              .then());
+        }
+      }
+
+      return publishers == null
+        ? null
+        : Flux.concat(publishers);
+    }
+    /**
+     * Converts a {@code LocalDateTime} to a {@code TIMESTAMP} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private TIMESTAMP convertLocalDateTimeUdtValue(LocalDateTime localDateTime) {
+      return fromJdbc(() -> TIMESTAMP.of(localDateTime));
+    }
+
+    /**
+     * Converts a {@code LocalDate} to a {@code DATE} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private DATE convertLocalDateUdtValue(LocalDate localDate) {
+      return fromJdbc(() -> DATE.of(localDate));
+    }
+
+    /**
+     * Converts a {@code LocalTime} to a {@code TIMESTAMP} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     * @implNote Mapping this to TIMESTAMP to avoid loss of precision. Other
+     * object types like DATE or java.sql.Time do not have nanosecond precision.
+     */
+    private TIMESTAMP convertLocalTimeUdtValue(LocalTime localTime) {
+      return fromJdbc(() ->
+        TIMESTAMP.of(LocalDateTime.of(LocalDate.EPOCH, localTime)));
+    }
+
+    /**
+     * Converts a {@code Duration} to an {@code INTERVALDS} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private INTERVALDS convertDurationUdtValue(Duration duration) {
+      // The binary representation is specified in the JavaDoc of
+      // oracle.sql.INTERVALDS. In 21.x, the JavaDoc has bug: It neglects
+      // to mention that the day and fractional second values are offset by
+      // 0x80000000
+      byte[] bytes = new byte[11];
+      ByteBuffer.wrap(bytes)
+        .putInt((int)(duration.toDaysPart()) + 0x80000000)// 4 byte day
+        .put((byte)(duration.toHoursPart() + 60))// 1 byte hour
+        .put((byte)(duration.toMinutesPart() + 60))// 1 byte minute
+        .put((byte)(duration.toSecondsPart() + 60))// 1 byte second
+        .putInt(duration.toNanosPart() + 0x80000000);// 4 byte fractional second
+      return new INTERVALDS(bytes);
+    }
+
+    /**
+     * Converts a {@code Period} to an {@code INTERVALYM} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private INTERVALYM convertPeriodUdtValue(Period period) {
+      // The binary representation is specified in the JavaDoc of
+      // oracle.sql.INTERVALYM. In 21.x, the JavaDoc has bug: It neglects
+      // to mention that the year value is offset by 0x80000000
+      byte[] bytes = new byte[5];
+      ByteBuffer.wrap(bytes)
+        .putInt(period.getYears() + 0x80000000) // 4 byte year
+        .put((byte)(period.getMonths() + 60)); // 1 byte month
+      return new INTERVALYM(bytes);
+    }
+
+    /**
+     * Converts a {@code byte[]} to a {@code java.sql.Blob} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private Publisher<java.sql.Blob> convertBlobUdtValue(byte[] bytes) {
+      return convertBlobBind(Blob.from(Mono.just(ByteBuffer.wrap(bytes))));
+    }
+
+    /**
+     * Converts a {@code String} to a {@code java.sql.Clob} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private Publisher<java.sql.Clob> convertClobUdtValue(
+      CharSequence charSequence) {
+      return convertClobBind(Clob.from(Mono.just(charSequence)));
     }
 
     /**
