@@ -104,12 +104,6 @@ public final class OracleR2dbcTypes {
     new TypeImpl(Result.class, "SYS_REFCURSOR");
 
   /**
-   * A user defined OBJECT type.
-   */
-  public static final Type OBJECT =
-    new TypeImpl(OracleR2dbcObject.class, "OBJECT");
-
-  /**
    * <p>
    * Creates an {@link ArrayType} representing a user defined {@code ARRAY}
    * type. The {@code name} passed to this method must identify the name of a
@@ -219,10 +213,9 @@ public final class OracleR2dbcTypes {
     extends TypeImpl implements ArrayType {
 
     /**
-     * Constructs an ARRAY type with the given {@code name}. The constructed
-     * {@code ArrayType} as a default Java type mapping of
-     * {@code Object[].class}. This is consistent with the standard
-     * {@link R2dbcType#COLLECTION} type.
+     * Constructs an ARRAY type with the given {@code name}. {@code Object[]} is
+     * the default mapping of the constructed type. This is consistent with the
+     * standard {@link R2dbcType#COLLECTION} type.
      * @param name User defined name of the type. Not null.
      */
     ArrayTypeImpl(String name) {
@@ -235,15 +228,12 @@ public final class OracleR2dbcTypes {
     extends TypeImpl implements ObjectType {
 
     /**
-     * Constructs an ARRAY type with the given {@code name}. The constructed
-     * {@code ObjectType} as a default Java type mapping of
-     * {@code Object[].class}. This is consistent with the standard
-     * {@link R2dbcType#COLLECTION} type.
+     * Constructs an OBJECT type with the given {@code name}.
+     * {@code OracleR2dbcObject} is the default mapping of the constructed type.
      * @param name User defined name of the type. Not null.
      */
     ObjectTypeImpl(String name) {
-      // TODO: Consider defining Readable.class as the default type mapping.
-      super(Object.class, name);
+      super(OracleR2dbcObject.class, name);
     }
   }
 
@@ -310,6 +300,19 @@ public final class OracleR2dbcTypes {
     @Override
     public String toString() {
       return getName();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (! (other instanceof Type))
+        return false;
+
+      return sqlName.equals(((Type)other).getName());
+    }
+
+    @Override
+    public int hashCode() {
+      return sqlName.hashCode();
     }
   }
 

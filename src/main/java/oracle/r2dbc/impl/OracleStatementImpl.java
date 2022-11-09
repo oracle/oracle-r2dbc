@@ -27,13 +27,16 @@ import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcType;
+import io.r2dbc.spi.ReadableMetadata;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleConnection;
 import oracle.jdbc.OracleStruct;
-import oracle.jdbc.OracleTypeMetaData;
+import oracle.r2dbc.OracleR2dbcObject;
+import oracle.r2dbc.OracleR2dbcObjectMetadata;
 import oracle.r2dbc.OracleR2dbcTypes;
+import oracle.r2dbc.OracleR2dbcTypes.ObjectType;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import oracle.sql.DATE;
@@ -51,7 +54,6 @@ import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.SQLWarning;
@@ -61,7 +63,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.Period;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -69,14 +70,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Queue;
-import java.util.concurrent.TimeUnit;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static java.lang.String.format;
 import static java.sql.Statement.CLOSE_ALL_RESULTS;
 import static java.sql.Statement.KEEP_CURRENT_RESULT;
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
@@ -342,7 +346,7 @@ final class OracleStatementImpl implements Statement {
   @Override
   public Statement bindNull(int index, Class<?> type) {
     requireOpenConnection(jdbcConnection);
-    requireNonNull(type, "type is null");
+    requireSupportedNullClass(type);
     requireValidIndex(index);
     bindObject(index, null);
     return this;
@@ -388,7 +392,7 @@ final class OracleStatementImpl implements Statement {
   public Statement bindNull(String identifier, Class<?> type) {
     requireOpenConnection(jdbcConnection);
     requireNonNull(identifier, "identifier is null");
-    requireNonNull(type, "type is null");
+    requireSupportedNullClass(type);
     bindNamedParameter(identifier, null);
     return this;
   }
@@ -875,6 +879,31 @@ final class OracleStatementImpl implements Statement {
   }
 
   /**
+   * Checks that a class is supported as a null bind type. Oracle JDBC
+   * requires a type name when binding a null value for a user defined type, so
+   * this method checks for that.
+   * @param type Class type to check. May be null.
+   * @throws IllegalArgumentException If the class type is null or is the
+   * default mapping for a named type.
+   */
+  private static void requireSupportedNullClass(Class<?> type) {
+    requireNonNull(type, "type is null");
+
+    if (OracleR2dbcObject.class.isAssignableFrom(type)) {
+      throw new IllegalArgumentException(
+        "A type name is required for NULL OBJECT binds. Use: " +
+          "bind(Parameters.in(OracleR2dbcTypes.objectType(typeName)))");
+    }
+
+    // For backwards compatibility, allow Class<byte[]> for NULL RAW binds
+    if (type.isArray() && !byte[].class.equals(type)) {
+      throw new IllegalArgumentException(
+        "A type name is required for NULL ARRAY binds. Use: " +
+          "bind(Parameters.in(OracleR2dbcTypes.arrayType(typeName)))");
+    }
+  }
+
+  /**
    * Returns an exception indicating that it is not possible to execute a
    * statement that returns both out-parameters and generated values. There
    * is no JDBC API to create a {@link CallableStatement} that returns
@@ -1350,9 +1379,6 @@ final class OracleStatementImpl implements Statement {
       if (value == null || value == NULL_BIND) {
         return null;
       }
-      else if (value instanceof Parameter) {
-        return convertParameterBind((Parameter) value);
-      }
       else if (value instanceof io.r2dbc.spi.Blob) {
         return convertBlobBind((io.r2dbc.spi.Blob) value);
       }
@@ -1361,6 +1387,12 @@ final class OracleStatementImpl implements Statement {
       }
       else if (value instanceof ByteBuffer) {
         return convertByteBufferBind((ByteBuffer) value);
+      }
+      else if (value instanceof Parameter) {
+        return convertParameterBind((Parameter) value);
+      }
+      else if (value instanceof OracleR2dbcObject) {
+        return convertObjectBind((OracleR2dbcObject) value);
       }
       else {
         return value;
@@ -1379,8 +1411,8 @@ final class OracleStatementImpl implements Statement {
       if (type instanceof OracleR2dbcTypes.ArrayType) {
         return convertArrayBind((OracleR2dbcTypes.ArrayType) type, value);
       }
-      else if (type instanceof OracleR2dbcTypes.ObjectType) {
-        return convertObjectBind((OracleR2dbcTypes.ObjectType) type, value);
+      else if (type instanceof ObjectType) {
+        return convertObjectBind((ObjectType) type, value);
       }
       else {
         return convertBind(value);
@@ -1488,33 +1520,47 @@ final class OracleStatementImpl implements Statement {
     }
 
     /**
+     * Converts a given {@code object} to a JDBC {@link Struct} of OBJECT type.
+     */
+    private Object convertObjectBind(OracleR2dbcObject object) {
+      return convertObjectBind(
+        object.getMetadata().getObjectType(),
+        object);
+    }
+
+    /**
      * Converts a given {@code value} to a JDBC {@link Struct} of the given
      * OBJECT {@code type}.
      */
-    private Object convertObjectBind(
-      OracleR2dbcTypes.ObjectType type, Object value) {
+    private Object convertObjectBind(ObjectType type, Object value) {
 
       if (value == null)
         return null;
 
       final Object[] attributes;
 
+      OracleR2dbcObjectMetadata metadata =
+        ReadablesMetadata.createAttributeMetadata(fromJdbc(() ->
+          (OracleStruct)jdbcConnection.createStruct(type.getName(), null)));
+
       if (value instanceof Object[]) {
-        attributes = ((Object[]) value).clone();
+        attributes = toAttributeArray((Object[])value, metadata);
       }
       else if (value instanceof Map) {
-        String[] attributeNames = getAttributeNames(type);
-
-        attributes = new Object[attributeNames.length];
-        for (int i = 0; i < attributes.length; i++)
-          attributes[i] = ((Map<?,?>)value).get(attributeNames[i]);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> valueMap = (Map<String, Object>)value;
+        attributes = toAttributeArray(valueMap, metadata);
+      }
+      else if (value instanceof io.r2dbc.spi.Readable) {
+        attributes = toAttributeArray((io.r2dbc.spi.Readable)value, metadata);
       }
       else {
         // Fallback to a built-in conversion supported by Oracle JDBC
         return value;
       }
 
-      Publisher<Void> conversionPublisher = convertUdtValues(attributes);
+      Publisher<Void> conversionPublisher =
+        convertUdtValues(attributes, metadata);
 
       OracleR2dbcExceptions.JdbcSupplier<Struct> structSupplier = () ->
         jdbcConnection.unwrap(OracleConnection.class)
@@ -1530,38 +1576,130 @@ final class OracleStatementImpl implements Statement {
     }
 
     /**
-     * Returns the names of attributes for an OBJECT of a given {@code type}. This
-     * method returns names in order declared by the
-     * {@code CREATE TYPE OBJECT(...)} which created the {@code type}.
+     * Copies values of an {@code Object[]} from user code into an
+     * {@code Object[]} of a length equal to the number of attributes in an
+     * OBJECT described by {@code metadata}.
+     * @throws IllegalArgumentException If the length of the array from user
+     * code is not equal to the number of attributes in the OBJECT type.
      */
-    private String[] getAttributeNames(OracleR2dbcTypes.ObjectType type) {
-      return fromJdbc(() -> {
-        OracleStruct oracleStruct =
-          (OracleStruct)jdbcConnection.unwrap(OracleConnection.class)
-            .createStruct(type.getName(), new Object[0]);
+    private Object[] toAttributeArray(
+      Object[] values, OracleR2dbcObjectMetadata metadata) {
 
-        OracleTypeMetaData.Struct typeMetaData =
-          (OracleTypeMetaData.Struct)oracleStruct.getOracleMetaData();
+      List<? extends ReadableMetadata> metadatas =
+        metadata.getAttributeMetadatas();
 
-        ResultSetMetaData resultSetMetaData = typeMetaData.getMetaData();
+      if (values.length != metadatas.size()) {
+        throw new IllegalArgumentException(format(
+          "Length of Object[]: %d, does not match the number of attributes" +
+            " in OBJECT %s: %d",
+          values.length,
+          metadata.getObjectType().getName(),
+          metadatas.size()));
+      }
 
-        String[] names = new String[resultSetMetaData.getColumnCount()];
-        for (int i = 0; i < names.length; i++)
-          names[i] = resultSetMetaData.getColumnName(i + 1);
-
-        return names;
-      });
+      return values.clone();
     }
 
-    private Publisher<Void> convertUdtValues(Object[] values) {
+    /**
+     * Copies values of a {@code Map} from user code into an {@code Object[]}
+     * having a length equal to the number of attributes in an OBJECT described
+     * by {@code metadata}.
+     * @throws IllegalArgumentException If the keys of the Map do not match the
+     * attribute names of the OBJECT.
+     */
+    private Object[] toAttributeArray(
+      Map<String, Object> values, OracleR2dbcObjectMetadata metadata) {
+
+      TreeMap<String, Object> treeMap =
+        new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+      treeMap.putAll(values);
+
+      List<? extends ReadableMetadata> metadatas =
+        metadata.getAttributeMetadatas();
+
+      Set<String> remainingNames = treeMap.keySet();
+      Object[] attributes = new Object[metadatas.size()];
+      for (int i = 0; i < attributes.length; i++) {
+        String attributeName = metadatas.get(i).getName();
+        Object attribute = treeMap.get(attributeName);
+
+        if (attribute == null && !treeMap.containsKey(attributeName)) {
+          throw new IllegalArgumentException(format(
+            "Map contains no key for attribute %s of OBJECT %s",
+            attributeName,
+            metadata.getObjectType().getName()));
+        }
+        else {
+          remainingNames.remove(attributeName);
+        }
+
+        attributes[i] = attribute;
+      }
+
+      if (!remainingNames.isEmpty()) {
+        throw new IllegalArgumentException(format(
+          "Map contains keys: [%s], which do not match any attribute" +
+            " names of OBJECT %s: [%s]",
+          String.join(",", remainingNames),
+          metadata.getObjectType().getName(),
+          metadatas.stream()
+            .map(ReadableMetadata::getName)
+            .collect(Collectors.joining(","))));
+      }
+
+      return attributes;
+    }
+
+    /**
+     * Copies values of an {@code io.r2dbc.spi.Readable} from user code into an
+     * {@code Object[]} of a length equal to the number of attributes in an
+     * OBJECT described by {@code metadata}.
+     * @implNote This method does not require the Readable to be an
+     * {@code OracleR2dbcObject}. This is done to allow mapping of row or out
+     * parameter values into OBJECT values.
+     * @throws IllegalArgumentException If the number of values in the Readable
+     * is not equal to the number of attributes in the OBJECT type.
+     */
+    private Object[] toAttributeArray(
+      io.r2dbc.spi.Readable readable, OracleR2dbcObjectMetadata metadata) {
+
+      Object[] attributes = new Object[metadata.getAttributeMetadatas().size()];
+
+      for (int i = 0; i < attributes.length; i++) {
+        try {
+          attributes[i] = readable.get(i);
+        }
+        catch (IndexOutOfBoundsException indexOutOfBoundsException) {
+          throw new IllegalArgumentException(format(
+            "Readable contains less values than the number of attributes, %d," +
+              " in OBJECT %s",
+            attributes.length,
+            metadata.getObjectType().getName()));
+        }
+      }
+
+      try {
+        readable.get(attributes.length);
+        throw new IllegalArgumentException(format(
+          "Readable contains more values than the number of attributes, %d," +
+            " in OBJECT %s",
+          attributes.length,
+          metadata.getObjectType().getName()));
+      }
+      catch (IndexOutOfBoundsException indexOutOfBoundsException) {
+        // An out-of-bound index is expected if the number of values in the
+        // Readable matches the number of attributes in the OBJECT.
+      }
+
+      return attributes;
+    }
+
+    private Publisher<Void> convertUdtValues(
+      Object[] values, OracleR2dbcObjectMetadata metadata) {
+
       LinkedList<Publisher<Void>> publishers = null;
 
       for (int i = 0; i < values.length; i++) {
-
-        // Capture type if the value is explcitily configured with one
-        Type type = values[i] instanceof Parameter
-          ? ((Parameter)values[i]).getType()
-          : null;
 
         // Apply any conversion for objects not supported by the setObject
         // methods of OraclePreparedStatement.
@@ -1584,10 +1722,14 @@ final class OracleStatementImpl implements Statement {
         else if (values[i] instanceof Duration) {
           values[i] = convertDurationUdtValue((Duration) values[i]);
         }
-        else if (values[i] instanceof byte[] && R2dbcType.BLOB.equals(type)) {
+        else if (values[i] instanceof byte[]
+          && R2dbcType.BLOB.equals(
+            metadata.getAttributeMetadata(i).getType())) {
           values[i] = convertBlobUdtValue((byte[]) values[i]);
         }
-        else if (values[i] instanceof CharSequence && R2dbcType.CLOB.equals(type)) {
+        else if (values[i] instanceof CharSequence
+          && R2dbcType.CLOB.equals(
+            metadata.getAttributeMetadata(i).getType())) {
           values[i] = convertClobUdtValue((CharSequence) values[i]);
         }
 
@@ -1846,12 +1988,13 @@ final class OracleStatementImpl implements Statement {
           Type type = ((Parameter) binds[i]).getType();
           SQLType jdbcType = toJdbcType(type);
 
-          if (type instanceof OracleR2dbcTypes.ArrayType) {
+          if (type instanceof OracleR2dbcTypes.ArrayType
+              || type instanceof OracleR2dbcTypes.ObjectType) {
             // Call registerOutParameter with the user defined type name
-            // returned by ArrayType.getName(). Oracle JDBC throws an exception
-            // if a name is provided for a built-in type, like VARCHAR, etc. So
+            // returned by Type.getName(). Oracle JDBC throws an exception if a
+            // name is provided for a built-in type, like VARCHAR, etc. So
             // this branch should only be taken for user defined types, like
-            // ARRAY.
+            // ARRAY or OBJECT.
             callableStatement.registerOutParameter(
               i + 1, jdbcType, type.getName());
           }
@@ -1937,7 +2080,7 @@ final class OracleStatementImpl implements Statement {
      */
     @Override
     protected Publisher<Void> bind() {
-      Publisher<?>[] bindPublishers = new Publisher[batchSize];
+      Publisher<?>[] bindPublishers = new Publisher<?>[batchSize];
       for (int i = 0; i < batchSize; i++) {
         bindPublishers[i] = Flux.concat(
           bind(batch.remove()),

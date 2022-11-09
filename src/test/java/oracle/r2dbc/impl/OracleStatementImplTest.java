@@ -30,6 +30,7 @@ import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
+import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.OracleR2dbcWarning;
@@ -46,6 +47,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
@@ -66,7 +68,8 @@ import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
-import static oracle.r2dbc.test.DatabaseConfig.showErrors;
+import static oracle.r2dbc.test.TestUtils.constructObject;
+import static oracle.r2dbc.test.TestUtils.showErrors;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
@@ -2726,6 +2729,255 @@ public class OracleStatementImplTest {
   }
 
   /**
+   * Verifies behavior for a PL/SQL call having {@code OBJECT} type IN bind
+   */
+  @Test
+  public void testInObjectCall() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_IN_OBJECT AS OBJECT(x NUMBER, y NUMBER, z NUMBER)"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testInObjectCall(id NUMBER, value TEST_IN_OBJECT)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testInObjectProcedure (" +
+          " id IN NUMBER," +
+          " inObject IN TEST_IN_OBJECT)" +
+          " IS" +
+          " BEGIN" +
+          " INSERT INTO testInObjectCall VALUES(id, inObject);" +
+          " END;"));
+
+      TestObjectRow row0 = new TestObjectRow(0L, new Integer[]{1, 2, 3});
+      OracleR2dbcTypes.ObjectType objectType =
+        OracleR2dbcTypes.objectType("TEST_IN_OBJECT");
+      Statement callStatement = connection.createStatement(
+        "BEGIN testInObjectProcedure(:id, :value); END;");
+      awaitExecution(
+        callStatement
+          .bind("id", row0.id)
+          .bind("value", Parameters.in(objectType, row0.value)));
+
+      awaitQuery(
+        List.of(row0),
+        TestObjectRow::fromReadable,
+        connection.createStatement(
+          "SELECT id, value FROM testInObjectCall ORDER BY id"));
+
+      TestObjectRow row1 = new TestObjectRow(1L, new Integer[]{4, 5, 6});
+      awaitExecution(
+        callStatement
+          .bind("id", row1.id)
+          .bind("value", constructObject(connection, objectType, row1.value)));
+
+      awaitQuery(
+        List.of(row0, row1),
+        TestObjectRow::fromReadable,
+        connection.createStatement(
+          "SELECT id, value FROM testInObjectCall ORDER BY id"));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testInObjectCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testInObjectProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_IN_OBJECT"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies behavior for a PL/SQL call having {@code OBJECT} type OUT bind
+   */
+  @Test
+  public void testOutObjectCall() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_OUT_OBJECT AS OBJECT(x NUMBER, y NUMBER, z NUMBER)"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testOutObjectCall(id NUMBER, value TEST_OUT_OBJECT)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testOutObjectProcedure (" +
+          "   inId IN NUMBER," +
+          "   outObject OUT TEST_OUT_OBJECT)" +
+          " IS" +
+          " BEGIN" +
+          "   SELECT value INTO outObject" +
+          "     FROM testOutObjectCall" +
+          "     WHERE id = inId;" +
+          " EXCEPTION" +
+          "   WHEN NO_DATA_FOUND THEN" +
+          "     outObject := NULL;" +
+          " END;"));
+
+
+      OracleR2dbcTypes.ObjectType objectType =
+        OracleR2dbcTypes.objectType("TEST_OUT_OBJECT");
+      Statement callStatement = connection.createStatement(
+        "BEGIN testOutObjectProcedure(:id, :value); END;");
+
+      // Expect a NULL out parameter before any rows have been inserted
+      awaitQuery(
+        List.of(Optional.empty()),
+        outParameters -> {
+          assertNull(outParameters.get("value"));
+          assertNull(outParameters.get("value", Object[].class));
+          assertNull(outParameters.get("value", Map.class));
+          assertNull(outParameters.get("value", OracleR2dbcObject.class));
+          return Optional.empty();
+        },
+        callStatement
+          .bind("id", -1)
+          .bind("value", Parameters.out(objectType)));
+
+      // Insert a row and expect an out parameter with the value
+      TestObjectRow row0 = new TestObjectRow(0L, new Integer[]{1, 2, 3});
+      awaitUpdate(1, connection.createStatement(
+          "INSERT INTO testOutObjectCall VALUES (:id, :value)")
+        .bind("id", row0.id)
+        .bind("value", Parameters.in(objectType, row0.value)));
+      awaitQuery(
+        List.of(row0),
+        outParameters ->
+          new TestObjectRow(
+            row0.id,
+            outParameters.get("value", OracleR2dbcObject.class)),
+        callStatement
+          .bind("id", row0.id)
+          .bind("value", Parameters.out(objectType)));
+
+      // Insert another row and expect an out parameter with the value
+      TestObjectRow row1 = new TestObjectRow(1L, new Integer[]{4, 5, 6});
+      awaitUpdate(1, connection.createStatement(
+          "INSERT INTO testOutObjectCall VALUES (:id, :value)")
+        .bind("id", row1.id)
+        .bind("value", constructObject(connection, objectType, row1.value)));
+      awaitQuery(
+        List.of(row1),
+        outParameters ->
+          new TestObjectRow(
+            row1.id,
+            outParameters.get("value", OracleR2dbcObject.class)),
+        callStatement
+          .bind("id", row1.id)
+          .bind("value", Parameters.out(objectType)));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testOutObjectCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testOutObjectProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_OUT_OBJECT"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies behavior for a PL/SQL call having {@code OBJECT} type OUT bind
+   */
+  @Test
+  public void testInOutObjectCall() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_IN_OUT_OBJECT AS OBJECT(x NUMBER, y NUMBER, z NUMBER)"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testInOutObjectCall(id NUMBER, value TEST_IN_OUT_OBJECT)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testInOutObjectProcedure (" +
+          "   inId IN NUMBER," +
+          "   inOutObject IN OUT TEST_IN_OUT_OBJECT)" +
+          " IS" +
+          " newValue TEST_IN_OUT_OBJECT;" +
+          " BEGIN" +
+          "" +
+          /*
+          " newValue := TEST_IN_OUT_OBJECT();" +
+          " newValue.extend(inOutObject.count);" +
+          " FOR i IN 1 .. inOutObject.count LOOP" +
+          "   newValue(i) := inOutObject(i);" +
+          " END LOOP;" +
+          "" +
+           */
+          " newValue := inOutObject;" +
+          " BEGIN" +
+          "   SELECT value INTO inOutObject" +
+          "     FROM testInOutObjectCall" +
+          "     WHERE id = inId;" +
+          "   DELETE FROM testInOutObjectCall WHERE id = inId;" +
+          "   EXCEPTION" +
+          "     WHEN NO_DATA_FOUND THEN" +
+          "       inOutObject := NULL;" +
+          " END;" +
+          "" +
+          " INSERT INTO testInOutObjectCall VALUES (inId, newValue);" +
+          "" +
+          " END;"));
+
+      OracleR2dbcTypes.ObjectType objectType =
+        OracleR2dbcTypes.objectType("TEST_IN_OUT_OBJECT");
+      Statement callStatement = connection.createStatement(
+        "BEGIN testInOutObjectProcedure(:id, :value); END;");
+
+      // Expect a NULL out parameter the first time a row is inserted
+      TestObjectRow row = new TestObjectRow(0L, new Integer[]{1, 2, 3});
+      awaitQuery(
+        List.of(Optional.empty()),
+        outParameters -> {
+          assertNull(outParameters.get("value"));
+          assertNull(outParameters.get("value", Object[].class));
+          assertNull(outParameters.get("value", Map.class));
+          assertNull(outParameters.get("value", OracleR2dbcObject.class));
+          return Optional.empty();
+        },
+        callStatement
+          .bind("id", row.id)
+          .bind("value", Parameters.inOut(objectType, row.value)));
+
+      // Update the row and expect an out parameter with the previous value
+      TestObjectRow row1 = new TestObjectRow(row.id, new Integer[]{4, 5, 6});
+      awaitQuery(
+        List.of(row),
+        outParameters ->
+          new TestObjectRow(
+            row.id,
+            outParameters.get("value", OracleR2dbcObject.class)),
+        callStatement
+          .bind("id", row.id)
+          .bind("value", Parameters.inOut(objectType, constructObject(
+            connection, objectType, row1.value))));
+
+      // Update the row again and expect an out parameter with the previous
+      // value
+      TestObjectRow row2 = new TestObjectRow(row.id, new Integer[]{7, 8, 9});
+      awaitQuery(
+        List.of(row1),
+        outParameters ->
+          new TestObjectRow(
+            row.id,
+            outParameters.get("value", OracleR2dbcObject.class)),
+        callStatement
+          .bind("id", row.id)
+          .bind("value", Parameters.inOut(objectType, Map.of(
+            "x", row2.value[0],
+            "y", row2.value[1],
+            "z", row2.value[2]))));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testInOutObjectCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testInOutObjectProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_IN_OUT_OBJECT"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
    * Connect to the database configured by {@link DatabaseConfig}, with a
    * the connection configured to use a given {@code executor} for async
    * callbacks.
@@ -2894,8 +3146,53 @@ public class OracleStatementImplTest {
     }
 
     @Override
+    public int hashCode() {
+      return Objects.hash(id, value);
+    }
+
+    @Override
     public String toString() {
       return "[id=" + id + ", value=" + value + "]";
+    }
+  }
+
+  private static class TestObjectRow {
+    Long id;
+    Object[] value;
+    TestObjectRow(Long id, OracleR2dbcObject object) {
+      this(id, new Integer[] {
+        object.get("x", Integer.class),
+        object.get("y", Integer.class),
+        object.get("z", Integer.class)
+      });
+    }
+
+    TestObjectRow(Long id, Object[] value) {
+      this.id = id;
+      this.value = value;
+    }
+
+    static TestObjectRow fromReadable(io.r2dbc.spi.Readable row) {
+      return new TestObjectRow(
+        row.get("id", Long.class),
+        row.get("value", OracleR2dbcObject.class));
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof TestObjectRow
+        && Objects.equals(((TestObjectRow) other).id, id)
+        && Arrays.equals(((TestObjectRow)other).value, value);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(id, value);
+    }
+
+    @Override
+    public String toString() {
+      return id + ", " + Arrays.toString(value);
     }
   }
 }

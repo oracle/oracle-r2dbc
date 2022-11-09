@@ -29,9 +29,9 @@ import io.r2dbc.spi.RowMetadata;
 import oracle.jdbc.OracleStruct;
 import oracle.jdbc.OracleTypeMetaData;
 import oracle.r2dbc.OracleR2dbcObjectMetadata;
+import oracle.r2dbc.OracleR2dbcTypes;
 
 import java.sql.ResultSetMetaData;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -108,10 +108,12 @@ class ReadablesMetadata<T extends ReadableMetadata> {
    */
   static OracleR2dbcObjectMetadataImpl createAttributeMetadata(
     OracleStruct oracleStruct) {
-    return new OracleR2dbcObjectMetadataImpl(
-      ReadablesMetadata.toColumnMetadata(fromJdbc(() ->
-        ((OracleTypeMetaData.Struct)oracleStruct.getOracleMetaData())
-          .getMetaData())));
+    return fromJdbc(() ->
+      new OracleR2dbcObjectMetadataImpl(
+        OracleR2dbcTypes.objectType(oracleStruct.getSQLTypeName()),
+        ReadablesMetadata.toColumnMetadata(
+          ((OracleTypeMetaData.Struct)oracleStruct.getOracleMetaData())
+            .getMetaData())));
   }
 
   /**
@@ -222,6 +224,20 @@ class ReadablesMetadata<T extends ReadableMetadata> {
     return index == null ? -1 : index;
   }
 
+  @Override
+  public boolean equals(Object other) {
+    if (!(other instanceof ReadablesMetadata))
+      return super.equals(other);
+
+    ReadablesMetadata<?> otherMetadata = (ReadablesMetadata<?>)other;
+    return metadataList.equals(otherMetadata.metadataList);
+  }
+
+  @Override
+  public int hashCode() {
+    return metadataList.hashCode();
+  }
+
   static final class RowMetadataImpl
     extends ReadablesMetadata<ColumnMetadata> implements RowMetadata {
 
@@ -301,6 +317,9 @@ class ReadablesMetadata<T extends ReadableMetadata> {
     extends ReadablesMetadata<ReadableMetadata>
     implements OracleR2dbcObjectMetadata {
 
+    /** Type of the OBJECT which metadata is provided for */
+    private final OracleR2dbcTypes.ObjectType objectType;
+
     /**
      * Constructs a new instance which supplies metadata from an array of {@code
      * columnMetadata}.
@@ -309,8 +328,15 @@ class ReadablesMetadata<T extends ReadableMetadata> {
      *   Retained. Not modified.
      */
     private OracleR2dbcObjectMetadataImpl(
+      OracleR2dbcTypes.ObjectType objectType,
       ReadableMetadata[] attributeMetadata) {
       super(attributeMetadata);
+      this.objectType = objectType;
+    }
+
+    @Override
+    public OracleR2dbcTypes.ObjectType getObjectType() {
+      return objectType;
     }
 
     @Override
@@ -324,8 +350,22 @@ class ReadablesMetadata<T extends ReadableMetadata> {
     }
 
     @Override
-    public List<? extends ReadableMetadata> getAttributeMetadatas() {
+    public List<ReadableMetadata> getAttributeMetadatas() {
       return getList();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (!(other instanceof OracleR2dbcObjectMetadata))
+        return false;
+
+      OracleR2dbcObjectMetadata otherMetadata =
+        (OracleR2dbcObjectMetadata) other;
+
+      if (!objectType.equals(otherMetadata.getObjectType()))
+        return false;
+
+      return super.equals(other);
     }
   }
 

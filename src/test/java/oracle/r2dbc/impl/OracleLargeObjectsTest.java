@@ -24,8 +24,11 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.Blob;
 import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
+import oracle.r2dbc.OracleR2dbcObject;
+import oracle.r2dbc.OracleR2dbcTypes;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -34,6 +37,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.Arrays.asList;
@@ -368,6 +372,130 @@ public class OracleLargeObjectsTest {
     }
     finally {
       tryAwaitExecution(connection.createStatement("DROP TABLE testClobInsert"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  @Test
+  public void testBlobObject() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    OracleR2dbcTypes.ObjectType objectType =
+      OracleR2dbcTypes.objectType("BLOB_OBJECT");
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE BLOB_OBJECT AS OBJECT(x BLOB, y BLOB)"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testBlobObject(id NUMBER, blobs BLOB_OBJECT)"));
+      byte[] xBytes0 = getBytes(64 * 1024);
+      byte[] yBytes0 = getBytes(64 * 1024);
+      byte[] xBytes1 = getBytes(64 * 1024);
+      byte[] yBytes1 = getBytes(64 * 1024);
+
+      // Verify asynchronous materialization of Blob binds. The Blob lengths
+      // are each large enough to require multiple Blob writing network calls
+      // by the Oracle JDBC Driver.
+      awaitUpdate(asList(1, 1), connection.createStatement(
+          "INSERT INTO testBlobObject (id, blobs) VALUES (:id, :blobs)")
+        .bind("id", 0)
+        .bind("blobs", Parameters.in(objectType, new Object[]{
+          createBlob(xBytes0),
+          createBlob(yBytes0),
+        }))
+        .add()
+        .bind("id", 1)
+        .bind("blobs", Parameters.in(objectType, Map.of(
+          "x", createBlob(xBytes1),
+          "y", createBlob(yBytes1)))));
+
+      // Expect OracleR2dbcObject.get(int/String) to support Blob as a Java type
+      // mapping for BLOB type attributes.
+      List<List<Blob>> blobs =
+        awaitMany(Flux.from(connection.createStatement(
+              "SELECT blobs FROM testBlobObject ORDER BY id")
+            .execute())
+          .flatMap(result ->
+            result.map(row ->
+              row.get("blobs", OracleR2dbcObject.class)))
+          .map(blobObject -> List.of(
+            blobObject.get("x", Blob.class),
+            blobObject.get("y", Blob.class))));
+
+      // Expect bytes written to INSERTed Blobs to match the bytes read from
+      // SELECTed Blobs
+      awaitBytes(xBytes0, blobs.get(0).get(0));
+      awaitBytes(yBytes0, blobs.get(0).get(1));
+      awaitBytes(xBytes1, blobs.get(1).get(0));
+      awaitBytes(yBytes1, blobs.get(1).get(1));
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testBlobObject"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP type " + objectType.getName()));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  @Test
+  public void testClobObject() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    OracleR2dbcTypes.ObjectType objectType =
+      OracleR2dbcTypes.objectType("CLOB_OBJECT");
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE CLOB_OBJECT AS OBJECT(x CLOB, y CLOB)"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testClobObject(id NUMBER, clobs CLOB_OBJECT)"));
+      byte[] xBytes0 = getBytes(64 * 1024);
+      byte[] yBytes0 = getBytes(64 * 1024);
+      byte[] xBytes1 = getBytes(64 * 1024);
+      byte[] yBytes1 = getBytes(64 * 1024);
+
+      // Verify asynchronous materialization of Clob binds. The Clob lengths
+      // are each large enough to require multiple Clob writing network calls
+      // by the Oracle JDBC Driver.
+      awaitUpdate(asList(1, 1), connection.createStatement(
+          "INSERT INTO testClobObject (id, clobs) VALUES (:id, :clobs)")
+        .bind("id", 0)
+        .bind("clobs", Parameters.in(objectType, new Object[]{
+          createClob(xBytes0),
+          createClob(yBytes0),
+        }))
+        .add()
+        .bind("id", 1)
+        .bind("clobs", Parameters.in(objectType, Map.of(
+          "x", createClob(xBytes1),
+          "y", createClob(yBytes1)))));
+
+      // Expect OracleR2dbcObject.get(int/String) to support Clob as a Java type
+      // mapping for CLOB type attributes.
+      List<List<Clob>> clobs =
+        awaitMany(Flux.from(connection.createStatement(
+          "SELECT clobs FROM testClobObject ORDER BY id")
+          .execute())
+          .flatMap(result ->
+            result.map(row ->
+              row.get("clobs", OracleR2dbcObject.class)))
+          .map(clobObject -> List.of(
+            clobObject.get("x", Clob.class),
+            clobObject.get("y", Clob.class))));
+
+      // Expect bytes written to INSERTed Clobs to match the bytes read from
+      // SELECTed Clobs
+      awaitBytes(xBytes0, clobs.get(0).get(0));
+      awaitBytes(yBytes0, clobs.get(0).get(1));
+      awaitBytes(xBytes1, clobs.get(1).get(0));
+      awaitBytes(yBytes1, clobs.get(1).get(1));
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testClobObject"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP type " + objectType.getName()));
       tryAwaitNone(connection.close());
     }
   }

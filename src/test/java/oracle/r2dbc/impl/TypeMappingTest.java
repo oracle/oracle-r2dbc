@@ -26,7 +26,6 @@ import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
-import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
@@ -34,6 +33,7 @@ import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.OracleR2dbcTypes.ArrayType;
 import oracle.r2dbc.OracleR2dbcTypes.ObjectType;
+import oracle.r2dbc.test.TestUtils;
 import oracle.sql.json.OracleJsonFactory;
 import oracle.sql.json.OracleJsonObject;
 import org.junit.jupiter.api.Assertions;
@@ -44,7 +44,6 @@ import reactor.core.publisher.Mono;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
-import java.nio.charset.StandardCharsets;
 import java.sql.RowId;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -52,10 +51,14 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.Month;
 import java.time.OffsetDateTime;
+import java.time.OffsetTime;
 import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.IntFunction;
@@ -67,7 +70,6 @@ import static io.r2dbc.spi.R2dbcType.NCHAR;
 import static io.r2dbc.spi.R2dbcType.NVARCHAR;
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
-import static oracle.r2dbc.OracleR2dbcTypes.objectType;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
@@ -1367,9 +1369,9 @@ public class TypeMappingTest {
           "NUMBER",
           "RAW(100)",
           "DATE",
-          "TIMESTAMP",
-          "TIMESTAMP WITH TIME ZONE",
-          "TIMESTAMP WITH LOCAL TIME ZONE",
+          "TIMESTAMP(9)",
+          "TIMESTAMP(9) WITH TIME ZONE",
+          "TIMESTAMP(9) WITH LOCAL TIME ZONE",
           "INTERVAL YEAR TO MONTH",
           "INTERVAL DAY TO SECOND",
           "BLOB",
@@ -1389,46 +1391,38 @@ public class TypeMappingTest {
             .putInt(i + 4)
             .flip(),
           // Expect DATE and LocalDateTime to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toLocalDateTime()
-            .truncatedTo(ChronoUnit.SECONDS),
+          LocalDateTime.of(2038 + i, 10, 23, 9, 42, 1),
           // Expect TIMESTAMP and LocalDateTime to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toLocalDateTime(),
+          LocalDateTime.of(2038, 10, 23, 9, 42, 1, 1 + i),
           // Expect TIMESTAMP WITH TIME ZONE and OffsetDateTime to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5)),
+          OffsetDateTime.of(
+            2038, 10, 23, 9, 42, 1, 1 + i, ZoneOffset.ofHours(-5)),
           // Expect TIMESTAMP WITH LOCAL TIME ZONE and LocalDateTime to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toLocalDateTime(),
+          LocalDateTime.of(2038, 10, 23, 9, 42, 1, 1 + i),
           // Expect INTERVAL YEAR TO MONTH and Period to map
-          Period.of(1, 2, 0),
+          Period.of(1 + i, 2, 0),
           // Expect INTERVAL DAY TO SECOND and Duration to map
-          Duration.ofDays(1)
+          Duration.ofDays(1 + i)
             .plus(Duration.ofHours(2))
             .plus(Duration.ofMinutes(3))
             .plus(Duration.ofSeconds(4)),
-          // Expect BLOB and ByteBuffer to map. Use a Parameter to override the
-          // default mapping of ByteBuffer to RAW
-          Parameters.in(
-            R2dbcType.BLOB,
-            IntStream.range(0, 16_000)
-              .collect(
-                () -> ByteBuffer.allocate(16_000 * Integer.BYTES),
-                ByteBuffer::putInt,
-                ByteBuffer::put)
-              .flip()),
-          // Expect CLOB and String to map Use a Parameter to override the
-          // default mapping of String to VARCHAR
-          Parameters.in(
-            R2dbcType.CLOB,
-            Stream.generate(() -> IntStream.range('a', 'z'))
-              .limit(64_000 / ('z' - 'a'))
-              .flatMapToInt(Function.identity())
-              .collect(
-                () -> CharBuffer.allocate(64_000),
-                (charBuffer, intChar) -> charBuffer.put((char)intChar),
-                CharBuffer::put)
-              .flip())
+          // Expect BLOB and ByteBuffer to map.
+          IntStream.range(0, 16_000)
+            .map(j -> j + i)
+            .collect(
+              () -> ByteBuffer.allocate(16_000 * Integer.BYTES),
+              ByteBuffer::putInt,
+              ByteBuffer::put)
+            .flip(),
+          // Expect CLOB and String to map
+          IntStream.range(0, 64_000)
+            .map(j -> 'a' + ((j + i) % 26))
+            .collect(
+              () -> CharBuffer.allocate(64_000),
+              (charBuffer, intChar) -> charBuffer.put((char)intChar),
+              CharBuffer::put)
+            .flip()
+            .toString()
         },
         true,
         connection);
@@ -1440,9 +1434,9 @@ public class TypeMappingTest {
           "NUMBER",
           "RAW(100)",
           "DATE",
-          "TIMESTAMP",
-          "TIMESTAMP WITH TIME ZONE",
-          "TIMESTAMP WITH LOCAL TIME ZONE",
+          "TIMESTAMP(9)",
+          "TIMESTAMP(9) WITH TIME ZONE",
+          "TIMESTAMP(9) WITH LOCAL TIME ZONE",
           "INTERVAL YEAR TO MONTH",
           "INTERVAL DAY TO SECOND",
           "BLOB",
@@ -1487,17 +1481,15 @@ public class TypeMappingTest {
           "NUMBER",
           "DATE",
           "DATE",
-          "TIMESTAMP",
-          "TIMESTAMP",
-          "TIMESTAMP WITH TIME ZONE",
-          "BLOB",
-          "CLOB"
+          "TIMESTAMP(9)",
+          "TIMESTAMP(9)",
+          "TIMESTAMP(9) WITH TIME ZONE",
         },
         i -> new Object[]{
           // Expect NUMBER and Boolean to map
           true,
           // Expect NUMBER and Integer to map
-          (int)i,
+          i,
           // Expect NUMBER and Byte to map
           (byte)i,
           // Expect NUMBER and Short to map
@@ -1509,31 +1501,15 @@ public class TypeMappingTest {
           // Expect NUMBER and Double to map
           (double) i,
           // Expect DATE and LocalDate to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toLocalDate(),
+          LocalDate.of(2038 + i, 10, 23),
           // Expect DATE and LocalTime to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toLocalTime()
-            .truncatedTo(ChronoUnit.SECONDS),
+          LocalTime.of(9 + i, 42, 1),
           // Expect TIMESTAMP and LocalDate to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toLocalDate(),
+          LocalDate.of(2038 + i, 10, 23),
           // Expect TIMESTAMP and LocalTime to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toLocalTime(),
+          LocalTime.of(9 + i, 42, 1),
           // Expect TIMESTAMP WITH TIME ZONE and OffsetTime to map
-          OffsetDateTime.of(2038, 10, 23, 9, 42, 1, 1, ZoneOffset.ofHours(-5))
-            .toOffsetTime(),
-          // Expect BLOB and io.r2dbc.spi.Blob to map
-          Blob.from(Flux.fromStream(
-            Stream.generate(() -> "BLOB!")
-              .limit(100)
-              .map(string -> string.getBytes(StandardCharsets.UTF_8))
-              .map(ByteBuffer::wrap))),
-          // Expect CLOB and io.r2dbc.spi.Clob to map
-          Clob.from(Flux.fromStream(
-            Stream.generate(() -> "CLOB!")
-              .limit(100)))
+          OffsetTime.of(9 + i, 42, 1, 1, ZoneOffset.ofHours(-5))
         },
         false,
         connection);
@@ -1729,10 +1705,133 @@ public class TypeMappingTest {
     IntFunction<Object[]> valueArrayGenerator, boolean isDefaultMapping,
     Connection connection) {
 
-    String[] attributeNames =
-      IntStream.range(0, attributeTypes.length)
-        .mapToObj(i -> format("value%d", i))
-        .toArray(String[]::new);
+    ObjectType objectType1D = OracleR2dbcTypes.objectType(typeName);
+    ObjectType objectType2D = OracleR2dbcTypes.objectType(typeName + "_2D");
+    ObjectType objectType3D = OracleR2dbcTypes.objectType(typeName + "_3D");
+    try {
+      String[] attributeNames1D =
+        IntStream.range(0, attributeTypes.length)
+          .mapToObj(i -> format("value%d", i))
+          .toArray(String[]::new);
+      createObjectType(
+        objectType1D.getName(), attributeNames1D, attributeTypes, connection);
+
+      String[] attributeNames2D =
+        IntStream.range(0, 3)
+          .mapToObj(i -> format("value2D%d", i))
+          .toArray(String[]::new);
+       createObjectType(
+        objectType2D.getName(),
+        attributeNames2D,
+        new String[] {typeName, typeName, typeName},
+        connection);
+
+      String[] attributeNames3D =
+        IntStream.range(0, 3)
+          .mapToObj(i -> format("value3D%d", i))
+          .toArray(String[]::new);
+      createObjectType(
+        objectType3D.getName(),
+        attributeNames3D,
+        new String[] {
+          objectType2D.getName(),
+          objectType2D.getName(),
+          objectType2D.getName()
+        },
+        connection);
+
+      verifyObjectTypeMapping(
+        objectType1D, attributeNames1D, valueArrayGenerator.apply(0),
+        isDefaultMapping, connection);
+
+      verifyObjectTypeMapping(
+        objectType2D, attributeNames2D, new Object[] {
+          Parameters.in(objectType1D, valueArrayGenerator.apply(1)),
+          Parameters.in(objectType1D,
+            toMap(attributeNames1D, valueArrayGenerator.apply(2))),
+          TestUtils.constructObject(
+            connection, objectType1D, valueArrayGenerator.apply(3))
+        },
+        false, connection);
+
+      verifyObjectTypeMapping(
+        objectType3D, attributeNames3D, new Object[] {
+          Parameters.in(
+            objectType2D,
+            new Object[] {
+              Parameters.in(objectType1D, valueArrayGenerator.apply(4)),
+              Parameters.in(objectType1D,
+                toMap(attributeNames1D, valueArrayGenerator.apply(5))),
+              TestUtils.constructObject(
+                connection, objectType1D, valueArrayGenerator.apply(6))
+            }),
+          Parameters.in(
+            objectType2D,
+            toMap(attributeNames2D, new Object[] {
+              Parameters.in(objectType1D, valueArrayGenerator.apply(7)),
+              Parameters.in(objectType1D,
+                toMap(attributeNames1D, valueArrayGenerator.apply(8))),
+              TestUtils.constructObject(
+                connection, objectType1D, valueArrayGenerator.apply(9))
+             })),
+          TestUtils.constructObject(
+            connection, objectType2D,
+            Parameters.in(objectType1D, valueArrayGenerator.apply(10)),
+            Parameters.in(objectType1D,
+              toMap(attributeNames1D, valueArrayGenerator.apply(11))),
+            TestUtils.constructObject(
+              connection, objectType1D, valueArrayGenerator.apply(12)))
+        },
+        false, connection);
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE " + objectType3D.getName()));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE " + objectType2D.getName()));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE " + objectType1D.getName()));
+    }
+
+  }
+
+  static void verifyObjectTypeMapping(
+    ObjectType objectType, String[] attributeNames, Object[] attributeValues,
+    boolean isDefaultMapping, Connection connection) {
+
+    // Bind the attributes as an Object[]
+    verifyTypeMapping(
+      connection,
+      Parameters.in(objectType, attributeValues),
+      objectType.getName(),
+      row -> row.get(0, OracleR2dbcObject.class),
+      (ignored, object) ->
+        assertObjectEquals(object, attributeValues, isDefaultMapping));
+
+    // Bind the attributes as a Map
+    verifyTypeMapping(
+      connection,
+      Parameters.in(objectType, toMap(attributeNames, attributeValues)),
+      objectType.getName(),
+      row -> row.get(0, OracleR2dbcObject.class),
+      (ignored, object) ->
+        assertObjectEquals(object, attributeValues, isDefaultMapping));
+
+    // Bind the attributes as an OracleR2dbcObject
+    OracleR2dbcObject objectValue =
+      TestUtils.constructObject(connection, objectType, attributeValues);
+    verifyTypeMapping(
+      connection,
+      objectValue,
+      objectType.getName(),
+      row -> row.get(0, OracleR2dbcObject.class),
+      (ignored, object) ->
+        assertObjectEquals(object, attributeValues, isDefaultMapping));
+  }
+
+  static ObjectType createObjectType(
+    String typeName, String[] attributeNames, String[] attributeTypes,
+    Connection connection) {
 
     awaitExecution(connection.createStatement(format(
       "CREATE OR REPLACE TYPE %s AS OBJECT(%s)",
@@ -1740,42 +1839,94 @@ public class TypeMappingTest {
       IntStream.range(0, attributeNames.length)
         .mapToObj(i -> attributeNames[i] + " " + attributeTypes[i])
         .collect(Collectors.joining(",")))));
-    try {
-      ObjectType objectType = OracleR2dbcTypes.objectType(typeName);
-      Object[] attributeValues = valueArrayGenerator.apply(0);
-      Class<?>[] attributeClasses = isDefaultMapping
-        ? null
-        : Arrays.stream(attributeValues)
-            .map(object -> object == null ? String.class : object.getClass())
-            .toArray(Class[]::new);
-      verifyTypeMapping(
-        connection,
-        Parameters.in(objectType, attributeValues),
-        typeName,
-        row -> row.get(0, OracleR2dbcObject.class),
-        (ignored, object) ->
-          assertArrayEquals(
-            attributeValues,
-            toArray(object, attributeClasses)));
-    }
-    finally {
-      tryAwaitExecution(connection.createStatement("DROP TYPE " + typeName));
-    }
 
+    return OracleR2dbcTypes.objectType(typeName);
   }
 
-  private static Object[] toArray(
-    OracleR2dbcObject object, Class<?>[] classes) {
-    Object[] array =
-      new Object[object.getMetadata().getAttributeMetadatas().size()];
+  private static Map<String, Object> toMap(String[] names, Object[] values) {
+    Map<String, Object> map = new HashMap<>(values.length);
+    for (int i = 0; i < names.length; i++)
+      map.put(names[i], values[i]);
+    return map;
+  }
 
-    for (int i = 0; i < array.length; i++) {
-      array[i] = classes == null
-        ? object.get(i)
-        : object.get(i, classes[i]);
+  /**
+   * Asserts that the attributes of an {@code object} are the same as a set
+   * of {@code values} provided to bind the object in an INSERT.
+   */
+  private static void assertObjectEquals(
+    OracleR2dbcObject object, Object[] values, boolean isDefaultMapping) {
+
+    for (int i = 0; i < values.length; i++) {
+      final Object expected;
+      final Object actual;
+
+      if (values[i] instanceof Parameter) {
+        expected = ((Parameter)values[i]).getValue();
+      }
+      else {
+        expected = values[i];
+      }
+
+
+      if (isDefaultMapping || expected == null) {
+        actual = object.get(i);
+      }
+      else if (values[i] instanceof Parameter
+        && ((Parameter)values[i]).getType() instanceof ObjectType) {
+
+        // Recursively compare Object[] and Map binds with OBJECT attributes
+        OracleR2dbcObject objectAttribute =
+          object.get(i, OracleR2dbcObject.class);
+
+        if (expected instanceof Object[]) {
+          assertObjectEquals(objectAttribute, (Object[]) expected, false);
+          continue;
+        }
+        else if (expected instanceof Map) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> expectedMap = (Map<String, Object>) expected;
+          TreeMap<String, Object> treeMap =
+            new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+          treeMap.putAll(expectedMap);
+          assertObjectEquals(
+            objectAttribute,
+            objectAttribute.getMetadata()
+              .getAttributeMetadatas()
+              .stream()
+              .map(metadata -> treeMap.get(metadata.getName()))
+              .toArray(),
+            false);
+          continue;
+        }
+        else {
+          actual = objectAttribute;
+        }
+      }
+      else {
+        final Class<?> expectedClass;
+
+        // Request a supported super class type, rather than a specific
+        // subclass of the expected value: ByteBuffer rather than
+        // HeapByteBuffer, for instance.
+        if (expected instanceof ByteBuffer)
+          expectedClass = ByteBuffer.class;
+        else if (expected instanceof OracleR2dbcObject)
+          expectedClass = OracleR2dbcObject.class;
+        else
+          expectedClass = expected.getClass();
+
+        actual = object.get(i, expectedClass);
+      }
+
+
+      String message = "Mismatch at attribute index " + i;
+
+      if (expected instanceof Object[] && actual instanceof Object[])
+        assertArrayEquals((Object[]) expected, (Object[]) actual, message);
+      else
+        assertEquals(expected, actual, message);
     }
-
-    return array;
   }
 
   // TODO: More tests for JDBC 4.3 mappings like BigInteger to BIGINT,
@@ -1868,6 +2019,11 @@ public class TypeMappingTest {
 
       if (javaValue instanceof Parameter) {
         Type type = ((Parameter) javaValue).getType();
+        insert.bind("javaValue", Parameters.in(type));
+      }
+      else if (javaValue instanceof OracleR2dbcObject) {
+        Type type =
+          ((OracleR2dbcObject)javaValue).getMetadata().getObjectType();
         insert.bind("javaValue", Parameters.in(type));
       }
       else {

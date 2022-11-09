@@ -5,7 +5,18 @@ import io.r2dbc.spi.ReadableMetadata;
 import java.util.List;
 import java.util.NoSuchElementException;
 
+/**
+ * Represents the metadata for attributes of an OBJECT. Metadata for attributes
+ * can either be retrieved by index or by name. Attribute indexes are
+ * {@code 0}-based. Retrieval by attribute name is case-insensitive.
+ */
 public interface OracleR2dbcObjectMetadata {
+
+  /**
+   * Returns the type of the OBJECT which metadata is provided for.
+   * @return The type of the OBJECT. Not null.
+   */
+  OracleR2dbcTypes.ObjectType getObjectType();
 
   /**
    * Returns the {@link ReadableMetadata} for one attribute.

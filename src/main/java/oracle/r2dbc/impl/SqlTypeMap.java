@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
+import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.sql.json.OracleJsonObject;
 
@@ -100,8 +101,7 @@ final class SqlTypeMap {
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),
       entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
       entry(JDBCType.VARCHAR, R2dbcType.VARCHAR),
-      entry(JDBCType.REF_CURSOR, OracleR2dbcTypes.REF_CURSOR),
-      entry(JDBCType.STRUCT, OracleR2dbcTypes.OBJECT)
+      entry(JDBCType.REF_CURSOR, OracleR2dbcTypes.REF_CURSOR)
     );
 
   /**
@@ -168,14 +168,19 @@ final class SqlTypeMap {
       // Primitive array mappings supported by OracleArray. Primitive arrays are
       // not subtypes of Object[], which is listed for SQLType.ARRAY above. The
       // primitive array types must be explicitly listed here.
-      entry(boolean[].class, OracleType.VARRAY),
+      entry(boolean[].class, JDBCType.ARRAY),
       // byte[] is mapped to RAW by default
-      // entry(byte[].class, OracleType.VARRAY),
-      entry(short[].class, OracleType.VARRAY),
-      entry(int[].class, OracleType.VARRAY),
-      entry(long[].class, OracleType.VARRAY),
-      entry(float[].class, OracleType.VARRAY),
-      entry(double[].class, OracleType.VARRAY)
+      // entry(byte[].class, JDBCType.ARRAY),
+      entry(short[].class, JDBCType.ARRAY),
+      entry(int[].class, JDBCType.ARRAY),
+      entry(long[].class, JDBCType.ARRAY),
+      entry(float[].class, JDBCType.ARRAY),
+      entry(double[].class, JDBCType.ARRAY),
+
+      // Support binding OracleR2dbcReadable, Object[], and Map<String, Object>
+      // to OBJECT (ie: STRUCT)
+      entry(Map.class, JDBCType.STRUCT),
+      entry(OracleR2dbcObject.class, JDBCType.STRUCT)
     );
 
   /**
@@ -197,12 +202,6 @@ final class SqlTypeMap {
    * @return An R2DBC SQL type. May be null.
    */
   static Type toR2dbcType(int jdbcTypeNumber) {
-
-    // Always represent an Oracle DATE as the standard TIMESTAMP type. Oracle
-    // JDBC's ResultSetMetadata usually does this implicitly. However, if using
-    // OracleTypeMetadata.Struct.getMetadata(), it will still return DATE.
-    if (jdbcTypeNumber == Types.DATE)
-      return R2dbcType.TIMESTAMP;
 
     // Search for a JDBCType with a matching type number
     for (JDBCType jdbcType : JDBCType.values()) {

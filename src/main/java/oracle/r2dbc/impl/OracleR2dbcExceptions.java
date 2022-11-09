@@ -81,6 +81,7 @@ final class OracleR2dbcExceptions {
       return obj;
   }
 
+
   /**
    * Checks if a {@code jdbcConnection} is open, and throws an exception if the
    * check fails.

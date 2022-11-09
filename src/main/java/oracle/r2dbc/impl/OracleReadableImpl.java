@@ -44,12 +44,12 @@ import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
 import oracle.sql.INTERVALDS;
 import oracle.sql.INTERVALYM;
+import oracle.sql.TIMESTAMPLTZ;
+import oracle.sql.TIMESTAMPTZ;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.Array;
-import java.sql.Connection;
-import java.sql.JDBCType;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Struct;
@@ -63,8 +63,12 @@ import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.Period;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.IntFunction;
@@ -277,18 +281,16 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
         : convert(index, defaultType);
     }
     else {
-      ReadableMetadata metadata = readablesMetadata.get(index);
-      if (type.isArray() && R2dbcType.COLLECTION.equals(metadata.getType())) {
-        // Note that a byte[] would be a valid mapping for a RAW column, so this
-        // branch is only taken if the target type is an array, and the column
-        // type is a SQL ARRAY (ie: COLLECTION).
-        value = getJavaArray(index, type.getComponentType());
+      Type sqlType = readablesMetadata.get(index).getType();
+
+      if (sqlType instanceof OracleR2dbcTypes.ArrayType) {
+        value = getOracleArray(index, type);
       }
-      else if (type.isAssignableFrom(OracleR2dbcObject.class)
-        && JDBCType.STRUCT.equals(metadata.getNativeTypeMetadata())) {
-        value = getOracleR2dbcObject(index);
+      else if (sqlType instanceof OracleR2dbcTypes.ObjectType) {
+        value = getOracleObject(index, type);
       }
       else {
+        // Fallback to a built-in conversion supported by Oracle JDBC
         value = jdbcReadable.getObject(index, type);
       }
     }
@@ -400,6 +402,22 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       return jdbcReadable.getObject(index, LocalDateTime.class);
     }
      */
+  }
+
+  /**
+   * Returns an ARRAY at the given {@code index} as a specified {@code type}.
+   * This method supports conversions to Java arrays of the default Java type
+   * mapping for the ARRAY's element type. This conversion is the standard type
+   * mapping for a COLLECTION, as defined by the R2DBC Specification.
+   */
+  private <T> T getOracleArray(int index, Class<T> type) {
+    if (type.isArray()) {
+      return type.cast(getJavaArray(index, type.getComponentType()));
+    }
+    else {
+      // Fallback to a built-in conversion supported by Oracle JDBC
+      return jdbcReadable.getObject(index, type);
+    }
   }
 
   /**
@@ -623,7 +641,38 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       (Function<Object, T>)getMappingFunction(elementType, desiredType));
   }
 
-  private OracleR2dbcObject getOracleR2dbcObject(int index) {
+  /**
+   * Converts the OBJECT column at a given {@code index} to the specified
+   * {@code type}. For symmetry with the object types supported by Statement
+   * bind methods, this method supports conversions to
+   * {@code OracleR2dbcObject}, {@code Object[]}, or
+   * {@code Map<String, Object>}.
+   */
+  private <T> T getOracleObject(int index, Class<T> type) {
+
+    if (type.isAssignableFrom(OracleR2dbcObject.class)) {
+      // Support conversion to OracleR2dbcObject by default
+      return type.cast(getOracleR2dbcObject(index));
+    }
+    else if (type.isAssignableFrom(Object[].class)) {
+      // Support conversion to Object[] for symmetry with bind types
+      return type.cast(toArray(getOracleR2dbcObject(index)));
+    }
+    else if (type.isAssignableFrom(Map.class)) {
+      // Support conversion to Map<String, Object> for symmetry with bind
+      // types
+      return type.cast(toMap(getOracleR2dbcObject(index)));
+    }
+    else {
+      // Fallback to a built-in conversion of Oracle JDBC
+      return jdbcReadable.getObject(index, type);
+    }
+  }
+
+  /**
+   * Returns the OBJECT at a given {@code index} as an {@code OracleR2dbcObject}
+   */
+  private OracleR2dbcObjectImpl getOracleR2dbcObject(int index) {
 
     OracleStruct oracleStruct =
       jdbcReadable.getObject(index, OracleStruct.class);
@@ -637,6 +686,42 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       new StructJdbcReadable(oracleStruct),
       ReadablesMetadata.createAttributeMetadata(oracleStruct),
       adapter);
+  }
+
+  /**
+   * Returns of an array with the default mapping of each value in a
+   * {@code readable}
+   */
+  private static Object[] toArray(OracleReadableImpl readable) {
+    if (readable == null)
+      return null;
+
+    Object[] array =
+      new Object[readable.readablesMetadata.getList().size()];
+
+    for (int i = 0; i < array.length; i++)
+      array[i] = readable.get(i);
+
+    return array;
+  }
+
+  /**
+   * Returns a map containing the default mapping of each value in an
+   * {@code object}, keyed to the value's name.
+   */
+  private static Map<String, Object> toMap(OracleReadableImpl readable) {
+    if (readable == null)
+      return null;
+
+    List<? extends ReadableMetadata> metadataList =
+      readable.readablesMetadata.getList();
+
+    Map<String, Object> map = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+
+    for (int i = 0; i < metadataList.size(); i++)
+      map.put(metadataList.get(i).getName(), readable.get(i));
+
+    return map;
   }
 
   private <T,U> Function<T,U> getMappingFunction(
@@ -710,6 +795,37 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       else if (toType.isAssignableFrom(LocalTime.class)) {
         mappingFunction = (OffsetDateTime offsetDateTime) ->
           offsetDateTime.toLocalTime();
+      }
+    }
+    else if (TIMESTAMPTZ.class.isAssignableFrom(fromType)) {
+      if (toType.isAssignableFrom(OffsetDateTime.class)) {
+        mappingFunction = (TIMESTAMPTZ timestampWithTimeZone) ->
+          fromJdbc(() -> timestampWithTimeZone.toOffsetDateTime());
+      }
+      else if (toType.isAssignableFrom(OffsetTime.class)) {
+        mappingFunction = (TIMESTAMPTZ timestampWithTimeZone) ->
+          fromJdbc(() -> timestampWithTimeZone.toOffsetTime());
+      }
+      else if (toType.isAssignableFrom(LocalDateTime.class)) {
+        mappingFunction = (TIMESTAMPTZ timestampWithTimeZone) ->
+          fromJdbc(() -> timestampWithTimeZone.toLocalDateTime());
+      }
+    }
+    else if (TIMESTAMPLTZ.class.isAssignableFrom(fromType)) {
+      if (toType.isAssignableFrom(OffsetDateTime.class)) {
+        mappingFunction = (TIMESTAMPLTZ timestampWithLocalTimeZone) ->
+          fromJdbc(() ->
+            timestampWithLocalTimeZone.offsetDateTimeValue(jdbcConnection));
+      }
+      else if (toType.isAssignableFrom(OffsetTime.class)) {
+        mappingFunction = (TIMESTAMPLTZ timestampWithLocalTimeZone) ->
+          fromJdbc(() ->
+            timestampWithLocalTimeZone.offsetTimeValue(jdbcConnection));
+      }
+      else if (toType.isAssignableFrom(LocalDateTime.class)) {
+        mappingFunction = (TIMESTAMPLTZ timestampWithLocalTimeZone) ->
+          fromJdbc(() ->
+            timestampWithLocalTimeZone.localDateTimeValue(jdbcConnection));
       }
     }
     else if (INTERVALYM.class.isAssignableFrom(fromType)
@@ -937,10 +1053,17 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     }
   }
 
-  private static final class OracleR2dbcObjectImpl
+  private final class OracleR2dbcObjectImpl
     extends OracleReadableImpl implements OracleR2dbcObject {
 
     private final OracleR2dbcObjectMetadata metadata;
+
+    /**
+     * JDBC readable that backs this object. It is retained with this field to
+     * implement equals and hashcode without having to convert between the
+     * default JDBC object mappings and those of R2DBC.
+     */
+    private final StructJdbcReadable structJdbcReadable;
 
     /**
      * <p>
@@ -950,21 +1073,52 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * </p>
      * @param jdbcConnection JDBC connection that created the
      *   {@code jdbcReadable}. Not null.
-     * @param jdbcReadable Readable values from a JDBC Driver. Not null.
+     * @param structJdbcReadable Readable values from a JDBC Driver. Not null.
      * @param metadata Metadata of each value. Not null.
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OracleR2dbcObjectImpl(
-      java.sql.Connection jdbcConnection, DependentCounter dependentCounter,
-      JdbcReadable jdbcReadable, OracleR2dbcObjectMetadataImpl metadata,
+      java.sql.Connection jdbcConnection,
+      DependentCounter dependentCounter,
+      StructJdbcReadable structJdbcReadable,
+      OracleR2dbcObjectMetadataImpl metadata,
       ReactiveJdbcAdapter adapter) {
-      super(jdbcConnection, dependentCounter, jdbcReadable, metadata, adapter);
+      super(
+        jdbcConnection, dependentCounter, structJdbcReadable, metadata, adapter);
       this.metadata = metadata;
+      this.structJdbcReadable = structJdbcReadable;
     }
 
     @Override
     public OracleR2dbcObjectMetadata getMetadata() {
       return metadata;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (!(other instanceof OracleR2dbcObjectImpl))
+        return super.equals(other);
+
+      OracleR2dbcObjectImpl otherObject = (OracleR2dbcObjectImpl) other;
+      if (! readablesMetadata.equals(otherObject.metadata))
+        return false;
+
+      return Arrays.deepEquals(
+        structJdbcReadable.attributes,
+        otherObject.structJdbcReadable.attributes);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(readablesMetadata, structJdbcReadable);
+    }
+
+    @Override
+    public String toString() {
+      return format(
+        "%s = %s",
+        metadata.getObjectType().getName(),
+        toMap(this));
     }
   }
 
