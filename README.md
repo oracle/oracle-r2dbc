@@ -618,6 +618,120 @@ Publisher<Integer[]> arrayMapExample(Result result) {
 }
 ```
 
+### OBJECT
+Oracle Database supports `OBJECT` as a user defined type. A `CREATE TYPE`
+command is used to define an `OBJECT` type:
+```sql
+CREATE TYPE PET AS OBJECT(
+  name VARCHAR(128),
+  species VARCHAR(128),
+  weight NUMBER,
+  birthday DATE)
+```
+Oracle R2DBC defines `oracle.r2dbc.OracleR2dbcType.ObjectType` as a `Type` for
+representing user defined `OBJECT` types. A `Parameter` with a type of
+`ObjectType` may be used to bind `OBJECT` values to a `Statement`.
+
+Use an `Object[]` to bind the attribute values of an `OBJECT` by index:
+```java
+Publisher<Result> objectArrayBindExample(Connection connection) {
+  Statement statement =
+    connection.createStatement("INSERT INTO petTable VALUES (:petObject)");
+
+  // Bind the attributes of the PET OBJECT defined above
+  ObjectType objectType = OracleR2dbcTypes.objectType("PET");
+  Object[] attributeValues = {
+    "Derby",
+    "Dog",
+    22.8,
+    LocalDate.of(2015, 11, 07)
+  };
+  statement.bind("petObject", Parameters.in(objectType, attributeValues));
+
+  return statement.execute();
+}
+```
+
+Use a `Map<String,Object>` to bind the attribute values of an `OBJECT` by name:
+```java
+Publisher<Result> objectMapBindExample(Connection connection) {
+  Statement statement =
+    connection.createStatement("INSERT INTO petTable VALUES (:petObject)");
+
+  // Bind the attributes of the PET OBJECT defined above
+  ObjectType objectType = OracleR2dbcTypes.objectType("PET");
+  Map<String,Object> attributeValues = Map.of(
+    "name", "Derby",
+    "species", "Dog",
+    "weight", 22.8,
+    "birthday", LocalDate.of(2015, 11, 07));
+  statement.bind("petObject", Parameters.in(objectType, attributeValues));
+
+  return statement.execute();
+}
+```
+A `Parameter` with a type of `ObjectType` must be used when binding OUT
+parameters of `OBJECT` types for a PL/SQL call:
+```java
+Publisher<Result> objectOutBindExample(Connection connection) {
+  Statement statement =
+    connection.createStatement("BEGIN; getPet(:petObject); END;");
+
+  ObjectType objectType = OracleR2dbcTypes.objectType("PET");
+  statement.bind("petObject", Parameters.out(objectType));
+
+  return statement.execute();
+}
+```
+`OBJECT` values may be consumed from a `Row` or `OutParameter` as an
+`oracle.r2dbc.OracleR2dbcObject`. The `OracleR2dbcObject` interface is a subtype
+of `io.r2dbc.spi.Readable`. Attribute values may be accessed using the standard
+`get` methods of `Readable`. The `get` methods of `OracleR2dbcObject` support
+alll SQL to Java type mappings defined by the
+[R2DBC Specification](https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping):
+```java
+Publisher<Pet> objectMapExample(Result result) {
+  return result.map(row -> {
+    OracleR2dbcObject oracleObject = row.get(0, OracleR2dbcObject.class); 
+    return new Pet(
+      oracleObject.get("name", String.class),
+      oracleObject.get("species", String.class),
+      oracleObject.get("weight", Float.class),
+      oracleObject.get("birthday", LocalDate.class));
+  });
+}
+```
+
+Instances of `OracleR2dbcObject` may be passed directly to `Statement` bind 
+methods:
+```java
+Publisher<Result> objectBindExample(
+  OracleR2dbcObject oracleObject, Connection connection) {
+  Statement statement =
+    connection.createStatement("INSERT INTO petTable VALUES (:petObject)");
+  
+  statement.bind("petObject", oracleObject);
+
+  return statement.execute();
+}
+```
+Attribute metadata is exposed by the `getMetadata` method of
+`OracleR2dbcObject`:
+```java
+void printObjectMetadata(OracleR2dbcObject oracleObject) {
+  OracleR2dbcObjectMetadata metadata = oracleObject.getMetadata();
+  OracleR2dbcTypes.ObjectType objectType = metadata.getObjectType();
+  
+  System.out.println("Object Type: " + objectType);
+  metadata.getAttributeMetadatas()
+    .stream()
+    .forEach(attributeMetadata -> {
+      System.out.println("\tAttribute Name: " + attributeMetadata.getName()));
+      System.out.println("\tAttribute Type: " + attributeMetadata.getType()));
+    });
+}
+```
+
 ### REF Cursor
 Use the `oracle.r2dbc.OracleR2dbcTypes.REF_CURSOR` type to bind `SYS_REFCURSOR` out 
 parameters:
