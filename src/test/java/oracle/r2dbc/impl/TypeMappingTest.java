@@ -1919,14 +1919,37 @@ public class TypeMappingTest {
         actual = object.get(i, expectedClass);
       }
 
-
       String message = "Mismatch at attribute index " + i;
 
-      if (expected instanceof Object[] && actual instanceof Object[])
+      if (expected instanceof OracleR2dbcObject
+        && actual instanceof OracleR2dbcObject) {
+        // Need to compare default mappings as OracleR2dbcObject does not
+        // implement equals.
+        assertArrayEquals(
+          toArray((OracleR2dbcObject) expected),
+          toArray((OracleR2dbcObject) actual),
+          message);
+      }
+      else if (expected instanceof Object[] && actual instanceof Object[])
         assertArrayEquals((Object[]) expected, (Object[]) actual, message);
       else
         assertEquals(expected, actual, message);
     }
+  }
+
+  /** Converts an OBJECT to an Object[] of each attribute's default Java type */
+  private static Object[] toArray(OracleR2dbcObject object) {
+    Object[] array = new Object[
+      object.getMetadata().getAttributeMetadatas().size()];
+
+    for (int i = 0; i < array.length; i++) {
+      array[i] = object.get(i);
+
+      if (array[i] instanceof OracleR2dbcObject)
+        array[i] = toArray((OracleR2dbcObject) array[i]);
+    }
+
+    return array;
   }
 
   // TODO: More tests for JDBC 4.3 mappings like BigInteger to BIGINT,

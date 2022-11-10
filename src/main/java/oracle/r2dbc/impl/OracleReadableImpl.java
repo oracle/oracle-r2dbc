@@ -1059,13 +1059,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     private final OracleR2dbcObjectMetadata metadata;
 
     /**
-     * JDBC readable that backs this object. It is retained with this field to
-     * implement equals and hashcode without having to convert between the
-     * default JDBC object mappings and those of R2DBC.
-     */
-    private final StructJdbcReadable structJdbcReadable;
-
-    /**
      * <p>
      * Constructs a new set of out parameters that supplies values of a
      * {@code jdbcReadable} and obtains metadata of the values from
@@ -1086,31 +1079,11 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       super(
         jdbcConnection, dependentCounter, structJdbcReadable, metadata, adapter);
       this.metadata = metadata;
-      this.structJdbcReadable = structJdbcReadable;
     }
 
     @Override
     public OracleR2dbcObjectMetadata getMetadata() {
       return metadata;
-    }
-
-    @Override
-    public boolean equals(Object other) {
-      if (!(other instanceof OracleR2dbcObjectImpl))
-        return super.equals(other);
-
-      OracleR2dbcObjectImpl otherObject = (OracleR2dbcObjectImpl) other;
-      if (! readablesMetadata.equals(otherObject.metadata))
-        return false;
-
-      return Arrays.deepEquals(
-        structJdbcReadable.attributes,
-        otherObject.structJdbcReadable.attributes);
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(readablesMetadata, structJdbcReadable);
     }
 
     @Override
@@ -1122,6 +1095,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     }
   }
 
+  /** A {@code JdbcReadable} backed by a java.sql.Struct */
   private final class StructJdbcReadable implements JdbcReadable {
 
     /** Attributes of the Struct, mapped to their default Java type for JDBC */
