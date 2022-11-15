@@ -400,11 +400,18 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
         PORT, options, Integer.class, Integer::valueOf);
       Object serviceName = options.getValue(DATABASE);
 
-      return String.format("jdbc:oracle:thin:@%s%s%s%s",
+      Object dnMatch =
+        options.getValue(OracleR2dbcOptions.TLS_SERVER_DN_MATCH);
+
+      return String.format("jdbc:oracle:thin:@%s%s%s%s?%s=%s",
         protocol == null ? "" : protocol + "://",
         host,
         port != null ? (":" + port) : "",
-        serviceName != null ? ("/" + serviceName) : "");
+        serviceName != null ? ("/" + serviceName) : "",
+        // Workaround for Oracle JDBC bug #33150409. DN matching is enabled
+        // unless the property is set as a query parameter.
+        OracleR2dbcOptions.TLS_SERVER_DN_MATCH.name(),
+        dnMatch == null ? "false" : dnMatch);
     }
   }
 
