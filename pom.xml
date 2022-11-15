@@ -86,18 +86,10 @@
             <arg>-Xlint:-options</arg>
             <arg>-Xlint:-processing</arg>
             <arg>-Xlint:-serial</arg>
+            <!-- LDAP URL tests require the java.naming module -->
+            <testCompilerArgument>--add-modules</testCompilerArgument>
+            <testCompilerArgument>java.naming</testCompilerArgument>
           </compilerArgs>
-          <!-- LDAP URL tests require the java.naming module -->
-          <!-- Maven seems to ignore the forceJavacCompilerUse.
-            This results in an error when passing the addModules option to
-            the javax.tools API. For this reason, Oracle R2DBC's module-info is
-            declaring a depency on the java.naming module.
-            TODO: Figure out how to make maven compile tests correctly, and 
-            remove the java.naming depenency from Oracle R2DBC.
-          <fork>true</fork>
-          <forceJavacCompilerUse>true</forceJavacCompilerUse>
-          <testCompilerArgument>- -add-modules java.naming</testCompilerArgument>
-          -->
           <showWarnings>true</showWarnings>
           <release>${java.version}</release>
         </configuration>
@@ -166,6 +158,8 @@
             <include>**/*Test.java</include>
             <include>**/*TestKit.java</include>
           </includes>
+          <!-- LDAP URL tests require the java.naming module -->
+          <argLine>--add-reads com.oracle.database.r2dbc=java.naming</argLine>
         </configuration>
       </plugin>
       <plugin>
@@ -226,20 +220,6 @@
   </build>
 
 
-  <!--
-  <dependencyManagement>
-    <dependencies>
-      <dependency>
-        <groupId>io.projectreactor</groupId>
-        <artifactId>reactor-bom</artifactId>
-        <version>${reactor.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-    </dependencies>
-  </dependencyManagement>
-  -->
-
   <dependencies>
     <!-- Oracle R2DBC Driver Dependencies -->
     <dependency>
@@ -288,13 +268,6 @@
       <version>${spring-jdbc.version}</version>
       <scope>test</scope>
     </dependency>
-    <!---
-    <dependency>
-      <groupId>io.projectreactor</groupId>
-      <artifactId>reactor-test</artifactId>
-      <scope>test</scope>
-    </dependency>
-    -->
   </dependencies>
 
   <profiles>
