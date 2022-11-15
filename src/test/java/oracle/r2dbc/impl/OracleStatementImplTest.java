@@ -23,17 +23,13 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
-import io.r2dbc.spi.ConnectionFactoryOptions;
-import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcNonTransientException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
-import io.r2dbc.spi.Result.Message;
 import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
-import io.r2dbc.spi.Type;
 import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.OracleR2dbcWarning;
@@ -47,11 +43,12 @@ import reactor.core.publisher.Signal;
 import java.sql.RowId;
 import java.sql.SQLWarning;
 import java.util.ArrayList;
-import java.util.Collection;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -64,19 +61,13 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
-import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
-import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
-import static oracle.r2dbc.test.DatabaseConfig.password;
-import static oracle.r2dbc.test.DatabaseConfig.port;
-import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.showErrors;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
-import static oracle.r2dbc.test.DatabaseConfig.user;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
@@ -1286,7 +1277,7 @@ public class OracleStatementImplTest {
       // inserted by the call.
       consumeOne(connection.createStatement(
         "BEGIN testOneInOutCallAdd(?); END;")
-        .bind(0, new InOutParameter(1, R2dbcType.NUMERIC))
+        .bind(0, Parameters.inOut(R2dbcType.NUMERIC, 1))
         .execute(),
         result -> {
           awaitNone(result.getRowsUpdated());
@@ -1300,7 +1291,7 @@ public class OracleStatementImplTest {
       // parameter's default value to have been inserted by the call.
       consumeOne(connection.createStatement(
         "BEGIN testOneInOutCallAdd(:value); END;")
-        .bind("value", new InOutParameter(2, R2dbcType.NUMERIC))
+        .bind("value", Parameters.inOut(R2dbcType.NUMERIC, 2))
         .execute(),
         result ->
           awaitOne(1, result.map(row ->
@@ -1314,7 +1305,7 @@ public class OracleStatementImplTest {
       // parameter's value to have been inserted by the call.
       consumeOne(connection.createStatement(
         "BEGIN testOneInOutCallAdd(:value); END;")
-        .bind("value", new InOutParameter(3))
+        .bind("value", Parameters.inOut(3))
         .execute(),
         result ->
           awaitNone(result.getRowsUpdated()));
@@ -1327,7 +1318,7 @@ public class OracleStatementImplTest {
       // parameter's value to have been inserted by the call.
       consumeOne(connection.createStatement(
         "BEGIN testOneInOutCallAdd(?); END;")
-        .bind(0, new InOutParameter(4))
+        .bind(0, Parameters.inOut(4))
         .execute(),
         result ->
           awaitOne(3, result.map(row ->
@@ -1381,8 +1372,8 @@ public class OracleStatementImplTest {
       // inserted by the call.
       consumeOne(connection.createStatement(
         "BEGIN testMultiInOutCallAdd(:value1, :value2); END;")
-        .bind("value1", new InOutParameter(1, R2dbcType.NUMERIC))
-        .bind("value2", new InOutParameter(101, R2dbcType.NUMERIC))
+        .bind("value1", Parameters.inOut(R2dbcType.NUMERIC, 1))
+        .bind("value2", Parameters.inOut(R2dbcType.NUMERIC, 101))
         .execute(),
         result ->
           awaitNone(result.getRowsUpdated()));
@@ -1396,8 +1387,8 @@ public class OracleStatementImplTest {
       // parameter's default value to have been inserted by the call.
       consumeOne(connection.createStatement(
         "BEGIN testMultiInOutCallAdd(?, :value2); END;")
-        .bind(0, new InOutParameter(2, R2dbcType.NUMERIC))
-        .bind("value2", new InOutParameter(102, R2dbcType.NUMERIC))
+        .bind(0, Parameters.inOut(R2dbcType.NUMERIC, 2))
+        .bind("value2", Parameters.inOut(R2dbcType.NUMERIC, 102))
         .execute(),
         result ->
           awaitOne(asList(1, 101), result.map(row ->
@@ -1413,8 +1404,8 @@ public class OracleStatementImplTest {
       // parameter's value to have been inserted by the call.
       consumeOne(connection.createStatement(
         "BEGIN testMultiInOutCallAdd(?, ?); END;")
-        .bind(0, new InOutParameter(3))
-        .bind(1, new InOutParameter(103))
+        .bind(0, Parameters.inOut(3))
+        .bind(1, Parameters.inOut(103))
         .execute(),
         result -> awaitNone(result.getRowsUpdated()));
       awaitQuery(asList(asList(3, 103)),
@@ -1429,8 +1420,8 @@ public class OracleStatementImplTest {
       consumeOne(connection.createStatement(
         "BEGIN testMultiInOutCallAdd(" +
           "inout_value2 => :value2, inout_value1 => :value1); END;")
-        .bind("value1", new InOutParameter(4))
-        .bind("value2", new InOutParameter(104))
+        .bind("value1", Parameters.inOut(4))
+        .bind("value2", Parameters.inOut(104))
         .execute(),
         result ->
           awaitOne(asList(3, 103), result.map(row ->
@@ -2431,39 +2422,306 @@ public class OracleStatementImplTest {
     }
   }
 
-  // TODO: Repalce with Parameters.inOut when that's available
-  private static final class InOutParameter
-    implements Parameter, Parameter.In, Parameter.Out {
-    final Type type;
-    final Object value;
+  /**
+   * Verifies behavior for a PL/SQL call having {@code ARRAY} type IN bind
+   */
+  @Test
+  public void testInArrayCall() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_IN_ARRAY AS ARRAY(8) OF NUMBER"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testInArrayCall(id NUMBER, value TEST_IN_ARRAY)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testInArrayProcedure (" +
+          " id IN NUMBER," +
+          " inArray IN TEST_IN_ARRAY)" +
+          " IS" +
+          " BEGIN" +
+          " INSERT INTO testInArrayCall VALUES(id, inArray);" +
+          " END;"));
 
-    InOutParameter(Object value) {
-      this(value, new Type.InferredType() {
+      class TestRow {
+        Long id;
+        int[] value;
+        TestRow(Long id, int[] value) {
+          this.id = id;
+          this.value = value;
+        }
         @Override
-        public Class<?> getJavaType() {
-          return value.getClass();
+        public boolean equals(Object other) {
+          return other instanceof TestRow
+            && Objects.equals(((TestRow) other).id, id)
+            && Objects.deepEquals(((TestRow)other).value, value);
         }
 
         @Override
-        public String getName() {
-          return "Inferred";
+        public String toString() {
+          return id + ", " + Arrays.toString(value);
         }
-      });
-    }
+      }
 
-    InOutParameter(Object value, Type type) {
-      this.value = value;
-      this.type = type;
-    }
+      TestRow row0 = new TestRow(0L, new int[]{1, 2, 3});
+      OracleR2dbcTypes.ArrayType arrayType =
+        OracleR2dbcTypes.arrayType("TEST_IN_ARRAY");
+      Statement callStatement = connection.createStatement(
+        "BEGIN testInArrayProcedure(:id, :value); END;");
+      awaitExecution(
+        callStatement
+          .bind("id", row0.id)
+          .bind("value", Parameters.in(arrayType, row0.value)));
 
-    @Override
-    public Type getType() {
-      return type;
-    }
+      awaitQuery(
+        List.of(row0),
+        row ->
+          new TestRow(
+            row.get("id", Long.class),
+            row.get("value", int[].class)),
+        connection.createStatement(
+          "SELECT id, value FROM testInArrayCall ORDER BY id"));
 
-    @Override
-    public Object getValue() {
-      return value;
+      TestRow row1 = new TestRow(1L, new int[]{4, 5, 6});
+      awaitExecution(
+        callStatement
+          .bind("id", row1.id)
+          .bind("value", Parameters.in(arrayType, row1.value)));
+
+      awaitQuery(
+        List.of(row0, row1),
+        row ->
+          new TestRow(
+            row.get("id", Long.class),
+            row.get("value", int[].class)),
+        connection.createStatement(
+          "SELECT id, value FROM testInArrayCall ORDER BY id"));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testInArrayCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testInArrayProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_IN_ARRAY"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies behavior for a PL/SQL call having {@code ARRAY} type OUT bind
+   */
+  @Test
+  public void testOutArrayCall() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_OUT_ARRAY AS ARRAY(8) OF NUMBER"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testOutArrayCall(id NUMBER, value TEST_OUT_ARRAY)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testOutArrayProcedure (" +
+          "   inId IN NUMBER," +
+          "   outArray OUT TEST_OUT_ARRAY)" +
+          " IS" +
+          " BEGIN" +
+          "   SELECT value INTO outArray" +
+          "     FROM testOutArrayCall" +
+          "     WHERE id = inId;" +
+          " EXCEPTION" +
+          "   WHEN NO_DATA_FOUND THEN" +
+          "     outArray := NULL;" +
+          " END;"));
+
+      class TestRow {
+        Long id;
+        Integer[] value;
+        TestRow(Long id, Integer[] value) {
+          this.id = id;
+          this.value = value;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+          return other instanceof TestRow
+            && Objects.equals(((TestRow) other).id, id)
+            && Objects.deepEquals(((TestRow)other).value, value);
+        }
+
+        @Override
+        public String toString() {
+          return id + ", " + Arrays.toString(value);
+        }
+      }
+
+      OracleR2dbcTypes.ArrayType arrayType =
+        OracleR2dbcTypes.arrayType("TEST_OUT_ARRAY");
+      Statement callStatement = connection.createStatement(
+        "BEGIN testOutArrayProcedure(:id, :value); END;");
+
+      // Expect a NULL out parameter before any rows have been inserted
+      awaitQuery(
+        List.of(Optional.empty()),
+        outParameters -> {
+          assertNull(outParameters.get("value"));
+          assertNull(outParameters.get("value", int[].class));
+          assertNull(outParameters.get("value", Integer[].class));
+          return Optional.empty();
+        },
+        callStatement
+          .bind("id", -1)
+          .bind("value", Parameters.out(arrayType)));
+
+      // Insert a row and expect an out parameter with the value
+      TestRow row0 = new TestRow(0L, new Integer[]{1, 2, 3});
+      awaitUpdate(1, connection.createStatement(
+          "INSERT INTO testOutArrayCall VALUES (:id, :value)")
+        .bind("id", row0.id)
+        .bind("value", Parameters.in(arrayType, row0.value)));
+      awaitQuery(
+        List.of(row0),
+        outParameters ->
+          new TestRow(row0.id, outParameters.get("value", Integer[].class)),
+        callStatement
+          .bind("id", row0.id)
+          .bind("value", Parameters.out(arrayType)));
+
+      // Insert another row and expect an out parameter with the value
+      TestRow row1 = new TestRow(1L, new Integer[]{4, 5, 6});
+      awaitUpdate(1, connection.createStatement(
+          "INSERT INTO testOutArrayCall VALUES (:id, :value)")
+        .bind("id", row1.id)
+        .bind("value", Parameters.in(arrayType, row1.value)));
+      awaitQuery(
+        List.of(row1),
+        outParameters ->
+          new TestRow(row1.id, outParameters.get("value", Integer[].class)),
+        callStatement
+          .bind("id", row1.id)
+          .bind("value", Parameters.out(arrayType)));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testOutArrayCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testOutArrayProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_OUT_ARRAY"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies behavior for a PL/SQL call having {@code ARRAY} type OUT bind
+   */
+  @Test
+  public void testInOutArrayCall() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_IN_OUT_ARRAY AS ARRAY(8) OF NUMBER"));
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testInOutArrayCall(id NUMBER, value TEST_IN_OUT_ARRAY)"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testInOutArrayProcedure (" +
+          "   inId IN NUMBER," +
+          "   inOutArray IN OUT TEST_IN_OUT_ARRAY)" +
+          " IS" +
+          " newValue TEST_IN_OUT_ARRAY;" +
+          " BEGIN" +
+          "" +
+          " newValue := TEST_IN_OUT_ARRAY();" +
+          " newValue.extend(inOutArray.count);" +
+          " FOR i IN 1 .. inOutArray.count LOOP" +
+          "   newValue(i) := inOutArray(i);" +
+          " END LOOP;" +
+          "" +
+          " BEGIN" +
+          "   SELECT value INTO inOutArray" +
+          "     FROM testInOutArrayCall" +
+          "     WHERE id = inId;" +
+          "   DELETE FROM testInOutArrayCall WHERE id = inId;" +
+          "   EXCEPTION" +
+          "     WHEN NO_DATA_FOUND THEN" +
+          "       inOutArray := NULL;" +
+          " END;" +
+          "" +
+          " INSERT INTO testInOutArrayCall VALUES (inId, newValue);" +
+          "" +
+          " END;"));
+
+      class TestRow {
+        Long id;
+        Integer[] value;
+        TestRow(Long id, Integer[] value) {
+          this.id = id;
+          this.value = value;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+          return other instanceof TestRow
+            && Objects.equals(((TestRow) other).id, id)
+            && Objects.deepEquals(((TestRow)other).value, value);
+        }
+
+        @Override
+        public String toString() {
+          return id + ", " + Arrays.toString(value);
+        }
+      }
+
+      OracleR2dbcTypes.ArrayType arrayType =
+        OracleR2dbcTypes.arrayType("TEST_IN_OUT_ARRAY");
+      Statement callStatement = connection.createStatement(
+        "BEGIN testInOutArrayProcedure(:id, :value); END;");
+
+      // Expect a NULL out parameter the first time a row is inserted
+      TestRow row = new TestRow(0L, new Integer[]{1, 2, 3});
+      awaitQuery(
+        List.of(Optional.empty()),
+        outParameters -> {
+          assertNull(outParameters.get("value"));
+          assertNull(outParameters.get("value", int[].class));
+          assertNull(outParameters.get("value", Integer[].class));
+          return Optional.empty();
+        },
+        callStatement
+          .bind("id", row.id)
+          .bind("value", Parameters.inOut(arrayType, row.value)));
+
+      // Update the row and expect an out parameter with the previous value
+      TestRow row1 = new TestRow(row.id, new Integer[]{4, 5, 6});
+      awaitQuery(
+        List.of(row),
+        outParameters ->
+          new TestRow(
+            row.id,
+            outParameters.get("value", Integer[].class)),
+        callStatement
+          .bind("id", row.id)
+          .bind("value", Parameters.inOut(arrayType, row1.value)));
+
+      // Update the row again and expect an out parameter with the previous
+      // value
+      TestRow row2 = new TestRow(row.id, new Integer[]{7, 8, 9});
+      awaitQuery(
+        List.of(row1),
+        outParameters ->
+          new TestRow(
+            row.id,
+            outParameters.get("value", Integer[].class)),
+        callStatement
+          .bind("id", row.id)
+          .bind("value", Parameters.inOut(arrayType, row2.value)));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testInOutArrayCall"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testInOutArrayProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_IN_OUT_ARRAY"));
+      tryAwaitNone(connection.close());
     }
   }
 

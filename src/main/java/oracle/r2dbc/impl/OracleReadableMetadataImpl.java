@@ -263,6 +263,11 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
    */
   static OutParameterMetadata createParameterMetadata(
     String name, Type type) {
+
+    // Translate the Oracle specific ArrayType to the standard COLLECTION type
+    if (type instanceof OracleR2dbcTypes.ArrayType)
+      type = R2dbcType.COLLECTION;
+
     return new OracleOutParameterMetadataImpl(
       type, name, Nullability.NULLABLE, null, null);
   }

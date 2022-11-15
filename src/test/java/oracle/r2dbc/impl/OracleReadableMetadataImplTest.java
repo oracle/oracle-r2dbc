@@ -24,6 +24,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Nullability;
+import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
@@ -53,6 +54,7 @@ import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -284,8 +286,6 @@ public class OracleReadableMetadataImplTest {
         connection, "UROWID", JDBCType.ROWID, OracleR2dbcTypes.ROWID, null,
         null, RowId.class, rowId);
 
-      // Expect JSON and OracleJsonObject to map.
-
     }
     finally {
       tryAwaitNone(connection.close());
@@ -321,6 +321,32 @@ public class OracleReadableMetadataImplTest {
         OracleJsonObject.class, oracleJson);
     }
     finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
+   * ARRAY type columns.
+   */
+  @Test
+  public void testArrayTypes() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_ARRAY_TYPE AS ARRAY(3) OF NUMBER"));
+
+      verifyColumnMetadata(
+        connection, "TEST_ARRAY_TYPE", JDBCType.ARRAY, R2dbcType.COLLECTION,
+        null, null, Object[].class,
+        Parameters.in(
+          OracleR2dbcTypes.arrayType("TEST_ARRAY_TYPE"),
+          new Integer[]{0, 1, 2}));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_ARRAY_TYPE"));
       tryAwaitNone(connection.close());
     }
   }

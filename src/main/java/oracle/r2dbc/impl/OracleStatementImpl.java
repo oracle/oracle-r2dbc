@@ -27,13 +27,17 @@ import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
+import oracle.jdbc.OracleConnection;
+import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
+import oracle.sql.INTERVALYM;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.ByteBuffer;
+import java.sql.Array;
 import java.sql.BatchUpdateException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
@@ -43,6 +47,7 @@ import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.SQLWarning;
 import java.time.Duration;
+import java.time.Period;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -727,18 +732,8 @@ final class OracleStatementImpl implements Statement {
         throw outParameterWithGeneratedValues();
     }
 
-    // TODO: This method should check if Java type can be converted to the
-    //  specified SQL type. If the conversion is unsupported, then JDBC
-    //  setObject(...) will throw when this statement is executed. The correct
-    //  behavior is to throw IllegalArgumentException here, and not from
-    //  execute()
-    Type r2dbcType =
-      requireNonNull(parameter.getType(), "Parameter type is null");
-    SQLType jdbcType = toJdbcType(r2dbcType);
-
-    if (jdbcType == null)
-      throw new IllegalArgumentException("Unsupported SQL type: " + r2dbcType);
-
+    requireSupportedSqlType(requireNonNull(
+      parameter.getType(), "Parameter type is null"));
     requireSupportedJavaType(parameter.getValue());
     bindValues[index] = parameter;
   }
@@ -848,6 +843,19 @@ final class OracleStatementImpl implements Statement {
       throw new IllegalArgumentException(
         "Unsupported Java type:" + object.getClass());
     }
+  }
+
+  /**
+   * Checks that the SQL type identified by an {@code r2dbcType} is supported
+   * as a bind parameter.
+   * @param r2dbcType SQL type. Not null.
+   * @throws IllegalArgumentException If the SQL type is not supported.
+   */
+  private static void requireSupportedSqlType(Type r2dbcType) {
+    SQLType jdbcType = toJdbcType(r2dbcType);
+
+    if (jdbcType == null)
+      throw new IllegalArgumentException("Unsupported SQL type: " + r2dbcType);
   }
 
   /**
@@ -989,7 +997,20 @@ final class OracleStatementImpl implements Statement {
 
     /**
      * <p>
-     * Sets {@link #binds} on the {@link #preparedStatement}. The
+     * Sets {@link #binds} on the {@link #preparedStatement}, as specified by
+     * {@link #bind(Object[])}. This method is called when this statement is
+     * executed. Subclasess override this method to perform additional actions.
+     * </p>
+     * @return A {@code Publisher} that emits {@code onComplete} when all
+     * {@code binds} have been set.
+     */
+    protected Publisher<Void> bind() {
+      return bind(binds);
+    }
+
+    /**
+     * <p>
+     * Sets the given {@code binds} on the {@link #preparedStatement}. The
      * returned {@code Publisher} completes after all bind values have
      * materialized and been set on the {@code preparedStatement}.
      * </p><p>
@@ -1001,40 +1022,26 @@ final class OracleStatementImpl implements Statement {
      * @return A {@code Publisher} that emits {@code onComplete} when all
      * {@code binds} have been set.
      */
-    protected Publisher<Void> bind() {
-      return bind(binds);
-    }
-
     protected final Publisher<Void> bind(Object[] binds) {
       return adapter.getLock().flatMap(() -> {
+
         List<Publisher<Void>> bindPublishers = null;
+
         for (int i = 0; i < binds.length; i++) {
 
+          // Out binds are handled in the registerOutParameters method of the
+          // JdbcCall subclass.
           if (binds[i] instanceof Parameter.Out
             && !(binds[i] instanceof Parameter.In))
             continue;
 
-          Object jdbcValue = convertBind(binds[i]);
-          SQLType jdbcType =
-            binds[i] instanceof Parameter
-              ? toJdbcType(((Parameter) binds[i]).getType())
-              : null; // JDBC infers the type
+          Publisher<Void> bindPublisher = bind(i, binds[i]);
 
-          if (jdbcValue instanceof Publisher<?>) {
-            int indexFinal = i;
-            Publisher<Void> bindPublisher =
-              Mono.from((Publisher<?>) jdbcValue)
-                .doOnSuccess(allocatedValue ->
-                  setBind(indexFinal, allocatedValue, jdbcType))
-                .then();
-
+          if (bindPublisher != null) {
             if (bindPublishers == null)
               bindPublishers = new LinkedList<>();
 
             bindPublishers.add(bindPublisher);
-          }
-          else {
-            setBind(i, jdbcValue, jdbcType);
           }
         }
 
@@ -1042,6 +1049,72 @@ final class OracleStatementImpl implements Statement {
           ? Mono.empty()
           : Flux.concat(bindPublishers);
       });
+    }
+
+    /**
+     * Binds a value to the {@link #preparedStatement}. This method may convert
+     * the given {@code value} into an object type that is accepted by JDBC. If
+     * value is materialized asynchronously, such as a Blob or Clob, then this
+     * method returns a publisher that completes when the materialized value is
+     * bound.
+     * @param index zero-based bind index
+     * @param value value to bind. May be null.
+     * @return A publisher that completes when the value is bound, or null if
+     * the value is bound synchronously.
+     * @implNote The decision to return a null publisher rather than an empty
+     * publisher is motivated by reducing object allocation and overhead from
+     * subscribe/onSubscribe/onComplete. It is thought that this overhead would
+     * be substantial if it were incurred for each bind, of each statement, of
+     * each connection.
+     */
+    private Publisher<Void> bind(int index, Object value) {
+
+      final Object jdbcValue = convertBind(value);
+
+      final SQLType jdbcType;
+      final String typeName;
+
+      if (value instanceof Parameter) {
+        // Convert the parameter's R2DBC type to a JDBC type. Get the type name
+        // by calling getName() on the R2DBC type, not the JDBC type; This
+        // ensures that a user defined name will be used, such as one from
+        // OracleR2dbcTypes.ArrayType.getName()
+        Type type = ((Parameter)value).getType();
+        jdbcType = toJdbcType(type);
+        typeName = type.getName();
+      }
+      else {
+        // JDBC will infer the type from the class of jdbcValue
+        jdbcType = null;
+        typeName = null;
+      }
+
+      if (jdbcValue instanceof Publisher<?>) {
+        return setPublishedBind(index, (Publisher<?>) jdbcValue);
+      }
+      else {
+        setBind(index, jdbcValue, jdbcType, typeName);
+        return null;
+      }
+    }
+
+    /**
+     * Binds a published value to the {@link #preparedStatement}. The binding
+     * happens asynchronously. The returned publisher that completes after the
+     * value is published <em>and bound</em>
+     * @param index zero based bind index
+     * @param publisher publisher that emits a bound value.
+     * @return A publisher that completes after the published value is bound.
+     */
+    private Publisher<Void> setPublishedBind(
+      int index, Publisher<?> publisher) {
+      return Mono.from(publisher)
+        .flatMap(value -> {
+          Publisher<Void> bindPublisher = bind(index, value);
+          return bindPublisher == null
+            ? Mono.empty()
+            : Mono.from(bindPublisher);
+        });
     }
 
     /**
@@ -1216,14 +1289,23 @@ final class OracleStatementImpl implements Statement {
      * @param index 0-based parameter index
      * @param value Value. May be null.
      * @param type SQL type. May be null.
+     * @param typeName Name of a user defined type. May be null.
      */
-    private void setBind(int index, Object value, SQLType type) {
+    private void setBind(
+      int index, Object value, SQLType type, String typeName) {
       runJdbc(() -> {
         int jdbcIndex = index + 1;
-        if (type != null)
-          preparedStatement.setObject(jdbcIndex, value, type);
-        else
+
+        if (type == null) {
           preparedStatement.setObject(jdbcIndex, value);
+        }
+        else if (value == null) {
+          preparedStatement.setNull(
+            jdbcIndex, type.getVendorTypeNumber(), typeName);
+        }
+        else {
+          preparedStatement.setObject(jdbcIndex, value, type);
+        }
       });
     }
 
@@ -1253,7 +1335,7 @@ final class OracleStatementImpl implements Statement {
         return null;
       }
       else if (value instanceof Parameter) {
-        return convertBind(((Parameter) value).getValue());
+        return convertParameterBind((Parameter) value);
       }
       else if (value instanceof io.r2dbc.spi.Blob) {
         return convertBlobBind((io.r2dbc.spi.Blob) value);
@@ -1266,6 +1348,123 @@ final class OracleStatementImpl implements Statement {
       }
       else {
         return value;
+      }
+    }
+
+    /** Converts a {@code Parameter} bind value to a JDBC bind value */
+    private Object convertParameterBind(Parameter parameter) {
+      Object value = parameter.getValue();
+
+      if (value == null)
+        return null;
+
+      Type type = parameter.getType();
+
+      if (type instanceof OracleR2dbcTypes.ArrayType) {
+        return convertArrayBind((OracleR2dbcTypes.ArrayType) type, value);
+      }
+      else {
+        return value;
+      }
+    }
+
+    /**
+     * Converts a given {@code value} to a JDBC {@link Array} of the given
+     * {@code type}.
+     */
+    private Array convertArrayBind(
+      OracleR2dbcTypes.ArrayType type, Object value) {
+
+      // TODO: createOracleArray executes a blocking database call the first
+      //  time an OracleArray is created for a given type name. Subsequent
+      //  creations of the same type avoid the database call using a cached type
+      //  descriptor. If possible, rewrite this use a non-blocking call.
+      return fromJdbc(() ->
+        jdbcConnection.unwrap(OracleConnection.class)
+          .createOracleArray(type.getName(), convertJavaArray(value)));
+    }
+
+    /**
+     * Converts a bind value for an ARRAY to a Java type that is supported by
+     * Oracle JDBC. This method handles cases for standard type mappings of
+     * R2DBC and extended type mapping Oracle R2DBC which are not supported by
+     * Oracle JDBC.
+     */
+    private Object convertJavaArray(Object array) {
+
+      if (array == null)
+        return null;
+
+      // TODO: R2DBC drivers are only required to support ByteBuffer to
+      //  VARBINARY (ie: RAW) conversions. However, a programmer might want to
+      //  use byte[][] as a bind for an ARRAY of RAW. If that happens, they
+      //  might hit this code by accident. Ideally, they can bind ByteBuffer[]
+      //  instead. If absolutely necessary, Oracle R2DBC can do a type look up
+      //  on the ARRAY and determine if the base type is RAW or NUMBER.
+      if (array instanceof byte[]) {
+        // Convert byte to NUMBER. Oracle JDBC does not support creating SQL
+        // arrays from a byte[], so convert the byte[] to an short[].
+        byte[] bytes = (byte[])array;
+        short[] shorts = new short[bytes.length];
+        for (int i = 0; i < bytes.length; i++)
+          shorts[i] = (short)(0xFF & bytes[i]);
+
+        return shorts;
+      }
+      else if (array instanceof ByteBuffer[]) {
+        // Convert from R2DBC's ByteBuffer representation of binary data into
+        // JDBC's byte[] representation
+        ByteBuffer[] byteBuffers = (ByteBuffer[]) array;
+        byte[][] byteArrays = new byte[byteBuffers.length][];
+        for (int i = 0; i < byteBuffers.length; i++) {
+          ByteBuffer byteBuffer = byteBuffers[i];
+          byteArrays[i] = byteBuffer == null
+            ? null
+            : convertByteBufferBind(byteBuffers[i]);
+        }
+
+        return byteArrays;
+      }
+      else if (array instanceof Period[]) {
+        // Convert from Oracle R2DBC's Period representation of INTERVAL YEAR TO
+        // MONTH to Oracle JDBC's INTERVALYM representation.
+        Period[] periods = (Period[]) array;
+        INTERVALYM[] intervalYearToMonths = new INTERVALYM[periods.length];
+        for (int i = 0; i < periods.length; i++) {
+          Period period = periods[i];
+          if (period == null) {
+            intervalYearToMonths[i] = null;
+          }
+          else {
+            // The binary representation is specified in the JavaDoc of
+            // oracle.sql.INTERVALYM. In 21.x, the JavaDoc has bug: It neglects
+            // to mention that the year value is offset by 0x80000000
+            byte[] bytes = new byte[5];
+            ByteBuffer.wrap(bytes)
+              .putInt(period.getYears() + 0x80000000) // 4 byte year
+              .put((byte)(period.getMonths() + 60)); // 1 byte month
+            intervalYearToMonths[i] = new INTERVALYM(bytes);
+          }
+        }
+
+        return intervalYearToMonths;
+      }
+      else {
+        // Check if the bind value is a multi-dimensional array
+        Class<?> componentType = array.getClass().getComponentType();
+
+        if (componentType == null || !componentType.isArray())
+          return array;
+
+        int length = java.lang.reflect.Array.getLength(array);
+        Object[] converted = new Object[length];
+
+        for (int i = 0; i < length; i++) {
+          converted[i] =
+            convertJavaArray(java.lang.reflect.Array.get(array, i));
+        }
+
+        return converted;
       }
     }
 
@@ -1407,7 +1606,19 @@ final class OracleStatementImpl implements Statement {
         for (int i : outBindIndexes) {
           Type type = ((Parameter) binds[i]).getType();
           SQLType jdbcType = toJdbcType(type);
-          callableStatement.registerOutParameter(i + 1, jdbcType);
+
+          if (type instanceof OracleR2dbcTypes.ArrayType) {
+            // Call registerOutParameter with the user defined type name
+            // returned by ArrayType.getName(). Oracle JDBC throws an exception
+            // if a name is provided for a built-in type, like VARCHAR, etc. So
+            // this branch should only be taken for user defined types, like
+            // ARRAY.
+            callableStatement.registerOutParameter(
+              i + 1, jdbcType, type.getName());
+          }
+          else {
+            callableStatement.registerOutParameter(i + 1, jdbcType);
+          }
         }
       });
     }
@@ -1419,6 +1630,7 @@ final class OracleStatementImpl implements Statement {
         Mono.just(createCallResult(
           dependentCounter,
           createOutParameters(
+            fromJdbc(preparedStatement::getConnection),
             dependentCounter,
             new JdbcOutParameters(), metadata, adapter),
           adapter)));
