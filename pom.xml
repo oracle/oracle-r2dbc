@@ -67,7 +67,7 @@
     <java.version>11</java.version>
     <ojdbc.version>21.7.0.0</ojdbc.version>
     <r2dbc.version>1.0.0.RELEASE</r2dbc.version>
-    <reactor.version>2020.0.23</reactor.version>
+    <reactor.version>3.5.0</reactor.version>
     <reactive-streams.version>1.0.3</reactive-streams.version>
     <junit.version>5.9.1</junit.version>
     <spring-jdbc.version>5.3.19</spring-jdbc.version>
@@ -214,6 +214,7 @@
   </build>
 
 
+  <!--
   <dependencyManagement>
     <dependencies>
       <dependency>
@@ -225,6 +226,7 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+  -->
 
   <dependencies>
     <!-- Oracle R2DBC Driver Dependencies -->
@@ -241,6 +243,7 @@
     <dependency>
       <groupId>io.projectreactor</groupId>
       <artifactId>reactor-core</artifactId>
+      <version>${reactor.version}</version>
     </dependency>
     <dependency>
       <groupId>org.reactivestreams</groupId>
@@ -273,11 +276,13 @@
       <version>${spring-jdbc.version}</version>
       <scope>test</scope>
     </dependency>
+    <!---
     <dependency>
       <groupId>io.projectreactor</groupId>
       <artifactId>reactor-test</artifactId>
       <scope>test</scope>
     </dependency>
+    -->
 
   </dependencies>
 
