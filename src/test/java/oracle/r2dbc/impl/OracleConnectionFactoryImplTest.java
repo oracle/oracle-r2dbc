@@ -36,6 +36,7 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
 
+import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -105,16 +106,7 @@ public class OracleConnectionFactoryImplTest {
   @Test
   public void testCreate() {
     Publisher<? extends Connection> connectionPublisher =
-      new OracleConnectionFactoryImpl(
-          ConnectionFactoryOptions.builder()
-            .option(ConnectionFactoryOptions.DRIVER, "oracle")
-            .option(ConnectionFactoryOptions.HOST, DatabaseConfig.host())
-            .option(ConnectionFactoryOptions.PORT, DatabaseConfig.port())
-            .option(ConnectionFactoryOptions.DATABASE, DatabaseConfig.serviceName())
-            .option(ConnectionFactoryOptions.USER, DatabaseConfig.user())
-            .option(ConnectionFactoryOptions.PASSWORD, DatabaseConfig.password())
-            .build())
-        .create();
+      new OracleConnectionFactoryImpl(connectionFactoryOptions()).create();
 
     // Expect publisher to emit one connection to each subscriber
     Set<Connection> connections = new HashSet<>();
@@ -145,16 +137,11 @@ public class OracleConnectionFactoryImplTest {
   public void testCreateFailure() {
     // Connect with the wrong username
     Publisher<? extends Connection> connectionPublisher =
-      new OracleConnectionFactoryImpl(
-        ConnectionFactoryOptions.builder()
-          .option(ConnectionFactoryOptions.DRIVER, "oracle")
-          .option(ConnectionFactoryOptions.HOST, DatabaseConfig.host())
-          .option(ConnectionFactoryOptions.PORT, DatabaseConfig.port())
-          .option(ConnectionFactoryOptions.DATABASE, DatabaseConfig.serviceName())
-          .option(ConnectionFactoryOptions.USER,
-            "Wrong" + DatabaseConfig.user())
-          .option(ConnectionFactoryOptions.PASSWORD, DatabaseConfig.password())
-          .build())
+      new OracleConnectionFactoryImpl(connectionFactoryOptions()
+        .mutate()
+        .option(ConnectionFactoryOptions.USER,
+          "Wrong" + DatabaseConfig.user())
+        .build())
         .create();
 
     // Expect publisher to signal onError with an R2DBCException

@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
+import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.Option;
 import io.r2dbc.spi.R2dbcTimeoutException;
@@ -30,6 +31,8 @@ import io.r2dbc.spi.Result;
 import oracle.jdbc.OracleConnection;
 import oracle.jdbc.datasource.OracleDataSource;
 import oracle.r2dbc.OracleR2dbcOptions;
+import oracle.r2dbc.test.DatabaseConfig;
+import oracle.r2dbc.util.TestContextFactory;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -43,6 +46,8 @@ import java.nio.file.StandardOpenOption;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.ZonedDateTime;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TimeZone;
@@ -67,9 +72,11 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.STATEMENT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static java.lang.String.format;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
+import static oracle.r2dbc.test.DatabaseConfig.protocol;
 import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
@@ -213,10 +220,7 @@ public class OracleReactiveJdbcAdapterTest {
   public void testTnsAdmin() throws IOException {
 
     // Create an Oracle Net Descriptor
-    String descriptor = format(
-      "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=tcp))" +
-        "(CONNECT_DATA=(SERVICE_NAME=%s)))",
-      host(), port(), serviceName());
+    String descriptor = createDescriptor();
 
     // Create a tnsnames.ora file with an alias for the descriptor
     Files.writeString(Path.of("tnsnames.ora"),
@@ -366,14 +370,8 @@ public class OracleReactiveJdbcAdapterTest {
   @Test
   public void testStatementTimeout() {
     Connection connection0 =
-      Mono.from(ConnectionFactories.get(ConnectionFactoryOptions
-        .builder()
-        .option(DRIVER, "oracle")
-        .option(HOST, host())
-        .option(PORT, port())
-        .option(DATABASE, serviceName())
-        .option(USER, user())
-        .option(PASSWORD, password())
+      Mono.from(ConnectionFactories.get(connectionFactoryOptions()
+        .mutate()
         .option(STATEMENT_TIMEOUT, Duration.ofSeconds(2))
         // Disable OOB to support testing with an 18.x database
         .option(Option.valueOf(
@@ -443,14 +441,9 @@ public class OracleReactiveJdbcAdapterTest {
 
     // Create a connection that is configured to use the custom executor
     Connection connection = awaitOne(ConnectionFactories.get(
-      ConnectionFactoryOptions.builder()
+      connectionFactoryOptions()
+        .mutate()
         .option(OracleR2dbcOptions.EXECUTOR, testExecutor)
-        .option(DRIVER, "oracle")
-        .option(HOST, host())
-        .option(PORT, port())
-        .option(DATABASE, serviceName())
-        .option(USER, user())
-        .option(PASSWORD, password())
         .build())
         .create());
 
@@ -491,12 +484,15 @@ public class OracleReactiveJdbcAdapterTest {
     // Verify configuration with URL parameters
     Connection connection = awaitOne(ConnectionFactories.get(
       ConnectionFactoryOptions.parse(
-        format("r2dbc:oracle://%s:%d/%s" +
+        format("r2dbc:oracle:%s//%s:%d/%s" +
           "?v$session.osuser=%s" +
           "&v$session.terminal=%s" +
           "&v$session.process=%s" +
           "&v$session.program=%s" +
           "&v$session.machine=%s",
+          Optional.ofNullable(protocol())
+            .map(protocol -> protocol + ":")
+            .orElse(""),
           host(), port(), serviceName(),
           osuser, terminal, process, program, machine))
       .mutate()
@@ -527,6 +523,98 @@ public class OracleReactiveJdbcAdapterTest {
     finally {
       tryAwaitNone(connection.close());
     }
+  }
+  /**
+   * Verifies the use of the LDAP protocol in an r2dbc:oracle URL.
+   */
+  @Test
+  public void testLdapUrl() throws Exception {
+
+    // Configure Oracle R2DBC with an R2DBC URL having the LDAP protocol and the
+    // given path.
+    String ldapPath = "sales,cn=OracleContext,dc=com";
+    ConnectionFactory ldapConnectionFactory = ConnectionFactories.get(
+      ConnectionFactoryOptions.parse(format(
+          "r2dbc:oracle:ldap://ldap.example.com:9999/%s", ldapPath))
+        .mutate()
+        .option(ConnectionFactoryOptions.USER, DatabaseConfig.user())
+        .option(ConnectionFactoryOptions.PASSWORD, DatabaseConfig.password())
+        .build());
+
+    // Set up the mock LDAP context factory. See JavaDoc of TestContextFactory
+    // for details about this.
+    TestContextFactory.bind(ldapPath, createDescriptor());
+
+    // Now verify that the LDAP URL is resolved to the descriptor
+    Connection ldapConnection = awaitOne(ldapConnectionFactory.create());
+    try {
+      assertEquals(
+        "Hello, LDAP",
+        awaitOne(
+          awaitOne(ldapConnection.createStatement(
+              "SELECT 'Hello, LDAP' FROM sys.dual")
+            .execute())
+            .map(row -> row.get(0))));
+    }
+    finally {
+      tryAwaitNone(ldapConnection.close());
+    }
+  }
+
+  /**
+   * Verifies the use of the LDAP protocol in an r2dbc:oracle URL having
+   * multiple LDAP endpoints
+   */
+  @Test
+  public void testMultiLdapUrl() throws Exception {
+
+    // Configure Oracle R2DBC with an R2DBC URL having the LDAP protocol and
+    // multiple LDAP endpoints. Only the last endpoint will contain the given
+    // path, and so the previous endpoints are invalid.
+    String ldapPath = "cn=salesdept,cn=OracleContext,dc=com/salesdb";
+    ConnectionFactory ldapConnectionFactory = ConnectionFactories.get(
+      ConnectionFactoryOptions.parse(format(
+        "r2dbc:oracle:" +
+          "ldap://ldap1.example.com:7777/cn=salesdept0,cn=OracleContext,dc=com/salesdb" +
+          "%%20ldap://ldap1.example.com:7777/cn=salesdept1,cn=OracleContext,dc=com/salesdb" +
+          "%%20ldap://ldap3.example.com:7777/%s", ldapPath))
+        .mutate()
+        .option(ConnectionFactoryOptions.USER, DatabaseConfig.user())
+        .option(ConnectionFactoryOptions.PASSWORD, DatabaseConfig.password())
+        .build());
+
+    // Set up the mock LDAP context factory. A descriptor is bound to the last
+    // endpoint only. See JavaDoc of TestContextFactory for details about this.
+    TestContextFactory.bind("salesdb", createDescriptor());
+
+    // Now verify that the LDAP URL is resolved to the descriptor
+    Connection ldapConnection = awaitOne(ldapConnectionFactory.create());
+    try {
+      assertEquals(
+        "Hello, LDAP",
+        awaitOne(
+          awaitOne(ldapConnection.createStatement(
+            "SELECT 'Hello, LDAP' FROM sys.dual")
+            .execute())
+            .map(row -> row.get(0))));
+    }
+    finally {
+      tryAwaitNone(ldapConnection.close());
+    }
+  }
+
+  /**
+   * Returns an Oracle Net Descriptor having the values configured by
+   * {@link DatabaseConfig}
+   * @return An Oracle Net Descriptor for the test database.
+   */
+  private static String createDescriptor() {
+    return format(
+      "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=%s))" +
+        "(CONNECT_DATA=(SERVICE_NAME=%s)))",
+      host(), port(),
+      Objects.requireNonNullElse(protocol(), "tcp"),
+      serviceName());
   }
 
   /**

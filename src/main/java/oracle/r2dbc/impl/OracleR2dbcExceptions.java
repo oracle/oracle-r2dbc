@@ -163,12 +163,26 @@ final class OracleR2dbcExceptions {
    * as the specified {@code sqlException}. Not null.
    */
   static R2dbcException toR2dbcException(SQLException sqlException) {
+    return toR2dbcException(sqlException, getSql(sqlException));
+  }
+
+  /**
+   * Converts a {@link SQLException} into an {@link R2dbcException}, as
+   * specified by {@link #toR2dbcException(SQLException)}. This method accepts
+   * a SQL string argument. It should be used in cases where the SQL can not
+   * be extracted by {@link #getSql(SQLException)}.
+   * @param sqlException A {@code SQLException} to convert. Not null.
+   * @param sql SQL that caused the exception
+   * @return an {@code R2dbcException} that indicates the same error conditions
+   * as the specified {@code sqlException}. Not null.
+   */
+  static R2dbcException toR2dbcException(
+    SQLException sqlException, String sql) {
     assert sqlException != null : "sqlException is null";
 
     final String message = sqlException.getMessage();
     final String sqlState = sqlException.getSQLState();
     final int errorCode = sqlException.getErrorCode();
-    final String sql = getSql(sqlException);
 
     if (sqlException instanceof SQLNonTransientException) {
       if (sqlException instanceof SQLSyntaxErrorException) {

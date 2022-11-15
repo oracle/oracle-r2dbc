@@ -23,19 +23,19 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.Result;
 import io.r2dbc.spi.RowMetadata;
+import io.r2dbc.spi.Statement;
 import org.junit.jupiter.api.Test;
+import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.function.IntFunction;
+import java.util.function.Function;
 
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
@@ -45,7 +45,6 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -53,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies that
- * {@link ReadablesMetadata} implements behavior that is specified in it's
+ * {@link ReadablesMetadata} implements behavior that is specified in its
  * class and method level javadocs.
  */
 public class OracleRowMetadataImplTest {
@@ -80,23 +79,21 @@ public class OracleRowMetadataImplTest {
           "INSERT INTO testGetColumnMetadataByIndex (x,y) VALUES (0,0)"));
 
         // Expect IllegalArgumentException for an index less than 0
-        awaitError(IndexOutOfBoundsException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByIndex")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) ->
-                metadata.getColumnMetadata(-1).getPrecision())));
+        verifyError(IndexOutOfBoundsException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByIndex"),
+          result ->
+            result.map((row, metadata) ->
+              metadata.getColumnMetadata(-1).getPrecision()));
 
         // Expect IllegalArgumentException for an index greater than or equal
         // to the number of columns
-        awaitError(IndexOutOfBoundsException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByIndex")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) ->
-                metadata.getColumnMetadata(2).getPrecision())));
+        verifyError(IndexOutOfBoundsException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByIndex"),
+          result ->
+            result.map((row, metadata) ->
+              metadata.getColumnMetadata(2).getPrecision()));
 
         // Expect valid indexes to return the column metadata
         awaitOne(asList(xPrecision, yPrecision),
@@ -161,57 +158,43 @@ public class OracleRowMetadataImplTest {
           "INSERT INTO testGetColumnMetadataByName (x,y) VALUES (0,0)"));
 
         // Expect IllegalArgumentException for a null name
-        awaitError(IllegalArgumentException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByName")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) -> metadata.getColumnMetadata(null))
-            ));
+        verifyError(IllegalArgumentException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByName"),
+          result ->
+            result.map((row, metadata) -> metadata.getColumnMetadata(null)));
 
         // Expect NoSuchElementException for unmatched names
-        awaitError(NoSuchElementException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByName")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) -> metadata.getColumnMetadata("z"))
-            ));
-        awaitError(NoSuchElementException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByName")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) -> metadata.getColumnMetadata("xx"))
-            ));
-        awaitError(NoSuchElementException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByName")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) -> metadata.getColumnMetadata("x "))
-            ));
-        awaitError(NoSuchElementException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByName")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) -> metadata.getColumnMetadata(" x"))
-            ));
-        awaitError(NoSuchElementException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByName")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) -> metadata.getColumnMetadata(" "))
-            ));
-        awaitError(NoSuchElementException.class,
-          Flux.from(connection.createStatement(
-            "SELECT x, y FROM testGetColumnMetadataByName")
-            .execute())
-            .concatMap(result ->
-              result.map((row, metadata) -> metadata.getColumnMetadata(""))
-            ));
+        verifyError(NoSuchElementException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByName"),
+          result ->
+            result.map((row, metadata) -> metadata.getColumnMetadata("z")));
+        verifyError(NoSuchElementException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByName"),
+          result ->
+            result.map((row, metadata) -> metadata.getColumnMetadata("xx")));
+        verifyError(NoSuchElementException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByName"),
+          result ->
+            result.map((row, metadata) -> metadata.getColumnMetadata("x ")));
+        verifyError(NoSuchElementException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByName"),
+          result ->
+            result.map((row, metadata) -> metadata.getColumnMetadata(" x")));
+        verifyError(NoSuchElementException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByName"),
+          result ->
+            result.map((row, metadata) -> metadata.getColumnMetadata(" ")));
+        verifyError(NoSuchElementException.class,
+          connection.createStatement(
+            "SELECT x, y FROM testGetColumnMetadataByName"),
+          result ->
+            result.map((row, metadata) -> metadata.getColumnMetadata("")));
 
         // Expect valid names to return the column metadata
         awaitOne(asList(xPrecision, yPrecision),
@@ -429,6 +412,19 @@ public class OracleRowMetadataImplTest {
     finally {
       awaitNone(connection.close());
     }
+  }
+
+  /**
+   * Verifies that an expected class of error is emitted when a mapping function
+   * is applied to the result of a statement.
+   */
+  private static void verifyError(
+    Class<? extends Throwable> errorClass, Statement statement,
+    Function<Result, ? extends Publisher<?>> resultMapper) {
+    awaitError(
+      errorClass,
+      Flux.from(statement.execute())
+        .concatMapDelayError(resultMapper));
   }
 
 }

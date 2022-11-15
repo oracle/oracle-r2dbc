@@ -50,6 +50,16 @@ public final class DatabaseConfig {
   private DatabaseConfig() {}
 
   /**
+   * Returns the protocol used to connect with a database, specified as
+   * {@code PROTOCOL} in the "config.properties" file.
+   * @return Connection protocol for the test database. May be {@code null} if
+   * no protocol is configured.
+   */
+  public static String protocol() {
+    return PROTOCOL;
+  }
+
+  /**
    * Returns the hostname of the server where a test database listens for
    * connections, specified as {@code HOST} in the "config.properties" file.
    * @return Hostname of a test database.
@@ -203,6 +213,40 @@ public final class DatabaseConfig {
       .forEach(System.err::println);
   }
 
+  /**
+   * Returns the options parsed from the "config.properties" resource.
+   */
+  public static ConnectionFactoryOptions connectionFactoryOptions() {
+
+    ConnectionFactoryOptions.Builder optionsBuilder =
+      ConnectionFactoryOptions.builder()
+        .option(ConnectionFactoryOptions.DRIVER, "oracle")
+        .option(ConnectionFactoryOptions.HOST, HOST)
+        .option(ConnectionFactoryOptions.PORT, PORT)
+        .option(ConnectionFactoryOptions.DATABASE, SERVICE_NAME)
+        .option(ConnectionFactoryOptions.USER, USER)
+        .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
+        // Disable statement caching in order to verify cursor closing;
+        // Cached statements don't close their cursors
+        .option(Option.valueOf(
+            OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE),
+          0)
+        // Disable out-of-band breaks to support testing with the 18.x
+        // database. The 19.x database will automatically detect when it's
+        // running on a system where OOB is not supported, but the 18.x
+        // database does not do this and so statement timeout tests will
+        // hang if the database system does not support OOB
+        .option(Option.valueOf(
+            OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
+          "true");
+
+    if (PROTOCOL != null)
+      optionsBuilder.option(ConnectionFactoryOptions.PROTOCOL, PROTOCOL);
+
+    return optionsBuilder.build();
+  }
+
+  private static final String PROTOCOL;
   private static final String HOST;
   private static final int PORT;
   private static final String SERVICE_NAME;
@@ -237,30 +281,9 @@ public final class DatabaseConfig {
         Long.parseLong(prop.getProperty("CONNECT_TIMEOUT")));
       SQL_TIMEOUT = Duration.ofSeconds(
         Long.parseLong(prop.getProperty("SQL_TIMEOUT")));
+      PROTOCOL = prop.getProperty("PROTOCOL");
 
-      CONNECTION_FACTORY = ConnectionFactories.get(
-        ConnectionFactoryOptions.builder()
-          .option(ConnectionFactoryOptions.DRIVER, "oracle")
-          .option(ConnectionFactoryOptions.HOST, HOST)
-          .option(ConnectionFactoryOptions.PORT, PORT)
-          .option(ConnectionFactoryOptions.DATABASE, SERVICE_NAME)
-          .option(ConnectionFactoryOptions.USER, USER)
-          .option(ConnectionFactoryOptions.PASSWORD, PASSWORD)
-          // Disable statement caching in order to verify cursor closing;
-          // Cached statements don't close their cursors
-          .option(Option.valueOf(
-            OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE),
-            0)
-          // Disable out-of-band breaks to support testing with the 18.x
-          // database. The 19.x database will automatically detect when it's
-          // running on a system where OOB is not supported, but the 18.x
-          // database does not do this and so statement timeout tests will
-          // hang if the database system does not support OOB
-          .option(Option.valueOf(
-            OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
-            "true")
-          .build());
-
+      CONNECTION_FACTORY = ConnectionFactories.get(connectionFactoryOptions());
       SHARED_CONNECTION_FACTORY = new SharedConnectionFactory(
         CONNECTION_FACTORY.create(),
         CONNECTION_FACTORY.getMetadata());

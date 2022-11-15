@@ -35,6 +35,8 @@ import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.r2dbc.OracleR2dbcOptions;
+import oracle.r2dbc.OracleR2dbcTypes;
+import oracle.r2dbc.OracleR2dbcWarning;
 import oracle.r2dbc.test.DatabaseConfig;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
@@ -44,9 +46,12 @@ import reactor.core.publisher.Signal;
 
 import java.sql.RowId;
 import java.sql.SQLWarning;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -54,6 +59,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -61,12 +67,14 @@ import java.util.stream.Stream;
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
 import static oracle.r2dbc.test.DatabaseConfig.serviceName;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.showErrors;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.user;
 import static oracle.r2dbc.util.Awaits.awaitError;
@@ -1997,7 +2005,7 @@ public class OracleStatementImplTest {
 
   /**
    * Verifies that {@link OracleStatementImpl#execute()} emits a {@link Result}
-   * with a {@link Message} segment when the execution results in a
+   * with a {@link OracleR2dbcWarning} segment when the execution results in a
    * warning.
    */
   @Test
@@ -2007,9 +2015,10 @@ public class OracleStatementImplTest {
     try {
 
       // Create a procedure using invalid syntax and expect the Result to
-      // have a Message with an R2dbcException having a SQLWarning as it's
-      // initial cause. Expect the Result to have an update count of zero as
-      // well, indicating that the statement completed after the warning.
+      // have an OracleR2dbcWarning with an R2dbcException having a SQLWarning
+      // as it's initial cause. Expect the Result to have an update count of
+      // zero as well, indicating that the statement completed after the
+      // warning.
       AtomicInteger segmentCount = new AtomicInteger(0);
       R2dbcException r2dbcException =
         awaitOne(Flux.from(connection.createStatement(
@@ -2020,15 +2029,17 @@ public class OracleStatementImplTest {
             result.flatMap(segment -> {
               int index = segmentCount.getAndIncrement();
               if (index == 0) {
-                assertTrue(segment instanceof Message,
-                  "Unexpected Segment: " + segment);
-                return Mono.just(((Message)segment).exception());
-              }
-              else if (index == 1) {
+                // Expect the first segment to be an update count
                 assertTrue(segment instanceof UpdateCount,
                   "Unexpected Segment: " + segment);
                 assertEquals(0, ((UpdateCount)segment).value());
                 return Mono.empty();
+              }
+              else if (index == 1) {
+                // Expect second segment to be a warning
+                assertTrue(segment instanceof OracleR2dbcWarning,
+                  "Unexpected Segment: " + segment);
+                return Mono.just(((OracleR2dbcWarning)segment).exception());
               }
               else {
                 fail("Unexpected Segment: " + segment);
@@ -2236,6 +2247,190 @@ public class OracleStatementImplTest {
     }
   }
 
+  /**
+   * Verifies that a SYS_REFCURSOR out parameter can be consumed as a
+   * {@link Result} object.
+   */
+  @Test
+  public void testRefCursorOut() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      List<TestRow> rows = createRows(100);
+
+      // Create a table with some rows to query
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testRefCursorTable(id NUMBER, value VARCHAR(10))"));
+      Statement insertStatement = connection.createStatement(
+        "INSERT INTO testRefCursorTable VALUES (:id, :value)");
+      awaitUpdate(
+        rows.stream()
+          .map(row -> 1)
+          .collect(Collectors.toList()),
+        bindRows(rows, insertStatement));
+
+      // Create a procedure that returns a cursor over the rows
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testRefCursorProcedure(" +
+          " countCursor OUT SYS_REFCURSOR)" +
+          " IS" +
+          " BEGIN" +
+          " OPEN countCursor FOR " +
+          "   SELECT id, value FROM testRefCursorTable" +
+          "   ORDER BY id;" +
+          " END;"));
+
+      // Call the procedure with the cursor registered as an out parameter, and
+      // expect it to map to a Result. Then consume the rows of the Result and
+      // verify they have the expected values inserted above.
+      awaitMany(
+        rows,
+        Flux.from(connection.createStatement(
+              "BEGIN testRefCursorProcedure(:countCursor); END;")
+            .bind("countCursor", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .execute())
+          .flatMap(result ->
+            result.map(outParameters ->
+              outParameters.get("countCursor")))
+          .cast(Result.class)
+          .flatMap(countCursor ->
+            countCursor.map(row ->
+              new TestRow(
+                row.get("id", Integer.class),
+                row.get("value", String.class)))));
+
+      // Verify the procedure call again. This time using an explicit
+      // Result.class argument to Row.get(...). Also, this time using
+      // Result.flatMap to create the publisher within the segment mapping
+      // function
+      awaitMany(
+        rows,
+        Flux.from(connection.createStatement(
+            "BEGIN testRefCursorProcedure(:countCursor); END;")
+          .bind("countCursor", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+          .execute())
+          .flatMap(result ->
+            result.flatMap(segment ->
+              ((Result.OutSegment)segment).outParameters()
+                  .get(0, Result.class)
+                  .map(row ->
+                    new TestRow(
+                      row.get("id", Integer.class),
+                      row.get("value", String.class))))));
+    }
+    catch (Exception exception) {
+      showErrors(connection);
+      throw exception;
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testRefCursorProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testRefCursorTable"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that SYS_REFCURSOR out parameters can be consumed as
+   * {@link Result} objects.
+   */
+  @Test
+  public void testMultipleRefCursorOut() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      List<TestRow> rows = createRows(100);
+
+      // Create a table with some rows to query
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testMultiRefCursorTable(id NUMBER, value VARCHAR(10))"));
+      Statement insertStatement = connection.createStatement(
+        "INSERT INTO testMultiRefCursorTable VALUES (:id, :value)");
+      awaitUpdate(
+        rows.stream()
+          .map(row -> 1)
+          .collect(Collectors.toList()),
+        bindRows(rows, insertStatement));
+
+      // Create a procedure that returns a multiple cursors over the rows
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE PROCEDURE testMultiRefCursorProcedure(" +
+          " countCursor0 OUT SYS_REFCURSOR," +
+          " countCursor1 OUT SYS_REFCURSOR)" +
+          " IS" +
+          " BEGIN" +
+          " OPEN countCursor0 FOR " +
+          "   SELECT id, value FROM testMultiRefCursorTable" +
+          "   ORDER BY id;" +
+          " OPEN countCursor1 FOR " +
+          "   SELECT id, value FROM testMultiRefCursorTable" +
+          "   ORDER BY id DESC;" +
+          " END;"));
+
+      // Call the procedure with the cursors registered as out parameters, and
+      // expect them to map to Results. Then consume the rows of each Result and
+      // verify they have the expected values inserted above.
+      List<TestRow> expectedRows = new ArrayList<>(rows);
+      Collections.reverse(rows);
+      expectedRows.addAll(rows);
+      awaitMany(
+        expectedRows,
+        Flux.from(connection.createStatement(
+              "BEGIN testMultiRefCursorProcedure(:countCursor0, :countCursor1); END;")
+            .bind("countCursor0", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .bind("countCursor1", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .execute())
+          .flatMap(result ->
+            result.map(outParameters ->
+              List.of(
+                (Result)outParameters.get("countCursor0"),
+                (Result)outParameters.get("countCursor1"))))
+          .flatMap(results ->
+            Flux.concat(
+              results.get(0).map(row ->
+                new TestRow(
+                  row.get("id", Integer.class),
+                  row.get("value", String.class))),
+              results.get(1).map(row ->
+                new TestRow(
+                  row.get("id", Integer.class),
+                  row.get("value", String.class))))));
+
+      // Run the same verification, this time with Result.class argument to
+      // Row.get(...), and mapping the REF CURSOR Results into a Publisher
+      // within the row mapping function
+      awaitMany(
+        expectedRows,
+        Flux.from(connection.createStatement(
+              "BEGIN testMultiRefCursorProcedure(:countCursor0, :countCursor1); END;")
+            .bind("countCursor0", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .bind("countCursor1", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
+            .execute())
+          .flatMap(result ->
+            result.map(outParameters ->
+              Flux.concat(
+                outParameters.get("countCursor0", Result.class).map(row ->
+                  new TestRow(
+                    row.get(0, Integer.class),
+                    row.get(1, String.class))),
+                outParameters.get("countCursor1", Result.class).map(row ->
+                  new TestRow(
+                    row.get(0, Integer.class),
+                    row.get(1, String.class))))))
+          .flatMap(Function.identity()));
+    }
+    catch (Exception exception) {
+      showErrors(connection);
+      throw exception;
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP PROCEDURE testMultiRefCursorProcedure"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testMultiRefCursorTable"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
   // TODO: Repalce with Parameters.inOut when that's available
   private static final class InOutParameter
     implements Parameter, Parameter.In, Parameter.Out {
@@ -2280,17 +2475,10 @@ public class OracleStatementImplTest {
    * @return Connection that uses the {@code executor}
    */
   private static Publisher<? extends Connection> connect(Executor executor) {
-    return ConnectionFactories.get(
-        ConnectionFactoryOptions.parse(format(
-            "r2dbc:oracle://%s:%d/%s", host(), port(), serviceName()))
-          .mutate()
-          .option(
-            ConnectionFactoryOptions.USER, user())
-          .option(
-            ConnectionFactoryOptions.PASSWORD, password())
-          .option(
-            OracleR2dbcOptions.EXECUTOR, executor)
-          .build())
+    return ConnectionFactories.get(connectionFactoryOptions()
+      .mutate()
+      .option(OracleR2dbcOptions.EXECUTOR, executor)
+      .build())
       .create();
   }
 
@@ -2399,6 +2587,57 @@ public class OracleStatementImplTest {
     finally {
       tryAwaitExecution(connection.createStatement(
         "DROP TABLE testConcurrentFetch"));
+    }
+  }
+
+  /**
+   * Creates list of a specified length of test table rows
+   */
+  private static List<TestRow> createRows(int length) {
+    return IntStream.range(0, 100)
+      .mapToObj(id -> new TestRow(id, String.valueOf(id)))
+      .collect(Collectors.toList());
+  }
+
+  /** Binds a list of rows to a batch statement */
+  private Statement bindRows(List<TestRow> rows, Statement statement) {
+    rows.stream()
+      .limit(rows.size() - 1)
+      .forEach(row ->
+        statement
+          .bind("id", row.id)
+          .bind("value", row.value)
+          .add());
+
+    statement
+      .bind("id", rows.get(rows.size() - 1).id)
+      .bind("value", rows.get(rows.size() - 1).value);
+
+    return statement;
+  }
+
+  /**
+   * A row of a test table.
+   */
+  private static class TestRow {
+    final int id;
+    final String value;
+
+    TestRow(int id, String value) {
+      this.id = id;
+      this.value = value;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof TestRow
+        && id == ((TestRow)other).id
+        && Objects.equals(value, ((TestRow)other).value);
+    }
+
+    @Override
+    public String toString() {
+      return "[id=" + id + ", value=" + value + "]";
     }
   }
 }

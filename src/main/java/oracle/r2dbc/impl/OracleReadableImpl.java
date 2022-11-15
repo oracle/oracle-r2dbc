@@ -28,6 +28,7 @@ import io.r2dbc.spi.OutParametersMetadata;
 import io.r2dbc.spi.R2dbcException;
 
 import io.r2dbc.spi.R2dbcType;
+import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
 import io.r2dbc.spi.Type;
@@ -37,6 +38,7 @@ import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
 import oracle.r2dbc.impl.ReadablesMetadata.RowMetadataImpl;
 
 import java.nio.ByteBuffer;
+import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.NoSuchElementException;
@@ -66,18 +68,26 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
   private final ReadablesMetadata<?> readablesMetadata;
 
   /**
+   * A collection of results that depend on the JDBC statement which created
+   * this readable to remain open until all results are consumed.
+   */
+  private final DependentCounter dependentCounter;
+
+  /**
    * <p>
    * Constructs a new {@code Readable} that supplies values of a
    * {@code jdbcReadable} and obtains metadata of the values from
    * {@code resultMetadata}.
    * </p>
+   *
    * @param jdbcReadable Readable values from a JDBC Driver. Not null.
    * @param readablesMetadata Metadata of each value. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   private OracleReadableImpl(
-    JdbcReadable jdbcReadable, ReadablesMetadata<?> readablesMetadata,
-    ReactiveJdbcAdapter adapter) {
+    DependentCounter dependentCounter, JdbcReadable jdbcReadable,
+    ReadablesMetadata<?> readablesMetadata, ReactiveJdbcAdapter adapter) {
+    this.dependentCounter = dependentCounter;
     this.jdbcReadable = jdbcReadable;
     this.readablesMetadata = readablesMetadata;
     this.adapter = adapter;
@@ -96,9 +106,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    *   {@code metadata}. Not null.
    */
   static Row createRow(
-    JdbcReadable jdbcReadable, RowMetadataImpl metadata,
-    ReactiveJdbcAdapter adapter) {
-    return new RowImpl(jdbcReadable, metadata, adapter);
+    DependentCounter dependentCounter, JdbcReadable jdbcReadable,
+    RowMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+    return new RowImpl(dependentCounter, jdbcReadable, metadata, adapter);
   }
   /**
    * <p>
@@ -113,9 +123,10 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    *   {@code metadata}. Not null.
    */
   static OutParameters createOutParameters(
-    JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata,
-    ReactiveJdbcAdapter adapter) {
-    return new OutParametersImpl(jdbcReadable, metadata, adapter);
+    DependentCounter dependentCounter, JdbcReadable jdbcReadable,
+    OutParametersMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+    return new OutParametersImpl(
+      dependentCounter, jdbcReadable, metadata, adapter);
   }
 
   /**
@@ -162,8 +173,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
   /**
    * Returns the 0-based index of the value identified by {@code name}. This
    * method implements a case-insensitive name match. If more than one
-   * value has a matching name, this method returns lowest index of all
-   * matching values.
+   * value has a matching name, this method returns lowest of all indexes that
+   * match.
    * @param name The name of a value. Not null.
    * @return The index of the named value within this {@code Readable}
    * @throws NoSuchElementException If no column has a matching name.
@@ -207,6 +218,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     }
     else if (LocalDateTime.class.equals(type)) {
       value = getLocalDateTime(index);
+    }
+    else if (Result.class.equals(type)) {
+      value = getResult(index);
     }
     else if (Object.class.equals(type)) {
       // Use the default type mapping if Object.class has been specified.
@@ -328,6 +342,36 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
   }
 
   /**
+   * <p>
+   * Converts the value of a column at the specified {@code index} to a
+   * {@code Result}. This method is intended for mapping REF CURSOR values,
+   * which JDBC will map to a {@link ResultSet}.
+   * </p><p>
+   * A REF CURSOR is closed when the JDBC statement that created it is closed.
+   * To prevent the cursor from getting closed, the Result returned by this
+   * method is immediately added to the collection of results that depend on the
+   * JDBC statement.
+   * </p><p>
+   * The Result returned by this method is received by user code, and user code
+   * MUST then fully consume it. The JDBC statement is not closed until the
+   * result is fully consumed.
+   * </p>
+   * @param index 0 based column index
+   * @return A column value as a {@code Result}, or null if the column value is
+   * NULL.
+   */
+  private Result getResult(int index) {
+    ResultSet resultSet = jdbcReadable.getObject(index, ResultSet.class);
+
+    if (resultSet == null)
+      return null;
+
+    dependentCounter.increment();
+    return OracleResultImpl.createQueryResult(
+      dependentCounter, resultSet, adapter);
+  }
+
+  /**
    * Checks if the specified zero-based {@code index} is a valid column index
    * for this row. This method is used to verify index value parameters
    * supplied by user code.
@@ -368,10 +412,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private RowImpl(
-      JdbcReadable jdbcReadable,
-      RowMetadataImpl metadata,
-      ReactiveJdbcAdapter adapter) {
-      super(jdbcReadable, metadata, adapter);
+      DependentCounter dependentCounter, JdbcReadable jdbcReadable,
+      RowMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+      super(dependentCounter, jdbcReadable, metadata, adapter);
       this.metadata = metadata;
     }
 
@@ -410,10 +453,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OutParametersImpl(
-      JdbcReadable jdbcReadable,
-      OutParametersMetadataImpl metadata,
-      ReactiveJdbcAdapter adapter) {
-      super(jdbcReadable, metadata, adapter);
+      DependentCounter dependentCounter, JdbcReadable jdbcReadable,
+      OutParametersMetadataImpl metadata, ReactiveJdbcAdapter adapter) {
+      super(dependentCounter,jdbcReadable, metadata, adapter);
       this.metadata = metadata;
     }
 
