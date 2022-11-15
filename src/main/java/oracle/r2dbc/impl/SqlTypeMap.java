@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
+import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.sql.json.OracleJsonObject;
 
@@ -33,6 +34,7 @@ import java.sql.JDBCType;
 import java.sql.RowId;
 import java.sql.SQLException;
 import java.sql.SQLType;
+import java.sql.Types;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -166,14 +168,19 @@ final class SqlTypeMap {
       // Primitive array mappings supported by OracleArray. Primitive arrays are
       // not subtypes of Object[], which is listed for SQLType.ARRAY above. The
       // primitive array types must be explicitly listed here.
-      entry(boolean[].class, OracleType.VARRAY),
+      entry(boolean[].class, JDBCType.ARRAY),
       // byte[] is mapped to RAW by default
-      // entry(byte[].class, OracleType.VARRAY),
-      entry(short[].class, OracleType.VARRAY),
-      entry(int[].class, OracleType.VARRAY),
-      entry(long[].class, OracleType.VARRAY),
-      entry(float[].class, OracleType.VARRAY),
-      entry(double[].class, OracleType.VARRAY)
+      // entry(byte[].class, JDBCType.ARRAY),
+      entry(short[].class, JDBCType.ARRAY),
+      entry(int[].class, JDBCType.ARRAY),
+      entry(long[].class, JDBCType.ARRAY),
+      entry(float[].class, JDBCType.ARRAY),
+      entry(double[].class, JDBCType.ARRAY),
+
+      // Support binding OracleR2dbcReadable, Object[], and Map<String, Object>
+      // to OBJECT (ie: STRUCT)
+      entry(Map.class, JDBCType.STRUCT),
+      entry(OracleR2dbcObject.class, JDBCType.STRUCT)
     );
 
   /**
@@ -232,6 +239,8 @@ final class SqlTypeMap {
       return toJdbcType(r2dbcType.getJavaType());
     else if (r2dbcType instanceof OracleR2dbcTypes.ArrayType)
       return JDBCType.ARRAY;
+    else if (r2dbcType instanceof OracleR2dbcTypes.ObjectType)
+      return JDBCType.STRUCT;
     else
       return R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
   }

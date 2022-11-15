@@ -137,6 +137,10 @@ public final class OracleR2dbcTypes {
     return new ArrayTypeImpl(Objects.requireNonNull(name, "name is null"));
   }
 
+  public static ObjectType objectType(String name) {
+    return new ObjectTypeImpl(Objects.requireNonNull(name, "name is null"));
+  }
+
   /**
    * Extension of the standard {@link Type} interface used to represent user
    * defined ARRAY types. An instance of {@code ArrayType} must be used when
@@ -179,19 +183,57 @@ public final class OracleR2dbcTypes {
     String getName();
   }
 
+  public interface ObjectType extends Type {
+
+    /**
+     * {@inheritDoc}
+     * Returns {@code Object[].class}, which is the standard mapping for
+     * {@link R2dbcType#COLLECTION}. The true default type mapping is the array
+     * variant of the default mapping for the element type of the {@code ARRAY}.
+     * For instance, an {@code ARRAY} of {@code VARCHAR} maps to a
+     * {@code String[]} by default.
+     */
+    @Override
+    Class<?> getJavaType();
+
+    /**
+     * {@inheritDoc}
+     * Returns the name of this user defined {@code ARRAY} type. For instance,
+     * this method returns "MY_ARRAY" if the type is declared as:
+     * <pre>{@code
+     * CREATE TYPE MY_ARRAY AS ARRAY(8) OF NUMBER
+     * }</pre>
+     */
+    @Override
+    String getName();
+  }
+
   /** Concrete implementation of the {@code ArrayType} interface */
   private static final class ArrayTypeImpl
     extends TypeImpl implements ArrayType {
 
     /**
-     * Constructs an ARRAY type with the given {@code name}. The constructed
-     * {@code ArrayType} as a default Java type mapping of
-     * {@code Object[].class}. This is consistent with the standard
-     * {@link R2dbcType#COLLECTION} type.
+     * Constructs an ARRAY type with the given {@code name}. {@code Object[]} is
+     * the default mapping of the constructed type. This is consistent with the
+     * standard {@link R2dbcType#COLLECTION} type.
      * @param name User defined name of the type. Not null.
      */
     ArrayTypeImpl(String name) {
       super(Object[].class, name);
+    }
+  }
+
+  /** Concrete implementation of the {@code ObjectType} interface */
+  private static final class ObjectTypeImpl
+    extends TypeImpl implements ObjectType {
+
+    /**
+     * Constructs an OBJECT type with the given {@code name}.
+     * {@code OracleR2dbcObject} is the default mapping of the constructed type.
+     * @param name User defined name of the type. Not null.
+     */
+    ObjectTypeImpl(String name) {
+      super(OracleR2dbcObject.class, name);
     }
   }
 
@@ -258,6 +300,19 @@ public final class OracleR2dbcTypes {
     @Override
     public String toString() {
       return getName();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (! (other instanceof Type))
+        return false;
+
+      return sqlName.equals(((Type)other).getName());
+    }
+
+    @Override
+    public int hashCode() {
+      return sqlName.hashCode();
     }
   }
 
