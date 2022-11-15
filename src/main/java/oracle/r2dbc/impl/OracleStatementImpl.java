@@ -21,19 +21,34 @@
 
 package oracle.r2dbc.impl;
 
+import io.r2dbc.spi.Blob;
+import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.Parameter;
 import io.r2dbc.spi.R2dbcException;
+import io.r2dbc.spi.R2dbcType;
+import io.r2dbc.spi.ReadableMetadata;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
+import oracle.jdbc.OracleConnection;
+import oracle.jdbc.OracleStruct;
+import oracle.r2dbc.OracleR2dbcObject;
+import oracle.r2dbc.OracleR2dbcObjectMetadata;
+import oracle.r2dbc.OracleR2dbcTypes;
+import oracle.r2dbc.OracleR2dbcTypes.ObjectType;
 import oracle.r2dbc.impl.ReactiveJdbcAdapter.JdbcReadable;
 import oracle.r2dbc.impl.ReadablesMetadata.OutParametersMetadataImpl;
+import oracle.sql.DATE;
+import oracle.sql.INTERVALDS;
+import oracle.sql.INTERVALYM;
+import oracle.sql.TIMESTAMP;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.ByteBuffer;
+import java.sql.Array;
 import java.sql.BatchUpdateException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
@@ -42,20 +57,30 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLType;
 import java.sql.SQLWarning;
+import java.sql.Struct;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.Period;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Queue;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static java.lang.String.format;
 import static java.sql.Statement.CLOSE_ALL_RESULTS;
 import static java.sql.Statement.KEEP_CURRENT_RESULT;
 import static java.sql.Statement.RETURN_GENERATED_KEYS;
@@ -321,7 +346,7 @@ final class OracleStatementImpl implements Statement {
   @Override
   public Statement bindNull(int index, Class<?> type) {
     requireOpenConnection(jdbcConnection);
-    requireNonNull(type, "type is null");
+    requireSupportedNullClass(type);
     requireValidIndex(index);
     bindObject(index, null);
     return this;
@@ -367,7 +392,7 @@ final class OracleStatementImpl implements Statement {
   public Statement bindNull(String identifier, Class<?> type) {
     requireOpenConnection(jdbcConnection);
     requireNonNull(identifier, "identifier is null");
-    requireNonNull(type, "type is null");
+    requireSupportedNullClass(type);
     bindNamedParameter(identifier, null);
     return this;
   }
@@ -727,18 +752,8 @@ final class OracleStatementImpl implements Statement {
         throw outParameterWithGeneratedValues();
     }
 
-    // TODO: This method should check if Java type can be converted to the
-    //  specified SQL type. If the conversion is unsupported, then JDBC
-    //  setObject(...) will throw when this statement is executed. The correct
-    //  behavior is to throw IllegalArgumentException here, and not from
-    //  execute()
-    Type r2dbcType =
-      requireNonNull(parameter.getType(), "Parameter type is null");
-    SQLType jdbcType = toJdbcType(r2dbcType);
-
-    if (jdbcType == null)
-      throw new IllegalArgumentException("Unsupported SQL type: " + r2dbcType);
-
+    requireSupportedSqlType(requireNonNull(
+      parameter.getType(), "Parameter type is null"));
     requireSupportedJavaType(parameter.getValue());
     bindValues[index] = parameter;
   }
@@ -847,6 +862,44 @@ final class OracleStatementImpl implements Statement {
     if (object != null && toJdbcType(object.getClass()) == null) {
       throw new IllegalArgumentException(
         "Unsupported Java type:" + object.getClass());
+    }
+  }
+
+  /**
+   * Checks that the SQL type identified by an {@code r2dbcType} is supported
+   * as a bind parameter.
+   * @param r2dbcType SQL type. Not null.
+   * @throws IllegalArgumentException If the SQL type is not supported.
+   */
+  private static void requireSupportedSqlType(Type r2dbcType) {
+    SQLType jdbcType = toJdbcType(r2dbcType);
+
+    if (jdbcType == null)
+      throw new IllegalArgumentException("Unsupported SQL type: " + r2dbcType);
+  }
+
+  /**
+   * Checks that a class is supported as a null bind type. Oracle JDBC
+   * requires a type name when binding a null value for a user defined type, so
+   * this method checks for that.
+   * @param type Class type to check. May be null.
+   * @throws IllegalArgumentException If the class type is null or is the
+   * default mapping for a named type.
+   */
+  private static void requireSupportedNullClass(Class<?> type) {
+    requireNonNull(type, "type is null");
+
+    if (OracleR2dbcObject.class.isAssignableFrom(type)) {
+      throw new IllegalArgumentException(
+        "A type name is required for NULL OBJECT binds. Use: " +
+          "bind(Parameters.in(OracleR2dbcTypes.objectType(typeName)))");
+    }
+
+    // For backwards compatibility, allow Class<byte[]> for NULL RAW binds
+    if (type.isArray() && !byte[].class.equals(type)) {
+      throw new IllegalArgumentException(
+        "A type name is required for NULL ARRAY binds. Use: " +
+          "bind(Parameters.in(OracleR2dbcTypes.arrayType(typeName)))");
     }
   }
 
@@ -989,7 +1042,20 @@ final class OracleStatementImpl implements Statement {
 
     /**
      * <p>
-     * Sets {@link #binds} on the {@link #preparedStatement}. The
+     * Sets {@link #binds} on the {@link #preparedStatement}, as specified by
+     * {@link #bind(Object[])}. This method is called when this statement is
+     * executed. Subclasess override this method to perform additional actions.
+     * </p>
+     * @return A {@code Publisher} that emits {@code onComplete} when all
+     * {@code binds} have been set.
+     */
+    protected Publisher<Void> bind() {
+      return bind(binds);
+    }
+
+    /**
+     * <p>
+     * Sets the given {@code binds} on the {@link #preparedStatement}. The
      * returned {@code Publisher} completes after all bind values have
      * materialized and been set on the {@code preparedStatement}.
      * </p><p>
@@ -1001,40 +1067,26 @@ final class OracleStatementImpl implements Statement {
      * @return A {@code Publisher} that emits {@code onComplete} when all
      * {@code binds} have been set.
      */
-    protected Publisher<Void> bind() {
-      return bind(binds);
-    }
-
     protected final Publisher<Void> bind(Object[] binds) {
       return adapter.getLock().flatMap(() -> {
+
         List<Publisher<Void>> bindPublishers = null;
+
         for (int i = 0; i < binds.length; i++) {
 
+          // Out binds are handled in the registerOutParameters method of the
+          // JdbcCall subclass.
           if (binds[i] instanceof Parameter.Out
             && !(binds[i] instanceof Parameter.In))
             continue;
 
-          Object jdbcValue = convertBind(binds[i]);
-          SQLType jdbcType =
-            binds[i] instanceof Parameter
-              ? toJdbcType(((Parameter) binds[i]).getType())
-              : null; // JDBC infers the type
+          Publisher<Void> bindPublisher = bind(i, binds[i]);
 
-          if (jdbcValue instanceof Publisher<?>) {
-            int indexFinal = i;
-            Publisher<Void> bindPublisher =
-              Mono.from((Publisher<?>) jdbcValue)
-                .doOnSuccess(allocatedValue ->
-                  setBind(indexFinal, allocatedValue, jdbcType))
-                .then();
-
+          if (bindPublisher != null) {
             if (bindPublishers == null)
               bindPublishers = new LinkedList<>();
 
             bindPublishers.add(bindPublisher);
-          }
-          else {
-            setBind(i, jdbcValue, jdbcType);
           }
         }
 
@@ -1042,6 +1094,72 @@ final class OracleStatementImpl implements Statement {
           ? Mono.empty()
           : Flux.concat(bindPublishers);
       });
+    }
+
+    /**
+     * Binds a value to the {@link #preparedStatement}. This method may convert
+     * the given {@code value} into an object type that is accepted by JDBC. If
+     * value is materialized asynchronously, such as a Blob or Clob, then this
+     * method returns a publisher that completes when the materialized value is
+     * bound.
+     * @param index zero-based bind index
+     * @param value value to bind. May be null.
+     * @return A publisher that completes when the value is bound, or null if
+     * the value is bound synchronously.
+     * @implNote The decision to return a null publisher rather than an empty
+     * publisher is motivated by reducing object allocation and overhead from
+     * subscribe/onSubscribe/onComplete. It is thought that this overhead would
+     * be substantial if it were incurred for each bind, of each statement, of
+     * each connection.
+     */
+    private Publisher<Void> bind(int index, Object value) {
+
+      final Object jdbcValue = convertBind(value);
+
+      final SQLType jdbcType;
+      final String typeName;
+
+      if (value instanceof Parameter) {
+        // Convert the parameter's R2DBC type to a JDBC type. Get the type name
+        // by calling getName() on the R2DBC type, not the JDBC type; This
+        // ensures that a user defined name will be used, such as one from
+        // OracleR2dbcTypes.ArrayType.getName()
+        Type type = ((Parameter)value).getType();
+        jdbcType = toJdbcType(type);
+        typeName = type.getName();
+      }
+      else {
+        // JDBC will infer the type from the class of jdbcValue
+        jdbcType = null;
+        typeName = null;
+      }
+
+      if (jdbcValue instanceof Publisher<?>) {
+        return setPublishedBind(index, (Publisher<?>) jdbcValue);
+      }
+      else {
+        setBind(index, jdbcValue, jdbcType, typeName);
+        return null;
+      }
+    }
+
+    /**
+     * Binds a published value to the {@link #preparedStatement}. The binding
+     * happens asynchronously. The returned publisher that completes after the
+     * value is published <em>and bound</em>
+     * @param index zero based bind index
+     * @param publisher publisher that emits a bound value.
+     * @return A publisher that completes after the published value is bound.
+     */
+    private Publisher<Void> setPublishedBind(
+      int index, Publisher<?> publisher) {
+      return Mono.from(publisher)
+        .flatMap(value -> {
+          Publisher<Void> bindPublisher = bind(index, value);
+          return bindPublisher == null
+            ? Mono.empty()
+            : Mono.from(bindPublisher);
+        });
     }
 
     /**
@@ -1216,14 +1334,23 @@ final class OracleStatementImpl implements Statement {
      * @param index 0-based parameter index
      * @param value Value. May be null.
      * @param type SQL type. May be null.
+     * @param typeName Name of a user defined type. May be null.
      */
-    private void setBind(int index, Object value, SQLType type) {
+    private void setBind(
+      int index, Object value, SQLType type, String typeName) {
       runJdbc(() -> {
         int jdbcIndex = index + 1;
-        if (type != null)
-          preparedStatement.setObject(jdbcIndex, value, type);
-        else
+
+        if (type == null) {
           preparedStatement.setObject(jdbcIndex, value);
+        }
+        else if (value == null) {
+          preparedStatement.setNull(
+            jdbcIndex, type.getVendorTypeNumber(), typeName);
+        }
+        else {
+          preparedStatement.setObject(jdbcIndex, value, type);
+        }
       });
     }
 
@@ -1252,9 +1379,6 @@ final class OracleStatementImpl implements Statement {
       if (value == null || value == NULL_BIND) {
         return null;
       }
-      else if (value instanceof Parameter) {
-        return convertBind(((Parameter) value).getValue());
-      }
       else if (value instanceof io.r2dbc.spi.Blob) {
         return convertBlobBind((io.r2dbc.spi.Blob) value);
       }
@@ -1264,9 +1388,465 @@ final class OracleStatementImpl implements Statement {
       else if (value instanceof ByteBuffer) {
         return convertByteBufferBind((ByteBuffer) value);
       }
+      else if (value instanceof Parameter) {
+        return convertParameterBind((Parameter) value);
+      }
+      else if (value instanceof OracleR2dbcObject) {
+        return convertObjectBind((OracleR2dbcObject) value);
+      }
       else {
         return value;
       }
+    }
+
+    /** Converts a {@code Parameter} bind value to a JDBC bind value */
+    private Object convertParameterBind(Parameter parameter) {
+      Object value = parameter.getValue();
+
+      if (value == null)
+        return null;
+
+      Type type = parameter.getType();
+
+      if (type instanceof OracleR2dbcTypes.ArrayType) {
+        return convertArrayBind((OracleR2dbcTypes.ArrayType) type, value);
+      }
+      else if (type instanceof ObjectType) {
+        return convertObjectBind((ObjectType) type, value);
+      }
+      else {
+        return convertBind(value);
+      }
+    }
+
+    /**
+     * Converts a given {@code value} to a JDBC {@link Array} of the given
+     * {@code type}.
+     */
+    private Array convertArrayBind(
+      OracleR2dbcTypes.ArrayType type, Object value) {
+
+      // TODO: createOracleArray executes a blocking database call the first
+      //  time an OracleArray is created for a given type name. Subsequent
+      //  creations of the same type avoid the database call using a cached type
+      //  descriptor. If possible, rewrite this use a non-blocking call.
+      return fromJdbc(() ->
+        jdbcConnection.unwrap(OracleConnection.class)
+          .createOracleArray(type.getName(), convertJavaArray(value)));
+    }
+
+    /**
+     * Converts a bind value for an ARRAY to a Java type that is supported by
+     * Oracle JDBC. This method handles cases for standard type mappings of
+     * R2DBC and extended type mapping Oracle R2DBC which are not supported by
+     * Oracle JDBC.
+     */
+    private Object convertJavaArray(Object array) {
+
+      if (array == null)
+        return null;
+
+      // TODO: R2DBC drivers are only required to support ByteBuffer to
+      //  VARBINARY (ie: RAW) conversions. However, a programmer might want to
+      //  use byte[][] as a bind for an ARRAY of RAW. If that happens, they
+      //  might hit this code by accident. Ideally, they can bind ByteBuffer[]
+      //  instead. If absolutely necessary, Oracle R2DBC can do a type look up
+      //  on the ARRAY and determine if the base type is RAW or NUMBER.
+      if (array instanceof byte[]) {
+        // Convert byte to NUMBER. Oracle JDBC does not support creating SQL
+        // arrays from a byte[], so convert the byte[] to an short[].
+        byte[] bytes = (byte[])array;
+        short[] shorts = new short[bytes.length];
+        for (int i = 0; i < bytes.length; i++)
+          shorts[i] = (short)(0xFF & bytes[i]);
+
+        return shorts;
+      }
+      else if (array instanceof ByteBuffer[]) {
+        // Convert from R2DBC's ByteBuffer representation of binary data into
+        // JDBC's byte[] representation
+        ByteBuffer[] byteBuffers = (ByteBuffer[]) array;
+        byte[][] byteArrays = new byte[byteBuffers.length][];
+        for (int i = 0; i < byteBuffers.length; i++) {
+          ByteBuffer byteBuffer = byteBuffers[i];
+          byteArrays[i] = byteBuffer == null
+            ? null
+            : convertByteBufferBind(byteBuffers[i]);
+        }
+
+        return byteArrays;
+      }
+      else if (array instanceof Period[]) {
+        // Convert from Oracle R2DBC's Period representation of INTERVAL YEAR TO
+        // MONTH to Oracle JDBC's INTERVALYM representation.
+        Period[] periods = (Period[]) array;
+        INTERVALYM[] intervalYearToMonths = new INTERVALYM[periods.length];
+        for (int i = 0; i < periods.length; i++) {
+          Period period = periods[i];
+          if (period == null) {
+            intervalYearToMonths[i] = null;
+          }
+          else {
+            // The binary representation is specified in the JavaDoc of
+            // oracle.sql.INTERVALYM. In 21.x, the JavaDoc has bug: It neglects
+            // to mention that the year value is offset by 0x80000000
+            byte[] bytes = new byte[5];
+            ByteBuffer.wrap(bytes)
+              .putInt(period.getYears() + 0x80000000) // 4 byte year
+              .put((byte)(period.getMonths() + 60)); // 1 byte month
+            intervalYearToMonths[i] = new INTERVALYM(bytes);
+          }
+        }
+
+        return intervalYearToMonths;
+      }
+      else {
+        // Check if the bind value is a multidimensional array
+        Class<?> componentType = array.getClass().getComponentType();
+
+        if (componentType == null || !componentType.isArray())
+          return array;
+
+        int length = java.lang.reflect.Array.getLength(array);
+        Object[] converted = new Object[length];
+
+        for (int i = 0; i < length; i++) {
+          converted[i] =
+            convertJavaArray(java.lang.reflect.Array.get(array, i));
+        }
+
+        return converted;
+      }
+    }
+
+    /**
+     * Converts a given {@code object} to a JDBC {@link Struct} of OBJECT type.
+     */
+    private Object convertObjectBind(OracleR2dbcObject object) {
+      return convertObjectBind(
+        object.getMetadata().getObjectType(),
+        object);
+    }
+
+    /**
+     * Converts a given {@code value} to a JDBC {@link Struct} of the given
+     * OBJECT {@code type}.
+     */
+    private Object convertObjectBind(ObjectType type, Object value) {
+
+      if (value == null)
+        return null;
+
+      final Object[] attributes;
+
+      OracleR2dbcObjectMetadata metadata =
+        ReadablesMetadata.createAttributeMetadata(fromJdbc(() ->
+          (OracleStruct)jdbcConnection.createStruct(type.getName(), null)));
+
+      if (value instanceof Object[]) {
+        attributes = toAttributeArray((Object[])value, metadata);
+      }
+      else if (value instanceof Map) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> valueMap = (Map<String, Object>)value;
+        attributes = toAttributeArray(valueMap, metadata);
+      }
+      else if (value instanceof io.r2dbc.spi.Readable) {
+        attributes = toAttributeArray((io.r2dbc.spi.Readable)value, metadata);
+      }
+      else {
+        // Fallback to a built-in conversion supported by Oracle JDBC
+        return value;
+      }
+
+      Publisher<Void> conversionPublisher =
+        convertUdtValues(attributes, metadata);
+
+      OracleR2dbcExceptions.JdbcSupplier<Struct> structSupplier = () ->
+        jdbcConnection.unwrap(OracleConnection.class)
+          .createStruct(type.getName(), attributes);
+
+      if (conversionPublisher == null) {
+        return structSupplier.get();
+      }
+      else {
+        return Mono.from(conversionPublisher)
+          .then(Mono.fromSupplier(structSupplier));
+      }
+    }
+
+    /**
+     * Copies values of an {@code Object[]} from user code into an
+     * {@code Object[]} of a length equal to the number of attributes in an
+     * OBJECT described by {@code metadata}.
+     * @throws IllegalArgumentException If the length of the array from user
+     * code is not equal to the number of attributes in the OBJECT type.
+     */
+    private Object[] toAttributeArray(
+      Object[] values, OracleR2dbcObjectMetadata metadata) {
+
+      List<? extends ReadableMetadata> metadatas =
+        metadata.getAttributeMetadatas();
+
+      if (values.length != metadatas.size()) {
+        throw new IllegalArgumentException(format(
+          "Length of Object[]: %d, does not match the number of attributes" +
+            " in OBJECT %s: %d",
+          values.length,
+          metadata.getObjectType().getName(),
+          metadatas.size()));
+      }
+
+      return values.clone();
+    }
+
+    /**
+     * Copies values of a {@code Map} from user code into an {@code Object[]}
+     * having a length equal to the number of attributes in an OBJECT described
+     * by {@code metadata}.
+     * @throws IllegalArgumentException If the keys of the Map do not match the
+     * attribute names of the OBJECT.
+     */
+    private Object[] toAttributeArray(
+      Map<String, Object> values, OracleR2dbcObjectMetadata metadata) {
+
+      TreeMap<String, Object> treeMap =
+        new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+      treeMap.putAll(values);
+
+      List<? extends ReadableMetadata> metadatas =
+        metadata.getAttributeMetadatas();
+
+      Set<String> remainingNames = treeMap.keySet();
+      Object[] attributes = new Object[metadatas.size()];
+      for (int i = 0; i < attributes.length; i++) {
+        String attributeName = metadatas.get(i).getName();
+        Object attribute = treeMap.get(attributeName);
+
+        if (attribute == null && !treeMap.containsKey(attributeName)) {
+          throw new IllegalArgumentException(format(
+            "Map contains no key for attribute %s of OBJECT %s",
+            attributeName,
+            metadata.getObjectType().getName()));
+        }
+        else {
+          remainingNames.remove(attributeName);
+        }
+
+        attributes[i] = attribute;
+      }
+
+      if (!remainingNames.isEmpty()) {
+        throw new IllegalArgumentException(format(
+          "Map contains keys: [%s], which do not match any attribute" +
+            " names of OBJECT %s: [%s]",
+          String.join(",", remainingNames),
+          metadata.getObjectType().getName(),
+          metadatas.stream()
+            .map(ReadableMetadata::getName)
+            .collect(Collectors.joining(","))));
+      }
+
+      return attributes;
+    }
+
+    /**
+     * Copies values of an {@code io.r2dbc.spi.Readable} from user code into an
+     * {@code Object[]} of a length equal to the number of attributes in an
+     * OBJECT described by {@code metadata}.
+     * @implNote This method does not require the Readable to be an
+     * {@code OracleR2dbcObject}. This is done to allow mapping of row or out
+     * parameter values into OBJECT values.
+     * @throws IllegalArgumentException If the number of values in the Readable
+     * is not equal to the number of attributes in the OBJECT type.
+     */
+    private Object[] toAttributeArray(
+      io.r2dbc.spi.Readable readable, OracleR2dbcObjectMetadata metadata) {
+
+      Object[] attributes = new Object[metadata.getAttributeMetadatas().size()];
+
+      for (int i = 0; i < attributes.length; i++) {
+        try {
+          attributes[i] = readable.get(i);
+        }
+        catch (IndexOutOfBoundsException indexOutOfBoundsException) {
+          throw new IllegalArgumentException(format(
+            "Readable contains less values than the number of attributes, %d," +
+              " in OBJECT %s",
+            attributes.length,
+            metadata.getObjectType().getName()));
+        }
+      }
+
+      try {
+        readable.get(attributes.length);
+        throw new IllegalArgumentException(format(
+          "Readable contains more values than the number of attributes, %d," +
+            " in OBJECT %s",
+          attributes.length,
+          metadata.getObjectType().getName()));
+      }
+      catch (IndexOutOfBoundsException indexOutOfBoundsException) {
+        // An out-of-bound index is expected if the number of values in the
+        // Readable matches the number of attributes in the OBJECT.
+      }
+
+      return attributes;
+    }
+
+    private Publisher<Void> convertUdtValues(
+      Object[] values, OracleR2dbcObjectMetadata metadata) {
+
+      LinkedList<Publisher<Void>> publishers = null;
+
+      for (int i = 0; i < values.length; i++) {
+
+        // Apply any conversion for objects not supported by the setObject
+        // methods of OraclePreparedStatement.
+        values[i] = convertBind(values[i]);
+
+        // Apply any conversion for objects not supported by the
+        // createOracleArray or createStruct methods of OracleConnection
+        if (values[i] instanceof Period) {
+          values[i] = convertPeriodUdtValue((Period) values[i]);
+        }
+        else if (values[i] instanceof LocalDateTime) {
+          values[i] = convertLocalDateTimeUdtValue((LocalDateTime) values[i]);
+        }
+        else if (values[i] instanceof LocalDate) {
+          values[i] = convertLocalDateUdtValue((LocalDate) values[i]);
+        }
+        else if (values[i] instanceof LocalTime) {
+          values[i] = convertLocalTimeUdtValue((LocalTime) values[i]);
+        }
+        else if (values[i] instanceof Duration) {
+          values[i] = convertDurationUdtValue((Duration) values[i]);
+        }
+        else if (values[i] instanceof byte[]
+          && R2dbcType.BLOB.equals(
+            metadata.getAttributeMetadata(i).getType())) {
+          values[i] = convertBlobUdtValue((byte[]) values[i]);
+        }
+        else if (values[i] instanceof CharSequence
+          && R2dbcType.CLOB.equals(
+            metadata.getAttributeMetadata(i).getType())) {
+          values[i] = convertClobUdtValue((CharSequence) values[i]);
+        }
+
+        // Check if the value is published asynchronously (ie: a BLOB or CLOB)
+        if (values[i] instanceof Publisher<?>) {
+          if (publishers == null)
+            publishers = new LinkedList<>();
+
+          final int valueIndex = i;
+          publishers.add(
+            Mono.from((Publisher<?>)values[i])
+              .doOnSuccess(value -> values[valueIndex] = value)
+              .then());
+        }
+      }
+
+      return publishers == null
+        ? null
+        : Flux.concat(publishers);
+    }
+    /**
+     * Converts a {@code LocalDateTime} to a {@code TIMESTAMP} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private TIMESTAMP convertLocalDateTimeUdtValue(LocalDateTime localDateTime) {
+      return fromJdbc(() -> TIMESTAMP.of(localDateTime));
+    }
+
+    /**
+     * Converts a {@code LocalDate} to a {@code DATE} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private DATE convertLocalDateUdtValue(LocalDate localDate) {
+      return fromJdbc(() -> DATE.of(localDate));
+    }
+
+    /**
+     * Converts a {@code LocalTime} to a {@code TIMESTAMP} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     * @implNote Mapping this to TIMESTAMP to avoid loss of precision. Other
+     * object types like DATE or java.sql.Time do not have nanosecond precision.
+     */
+    private TIMESTAMP convertLocalTimeUdtValue(LocalTime localTime) {
+      return fromJdbc(() ->
+        TIMESTAMP.of(LocalDateTime.of(LocalDate.EPOCH, localTime)));
+    }
+
+    /**
+     * Converts a {@code Duration} to an {@code INTERVALDS} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private INTERVALDS convertDurationUdtValue(Duration duration) {
+      // The binary representation is specified in the JavaDoc of
+      // oracle.sql.INTERVALDS. In 21.x, the JavaDoc has bug: It neglects
+      // to mention that the day and fractional second values are offset by
+      // 0x80000000
+      byte[] bytes = new byte[11];
+      ByteBuffer.wrap(bytes)
+        .putInt((int)(duration.toDaysPart()) + 0x80000000)// 4 byte day
+        .put((byte)(duration.toHoursPart() + 60))// 1 byte hour
+        .put((byte)(duration.toMinutesPart() + 60))// 1 byte minute
+        .put((byte)(duration.toSecondsPart() + 60))// 1 byte second
+        .putInt(duration.toNanosPart() + 0x80000000);// 4 byte fractional second
+      return new INTERVALDS(bytes);
+    }
+
+    /**
+     * Converts a {@code Period} to an {@code INTERVALYM} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private INTERVALYM convertPeriodUdtValue(Period period) {
+      // The binary representation is specified in the JavaDoc of
+      // oracle.sql.INTERVALYM. In 21.x, the JavaDoc has bug: It neglects
+      // to mention that the year value is offset by 0x80000000
+      byte[] bytes = new byte[5];
+      ByteBuffer.wrap(bytes)
+        .putInt(period.getYears() + 0x80000000) // 4 byte year
+        .put((byte)(period.getMonths() + 60)); // 1 byte month
+      return new INTERVALYM(bytes);
+    }
+
+    /**
+     * Converts a {@code byte[]} to a {@code java.sql.Blob} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private Publisher<java.sql.Blob> convertBlobUdtValue(byte[] bytes) {
+      return convertBlobBind(Blob.from(Mono.just(ByteBuffer.wrap(bytes))));
+    }
+
+    /**
+     * Converts a {@code String} to a {@code java.sql.Clob} object. This
+     * conversion is only required when passing an {@code Object[]} to the
+     * {@code createOracleArray} or {@code createStruct} methods of
+     * {@link OracleConnection}. A built-in conversion is implemented by Oracle
+     * JDBC for the {@code setObject} methods of {@link PreparedStatement}.
+     */
+    private Publisher<java.sql.Clob> convertClobUdtValue(
+      CharSequence charSequence) {
+      return convertClobBind(Clob.from(Mono.just(charSequence)));
     }
 
     /**
@@ -1407,7 +1987,20 @@ final class OracleStatementImpl implements Statement {
         for (int i : outBindIndexes) {
           Type type = ((Parameter) binds[i]).getType();
           SQLType jdbcType = toJdbcType(type);
-          callableStatement.registerOutParameter(i + 1, jdbcType);
+
+          if (type instanceof OracleR2dbcTypes.ArrayType
+              || type instanceof OracleR2dbcTypes.ObjectType) {
+            // Call registerOutParameter with the user defined type name
+            // returned by Type.getName(). Oracle JDBC throws an exception if a
+            // name is provided for a built-in type, like VARCHAR, etc. So
+            // this branch should only be taken for user defined types, like
+            // ARRAY or OBJECT.
+            callableStatement.registerOutParameter(
+              i + 1, jdbcType, type.getName());
+          }
+          else {
+            callableStatement.registerOutParameter(i + 1, jdbcType);
+          }
         }
       });
     }
@@ -1419,6 +2012,7 @@ final class OracleStatementImpl implements Statement {
         Mono.just(createCallResult(
           dependentCounter,
           createOutParameters(
+            fromJdbc(preparedStatement::getConnection),
             dependentCounter,
             new JdbcOutParameters(), metadata, adapter),
           adapter)));
@@ -1486,7 +2080,7 @@ final class OracleStatementImpl implements Statement {
      */
     @Override
     protected Publisher<Void> bind() {
-      Publisher<?>[] bindPublishers = new Publisher[batchSize];
+      Publisher<?>[] bindPublishers = new Publisher<?>[batchSize];
       for (int i = 0; i < batchSize; i++) {
         bindPublishers[i] = Flux.concat(
           bind(batch.remove()),

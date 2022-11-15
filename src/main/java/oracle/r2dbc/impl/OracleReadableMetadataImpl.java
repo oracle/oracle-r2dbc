@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 
 import java.sql.ResultSetMetaData;
 import java.sql.SQLType;
+import java.sql.Types;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -34,6 +35,7 @@ import io.r2dbc.spi.OutParameterMetadata;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.ReadableMetadata;
 import io.r2dbc.spi.Type;
+import oracle.jdbc.OracleTypes;
 import oracle.r2dbc.OracleR2dbcTypes;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
@@ -249,6 +251,28 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
     return type;
   }
 
+  @Override
+  public boolean equals(Object other) {
+    if (!(other instanceof ReadableMetadata))
+      return false;
+
+    ReadableMetadata otherMetadata = (ReadableMetadata) other;
+    return Objects.equals(type, otherMetadata.getType())
+      && Objects.equals(name, otherMetadata.getName())
+      && Objects.equals(nullability, otherMetadata.getNullability())
+      && Objects.equals(precision, otherMetadata.getPrecision())
+      && Objects.equals(scale, otherMetadata.getScale());
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+      type,
+      name,
+      nullability,
+      precision,
+      scale);
+  }
 
   /**
    * Creates {@code ColumnMetadata} for an out parameter. The returned
@@ -261,8 +285,7 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
    * @param type Column type
    * @return Column metadata having {@code name} and {@code type}
    */
-  static OutParameterMetadata createParameterMetadata(
-    String name, Type type) {
+  static OutParameterMetadata createParameterMetadata(String name, Type type) {
     return new OracleOutParameterMetadataImpl(
       type, name, Nullability.NULLABLE, null, null);
   }
@@ -286,8 +309,7 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
 
     int jdbcIndex = index + 1;
 
-    Type type = toR2dbcType(fromJdbc(() ->
-      resultSetMetaData.getColumnType(jdbcIndex)));
+    Type type = getR2dbcType(jdbcIndex, resultSetMetaData);
 
     String name = fromJdbc(() ->
       resultSetMetaData.getColumnName(jdbcIndex));
@@ -319,18 +341,25 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
       || type == OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE) {
       // For the TIMESTAMP types, use the length of LocalDateTime.toString() as
       // the precision. Use the scale from JDBC, even if it's 0 because a
-      // TIMESTAMP may 0 decimal digits.
+      // TIMESTAMP may 0 decimal digits. Oracle JDBC does not support getScale
+      // for struct metadata, so ignore the value it returns (which is 0).
       return new OracleColumnMetadataImpl(type, name, nullability,
         LOCAL_DATE_TIME_PRECISION,
-        fromJdbc(() -> resultSetMetaData.getScale(jdbcIndex)));
+        resultSetMetaData instanceof oracle.jdbc.StructMetaData
+          ? null
+          : fromJdbc(() -> resultSetMetaData.getScale(jdbcIndex)));
     }
     else if (type == R2dbcType.TIMESTAMP_WITH_TIME_ZONE) {
       // For the TIMESTAMP WITH TIMEZONE types, use the length of
       // OffsetDateTime.toString() as the precision. Use the scale from JDBC,
-      // even if it's 0 because a TIMESTAMP may have 0 decimal digits.
+      // even if it's 0 because a TIMESTAMP may have 0 decimal digits. Oracle
+      // JDBC does not support getScale for struct metadata, so ignore the value
+      // it returns (which is 0).
       return new OracleColumnMetadataImpl(type, name, nullability,
         OFFSET_DATE_TIME_PRECISION,
-        fromJdbc(() -> resultSetMetaData.getScale(jdbcIndex)));
+        resultSetMetaData instanceof oracle.jdbc.StructMetaData
+          ? null
+          : fromJdbc(() -> resultSetMetaData.getScale(jdbcIndex)));
     }
     else if (type == R2dbcType.VARBINARY) {
       // Oracle JDBC implements getColumnDisplaySize to return the
@@ -363,6 +392,37 @@ class OracleReadableMetadataImpl implements ReadableMetadata {
         // precision and scale are not applicable.
         precision == 0 ? null : precision,
         scale == 0 ? null : scale);
+    }
+  }
+
+  /**
+   * Returns the type of the column at a 1-based {@code index}. This method
+   * handles the case where the column is a named type, like ARRAY or OBJECT.
+   */
+  private static Type getR2dbcType(
+    int index, ResultSetMetaData resultSetMetaData) {
+    int jdbcType = fromJdbc(() -> resultSetMetaData.getColumnType(index));
+    switch (jdbcType) {
+      case java.sql.Types.ARRAY:
+        return OracleR2dbcTypes.arrayType(fromJdbc(() ->
+          resultSetMetaData.getColumnTypeName(index)));
+      case java.sql.Types.STRUCT:
+        return OracleR2dbcTypes.objectType(fromJdbc(() ->
+          resultSetMetaData.getColumnTypeName(index)));
+      case Types.BINARY:
+        // Oracle JDBC's struct metadata returns BINARY. VARBINARY is the
+        // correct type to describe Oracle's RAW type.
+        return R2dbcType.VARBINARY;
+      case Types.DATE:
+        // Oracle JDBC's struct metadata returns DATE. TIMESTAMP is the correct
+        // type to describe Oracle's DATE type.
+        return R2dbcType.TIMESTAMP;
+      case OracleTypes.TIMESTAMPTZ:
+        // Oracle JDBC's struct metadata returns a proprietary type code. Use
+        // the standard type.
+        return R2dbcType.TIMESTAMP_WITH_TIME_ZONE;
+      default:
+        return SqlTypeMap.toR2dbcType(jdbcType);
     }
   }
 

@@ -24,9 +24,14 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.ColumnMetadata;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.Nullability;
+import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcType;
+import io.r2dbc.spi.ReadableMetadata;
+import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
+import oracle.r2dbc.OracleR2dbcObject;
+import oracle.r2dbc.OracleR2dbcObjectMetadata;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.sql.json.OracleJsonFactory;
 import oracle.sql.json.OracleJsonObject;
@@ -46,13 +51,21 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.Period;
 import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
+import static java.lang.String.format;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.user;
+import static oracle.r2dbc.test.TestUtils.constructObject;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitOne;
+import static oracle.r2dbc.util.Awaits.awaitQuery;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
+import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -284,8 +297,6 @@ public class OracleReadableMetadataImplTest {
         connection, "UROWID", JDBCType.ROWID, OracleR2dbcTypes.ROWID, null,
         null, RowId.class, rowId);
 
-      // Expect JSON and OracleJsonObject to map.
-
     }
     finally {
       tryAwaitNone(connection.close());
@@ -321,6 +332,199 @@ public class OracleReadableMetadataImplTest {
         OracleJsonObject.class, oracleJson);
     }
     finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
+   * ARRAY type columns.
+   */
+  @Test
+  public void testArrayTypes() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TYPE TEST_ARRAY_TYPE AS ARRAY(3) OF NUMBER"));
+      OracleR2dbcTypes.ArrayType arrayType =
+        OracleR2dbcTypes.arrayType(user().toUpperCase() + ".TEST_ARRAY_TYPE");
+
+      verifyColumnMetadata(
+        connection, arrayType.getName(), JDBCType.ARRAY, arrayType,
+        null, null, Object[].class,
+        Parameters.in(arrayType, new Integer[]{0, 1, 2}));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_ARRAY_TYPE"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
+   * OBJECT type columns.
+   */
+  @Test
+  public void testObjectTypes() {
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // A fully qualified type names to match the names returned by RowMetadata
+      OracleR2dbcTypes.ObjectType objectType = OracleR2dbcTypes.objectType(
+        user().toUpperCase() + ".TEST_OBJECT_TYPE");
+      OracleR2dbcTypes.ObjectType objectType2D = OracleR2dbcTypes.objectType(
+        user().toUpperCase() + ".TEST_OBJECT_TYPE_2D");
+      OracleR2dbcTypes.ArrayType arrayType2D = OracleR2dbcTypes.arrayType(
+        user().toUpperCase() + ".TEST_OBJECT_TYPE_ARRAY_TYPE");
+
+      Type[] attributeTypes = new Type[] {
+        R2dbcType.CHAR,
+        R2dbcType.VARCHAR,
+        R2dbcType.NCHAR,
+        R2dbcType.NVARCHAR,
+        R2dbcType.CLOB,
+        R2dbcType.NCLOB,
+        R2dbcType.VARBINARY,
+        R2dbcType.BLOB,
+        R2dbcType.NUMERIC,
+        OracleR2dbcTypes.BINARY_FLOAT,
+        OracleR2dbcTypes.BINARY_DOUBLE,
+        R2dbcType.TIMESTAMP,
+        R2dbcType.TIMESTAMP,
+        R2dbcType.TIMESTAMP_WITH_TIME_ZONE,
+        OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE,
+        objectType2D,
+        arrayType2D,
+      };
+
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE TYPE TEST_OBJECT_TYPE_2D" +
+          " AS OBJECT(value0_2D NUMBER(2, 2))"));
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE TYPE TEST_OBJECT_TYPE_ARRAY_TYPE" +
+          " AS ARRAY(1) OF VARCHAR(10)"));
+
+      String[] attributeNames = IntStream.range(0, attributeTypes.length)
+        .mapToObj(i -> "value" + i)
+        .toArray(String[]::new);
+
+      awaitExecution(connection.createStatement(
+        "CREATE OR REPLACE TYPE TEST_OBJECT_TYPE AS OBJECT(" +
+          "value0 CHAR(10)," +
+          "value1 VARCHAR(10)," +
+          "value2 NCHAR(10)," +
+          "value3 NVARCHAR2(10)," +
+          "value4 CLOB," +
+          "value5 NCLOB," +
+          "value6 RAW(10)," +
+          "value7 BLOB," +
+          "value8 NUMBER(9)," +
+          "value9 BINARY_FLOAT," +
+          "value10 BINARY_DOUBLE," +
+          "value11 DATE," +
+          "value12 TIMESTAMP(9)," +
+          "value13 TIMESTAMP(8) WITH TIME ZONE," +
+          "value14 TIMESTAMP(7) WITH LOCAL TIME ZONE," +
+          "value15 TEST_OBJECT_TYPE_2D," +
+          "value16 TEST_OBJECT_TYPE_ARRAY_TYPE)"));
+
+      OracleR2dbcObject object = constructObject(
+        connection, objectType,
+        Arrays.stream(attributeTypes)
+          .map(Parameters::in)
+          .toArray());
+
+      verifyColumnMetadata(
+        connection, "TEST_OBJECT_TYPE", JDBCType.STRUCT, objectType,
+        null, null, OracleR2dbcObject.class, object);
+
+      // Verify the attribute metadata too.
+      OracleR2dbcObjectMetadata objectMetadata = object.getMetadata();
+      assertEquals(objectType, objectMetadata.getObjectType());
+      // Oracle JDBC does not support returning the precision of character type
+      // attributes. Expect a null precision.
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[0]),
+        attributeNames[0], JDBCType.CHAR, attributeTypes[0],
+        null, null, Nullability.NULLABLE, String.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[1]),
+        attributeNames[1], JDBCType.VARCHAR, attributeTypes[1],
+        null, null, Nullability.NULLABLE, String.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[2]),
+        attributeNames[2], JDBCType.NCHAR, attributeTypes[2],
+        null, null, Nullability.NULLABLE, String.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[3]),
+        attributeNames[3], JDBCType.NVARCHAR, attributeTypes[3],
+        null, null, Nullability.NULLABLE, String.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[4]),
+        attributeNames[4], JDBCType.CLOB, attributeTypes[4],
+        null, null, Nullability.NULLABLE, String.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[5]),
+        attributeNames[5], JDBCType.NCLOB, attributeTypes[5],
+        null, null, Nullability.NULLABLE, String.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[6]),
+        attributeNames[6], JDBCType.VARBINARY, attributeTypes[6],
+        10, null, Nullability.NULLABLE, ByteBuffer.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[7]),
+        attributeNames[7], JDBCType.BLOB, attributeTypes[7],
+        null, null, Nullability.NULLABLE, ByteBuffer.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[8]),
+        attributeNames[8], JDBCType.NUMERIC, attributeTypes[8],
+        9, 0, Nullability.NULLABLE, BigDecimal.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[9]),
+        attributeNames[9], OracleType.BINARY_FLOAT, attributeTypes[9],
+        null, null, Nullability.NULLABLE, Float.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[10]),
+        attributeNames[10], OracleType.BINARY_DOUBLE, attributeTypes[10],
+        null, null, Nullability.NULLABLE, Double.class);
+      // Oracle JDBC does not support returning the scale for data time types.
+      // Expect null.
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[11]),
+        attributeNames[11], JDBCType.TIMESTAMP, attributeTypes[11],
+        29, null, Nullability.NULLABLE, LocalDateTime.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[12]),
+        attributeNames[12], JDBCType.TIMESTAMP, attributeTypes[12],
+        29, null, Nullability.NULLABLE, LocalDateTime.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[13]),
+        attributeNames[13], OracleType.TIMESTAMP_WITH_TIME_ZONE,
+        attributeTypes[13],
+        35, null, Nullability.NULLABLE, OffsetDateTime.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[14]),
+        attributeNames[14], OracleType.TIMESTAMP_WITH_LOCAL_TIME_ZONE,
+        attributeTypes[14],
+        29, null, Nullability.NULLABLE, LocalDateTime.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[15]),
+        attributeNames[15], JDBCType.STRUCT, attributeTypes[15],
+        null, null, Nullability.NULLABLE, OracleR2dbcObject.class);
+      verifyMetadata(
+        objectMetadata.getAttributeMetadata(attributeNames[16]),
+        attributeNames[16], JDBCType.ARRAY, attributeTypes[16],
+        null, null, Nullability.NULLABLE, Object[].class);
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_OBJECT_TYPE"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_OBJECT_TYPE_2D"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TYPE TEST_OBJECT_TYPE_ARRAY_TYPE"));
       tryAwaitNone(connection.close());
     }
   }
@@ -370,7 +574,7 @@ public class OracleReadableMetadataImplTest {
     String columnName = "test_123";
     String tableName = "verify_" + columnDdl.replaceAll("[^\\p{Alnum}]", "_");
     awaitExecution(connection.createStatement(
-      String.format("CREATE TABLE "+tableName+"(%s %s)",
+      format("CREATE TABLE "+tableName+"(%s %s)",
         columnName, columnDdl)
     ));
     try {
@@ -385,18 +589,27 @@ public class OracleReadableMetadataImplTest {
           result.map((row, rowMetadata) -> rowMetadata.getColumnMetadata(0))
         ));
 
-      assertEquals(javaType, metadata.getJavaType());
-      // Don't expect Oracle R2DBC to match the column name's case.
-      assertEquals(columnName.toUpperCase(), metadata.getName().toUpperCase());
-      assertEquals(jdbcType, metadata.getNativeTypeMetadata());
-      assertEquals(r2dbcType, metadata.getType());
-      assertEquals(nullability, metadata.getNullability());
-      assertEquals(precision, metadata.getPrecision());
-      assertEquals(scale, metadata.getScale());
+      verifyMetadata(
+        metadata, columnName, jdbcType, r2dbcType, precision, scale,
+        nullability, javaType);
     }
     finally {
       awaitExecution(connection.createStatement("DROP TABLE "+tableName));
     }
+  }
+
+  private void verifyMetadata(
+    ReadableMetadata metadata, String name, SQLType jdbcType,
+    Type r2dbcType, Integer precision, Integer scale, Nullability nullability,
+    Class<?> javaType) {
+    assertEquals(javaType, metadata.getJavaType());
+    // Don't expect Oracle R2DBC to match the column name's case.
+    assertEquals(name.toUpperCase(), metadata.getName().toUpperCase());
+    assertEquals(jdbcType, metadata.getNativeTypeMetadata());
+    assertEquals(r2dbcType, metadata.getType());
+    assertEquals(nullability, metadata.getNullability());
+    assertEquals(precision, metadata.getPrecision());
+    assertEquals(scale, metadata.getScale());
   }
 
 }

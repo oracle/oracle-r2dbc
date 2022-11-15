@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
+import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.sql.json.OracleJsonObject;
 
@@ -33,6 +34,7 @@ import java.sql.JDBCType;
 import java.sql.RowId;
 import java.sql.SQLException;
 import java.sql.SQLType;
+import java.sql.Types;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -133,6 +135,7 @@ final class SqlTypeMap {
       entry(OffsetDateTime.class, JDBCType.TIMESTAMP_WITH_TIMEZONE),
       entry(io.r2dbc.spi.Blob.class, JDBCType.BLOB),
       entry(io.r2dbc.spi.Clob.class, JDBCType.CLOB),
+      entry(Object[].class, JDBCType.ARRAY),
 
       // JDBC 4.3 mappings not included in R2DBC Specification. Types like
       // java.sql.Blob/Clob/NClob/Array can be accessed from Row.get(...)
@@ -160,8 +163,24 @@ final class SqlTypeMap {
       // Extended mappings supported by Oracle
       entry(Duration.class, OracleType.INTERVAL_DAY_TO_SECOND),
       entry(Period.class, OracleType.INTERVAL_YEAR_TO_MONTH),
-      entry(OracleJsonObject.class, OracleType.JSON)
+      entry(OracleJsonObject.class, OracleType.JSON),
 
+      // Primitive array mappings supported by OracleArray. Primitive arrays are
+      // not subtypes of Object[], which is listed for SQLType.ARRAY above. The
+      // primitive array types must be explicitly listed here.
+      entry(boolean[].class, JDBCType.ARRAY),
+      // byte[] is mapped to RAW by default
+      // entry(byte[].class, JDBCType.ARRAY),
+      entry(short[].class, JDBCType.ARRAY),
+      entry(int[].class, JDBCType.ARRAY),
+      entry(long[].class, JDBCType.ARRAY),
+      entry(float[].class, JDBCType.ARRAY),
+      entry(double[].class, JDBCType.ARRAY),
+
+      // Support binding OracleR2dbcReadable, Object[], and Map<String, Object>
+      // to OBJECT (ie: STRUCT)
+      entry(Map.class, JDBCType.STRUCT),
+      entry(OracleR2dbcObject.class, JDBCType.STRUCT)
     );
 
   /**
@@ -216,9 +235,14 @@ final class SqlTypeMap {
    * @return A JDBC SQL type
    */
   static SQLType toJdbcType(Type r2dbcType) {
-    return r2dbcType instanceof Type.InferredType
-      ? toJdbcType(r2dbcType.getJavaType())
-      : R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
+    if (r2dbcType instanceof Type.InferredType)
+      return toJdbcType(r2dbcType.getJavaType());
+    else if (r2dbcType instanceof OracleR2dbcTypes.ArrayType)
+      return JDBCType.ARRAY;
+    else if (r2dbcType instanceof OracleR2dbcTypes.ObjectType)
+      return JDBCType.STRUCT;
+    else
+      return R2DBC_TO_JDBC_TYPE_MAP.get(r2dbcType);
   }
 
   /**

@@ -634,7 +634,8 @@ public class OracleReactiveJdbcAdapterTest {
       // than a name (Europe/Warsaw).
       Connection connection = awaitOne(ConnectionFactories.get(
         ConnectionFactoryOptions.parse(format(
-          "r2dbc:oracle://%s:%d/%s?oracle.jdbc.timezoneAsRegion=false",
+          "r2dbc:oracle%s://%s:%d/%s?oracle.jdbc.timezoneAsRegion=false",
+          protocol() == null ? "" : ":" + protocol(),
           host(), port(), serviceName()))
           .mutate()
           .option(USER, user())

@@ -81,6 +81,6 @@ echo "HOST=localhost" >> src/test/resources/config.properties
 echo "PORT=1521" >> src/test/resources/config.properties
 echo "USER=test" >> src/test/resources/config.properties
 echo "PASSWORD=test" >> src/test/resources/config.properties
-echo "CONNECT_TIMEOUT=120" >> src/test/resources/config.properties
-echo "SQL_TIMEOUT=120" >> src/test/resources/config.properties
+echo "CONNECT_TIMEOUT=240" >> src/test/resources/config.properties
+echo "SQL_TIMEOUT=240" >> src/test/resources/config.properties
 mvn clean compile test

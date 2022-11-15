@@ -456,8 +456,9 @@ abstract class OracleResultImpl implements Result {
 
       // Avoiding object allocation by reusing the same Row object
       ReusableJdbcReadable reusableJdbcReadable = new ReusableJdbcReadable();
-      Row row =
-        createRow(dependentCounter, reusableJdbcReadable, metadata, adapter);
+      Row row = createRow(
+        fromJdbc(() -> resultSet.getStatement().getConnection()),
+        dependentCounter, reusableJdbcReadable, metadata, adapter);
 
       return adapter.publishRows(resultSet, jdbcReadable -> {
         reusableJdbcReadable.current = jdbcReadable;
