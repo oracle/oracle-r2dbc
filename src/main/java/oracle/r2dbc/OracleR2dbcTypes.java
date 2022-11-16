@@ -146,7 +146,7 @@ public final class OracleR2dbcTypes {
    * defined ARRAY types. An instance of {@code ArrayType} must be used when
    * binding an array value to a {@link Statement} created by the Oracle R2DBC
    * Driver.
-   * </p><p>
+   * <p>
    * Oracle Database does not support an anonymous {@code ARRAY} type, which is
    * what the standard {@link R2dbcType#COLLECTION} type represents. Oracle
    * Database only supports {@code ARRAY} types which are declared as a user
