@@ -19,19 +19,25 @@ Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified 
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
 
 # About This Version
-The 1.0.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
+The 1.1.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
 
-Changes in this release:
-- Added support for long valued update counts
-- New OracleR2dbcOptions constants for V$SESSION tracing
+Fixes in this release:
+ - [Resolved a memory leak of java.sql.ResultSet objects](https://github.com/oracle/oracle-r2dbc/pull/88)
+ - [Warnings are no longer emitted as onError signals](https://github.com/oracle/oracle-r2dbc/pull/98)
+ - [The option to disable DN Matching is no longer ignored](https://github.com/oracle/oracle-r2dbc/pull/103)
+
+New features in this release:
+- [Added an option to configure oracle.jdbc.timezoneAsRegion](https://github.com/oracle/oracle-r2dbc/pull/81)
+- [Added support for LDAP URLs](https://github.com/oracle/oracle-r2dbc/pull/99)
+- [Added support for REF CURSOR values](https://github.com/oracle/oracle-r2dbc/pull/94)
+- [Added support for user defined ARRAY and OBJECT types](https://github.com/oracle/oracle-r2dbc/pull/104)
 
 ### Integration with Spring and Other Libraries
-Oracle R2DBC can interoperate with other libraries that support the 
-1.0.0.RELEASE version of the R2DBC SPI. When using libraries like Spring and
-r2dbc-pool, be sure to use a version which supports the 1.0.0.RELEASE of the
-SPI.
+Oracle R2DBC only interoperates with libraries that support the  1.0.0.RELEASE
+version of the R2DBC SPI. When using libraries like Spring and r2dbc-pool, be
+sure to use a version which supports the 1.0.0.RELEASE of the SPI.
 
-Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.5.0.0. Other 
+Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.7.0.0. Other 
 libraries may depend on a different version of Oracle JDBC which is 
 incompatible. To resolve this incompatibility, it may be necessary to explicitly 
 declare the dependency in your project, ie:
@@ -39,7 +45,7 @@ declare the dependency in your project, ie:
 <dependency>
     <groupId>com.oracle.database.jdbc</groupId>
     <artifactId>ojdbc11</artifactId>
-    <version>21.5.0.0</version>
+    <version>21.7.0.0</version>
 </dependency>
 ```
 
@@ -65,7 +71,7 @@ Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime
 - R2DBC SPI 1.0.0.RELEASE
 - Reactive Streams 1.0.3
 - Project Reactor 3.4.18
-- Oracle JDBC 21.5.0.0 for JDK 11 (ojdbc11.jar)
+- Oracle JDBC 21.7.0.0 for JDK 11 (ojdbc11.jar)
   - Oracle R2DBC relies on the Oracle JDBC Driver's [Reactive Extensions
   ](https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/jdbc-reactive-extensions.html#GUID-1C40C43B-3823-4848-8B5A-D2F97A82F79B) APIs.
 
@@ -200,7 +206,7 @@ are supported by Oracle R2DBC:
  - `CONNECT_TIMEOUT`
  - `STATEMENT_TIMEOUT`.
  - `PROTOCOL`
-   - (For inclusion in the next release) Accepted protocol values are "tcps", "ldap", and "ldaps"
+   - Accepted protocol values are "tcps", "ldap", and "ldaps"
 
 #### Support for Extended R2DBC Options
 Oracle R2DBC extends the standard set of R2DBC options to offer functionality 
@@ -234,7 +240,7 @@ located:
 r2dbc:oracle://?oracle.r2dbc.descriptor=myAlias&TNS_ADMIN=/path/to/tnsnames/
 ```
 
-#### (For inclusion in the next release) Configuring an LDAP URL
+#### Configuring an LDAP URL
 Use `ldap` or `ldaps` as the URL protocol to have an Oracle Net Descriptor 
 retrieved from an LDAP server:
 ```
@@ -313,7 +319,7 @@ supported by Oracle R2DBC:
   - [v$session.osuser](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_OSUSER)
   - [v$session.program](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM)
   - [v$session.process](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS)
-  - (For inclusion in the next release) [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
+  - [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
     - Setting this option to "false" may resolve "ORA-01882: timezone region not 
       found". The ORA-01882 error happens when Oracle Database doesn't recognize 
       the name returned by `java.util.TimeZone.getDefault().getId()`.
