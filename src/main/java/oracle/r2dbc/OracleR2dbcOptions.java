@@ -344,6 +344,30 @@ public final class OracleR2dbcOptions {
    */
   public static final Option<CharSequence> LDAP_CONTEXT_PROTOCOL;
 
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_LEVEL}
+   */
+  public static final Option<CharSequence> NET_CHECKSUM_LEVEL;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_TYPES}
+   */
+  public static final Option<CharSequence> NET_CHECKSUM_TYPES;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_LEVEL}
+   */
+  public static final Option<CharSequence> NET_ENCRYPTION_LEVEL;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES}
+   */
+  public static final Option<CharSequence> NET_ENCRYPTION_TYPES;
+
 
   /** The unmodifiable set of all extended options */
   private static final Set<Option<?>> OPTIONS = Set.of(
@@ -442,7 +466,15 @@ public final class OracleR2dbcOptions {
     LDAP_TRUSTMANAGER_FACTORY_ALGORITHM = Option.valueOf(
       OracleConnection.CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTMANAGER_FACTORY_ALGORITHM),
     LDAP_CONTEXT_PROTOCOL = Option.valueOf(
-      OracleConnection.CONNECTION_PROPERTY_THIN_LDAP_SSL_CONTEXT_PROTOCOL)
+      OracleConnection.CONNECTION_PROPERTY_THIN_LDAP_SSL_CONTEXT_PROTOCOL),
+    NET_CHECKSUM_LEVEL = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_CHECKSUM_LEVEL),
+    NET_CHECKSUM_TYPES = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_CHECKSUM_TYPES),
+    NET_ENCRYPTION_LEVEL = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_LEVEL),
+    NET_ENCRYPTION_TYPES = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES)
   );
 
   /**

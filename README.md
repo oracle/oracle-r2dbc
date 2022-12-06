@@ -323,6 +323,10 @@ supported by Oracle R2DBC:
     - Setting this option to "false" may resolve "ORA-01882: timezone region not 
       found". The ORA-01882 error happens when Oracle Database doesn't recognize 
       the name returned by `java.util.TimeZone.getDefault().getId()`.
+  - [oracle.net.encryption_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_LEVEL)
+  - [oracle.net.encryption_types_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES)
+  - [oracle.net.crypto_checksum_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_LEVEL)
+  - [oracle.net.crypto_checksum_types_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_TYPES)
 
 ### Thread Safety and Parallel Execution
 Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are the only 
