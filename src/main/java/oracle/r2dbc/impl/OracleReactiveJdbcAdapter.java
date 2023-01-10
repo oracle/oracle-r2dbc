@@ -346,17 +346,6 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
    * specified in the javadoc of
    * {@link #createDataSource(ConnectionFactoryOptions)}
    * </p><p>
-   * If the {@link ConnectionFactoryOptions#SSL} option is set, then the JDBC
-   * URL is composed with the tcps protocol, as in:
-   * {@code jdbc:oracle:thins:@tcps:...}. The {@code SSL} option is interpreted
-   * as a strict directive to use TLS, and so it takes precedence over any value
-   * that may otherwise be specified by the {@code PROTOCOL} option.
-   * </p><p>
-   * If the {@code SSL} option is not set, then the URL is composed with any
-   * value set for {@link ConnectionFactoryOptions#PROTOCOL} option. For
-   * instance, if the {@code PROTOCOL} option is set to "ldap" then the URL
-   * is composed as: {@code jdbc:oracle:thin:@ldap://...}.
-   * </p><p>
    * For consistency with the Oracle JDBC URL, an Oracle R2DBC URL might include
    * multiple space separated LDAP addresses, where the space is percent encoded,
    * like this:
@@ -389,30 +378,77 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
       validateDescriptorOptions(options);
       return "jdbc:oracle:thin:@" + descriptor;
     }
-    else {
-      Object protocol =
-        Boolean.TRUE.equals(parseOptionValue(
-          SSL, options, Boolean.class, Boolean::valueOf))
-          ? "tcps"
-          : options.getValue(PROTOCOL);
-      Object host = options.getRequiredValue(HOST);
-      Integer port = parseOptionValue(
-        PORT, options, Integer.class, Integer::valueOf);
-      Object serviceName = options.getValue(DATABASE);
 
-      Object dnMatch =
-        options.getValue(OracleR2dbcOptions.TLS_SERVER_DN_MATCH);
+    String protocol = composeJdbcProtocol(options);
 
-      return String.format("jdbc:oracle:thin:@%s%s%s%s?%s=%s",
-        protocol == null ? "" : protocol + "://",
-        host,
-        port != null ? (":" + port) : "",
-        serviceName != null ? ("/" + serviceName) : "",
-        // Workaround for Oracle JDBC bug #33150409. DN matching is enabled
-        // unless the property is set as a query parameter.
-        OracleR2dbcOptions.TLS_SERVER_DN_MATCH.name(),
-        dnMatch == null ? "false" : dnMatch);
-    }
+    Object host = options.getRequiredValue(HOST);
+
+    Integer port =
+      parseOptionValue(PORT, options, Integer.class, Integer::valueOf);
+
+    Object serviceName = options.getValue(DATABASE);
+
+    Object dnMatch =
+      options.getValue(OracleR2dbcOptions.TLS_SERVER_DN_MATCH);
+
+    return String.format("jdbc:oracle:thin:@%s%s%s%s?%s=%s",
+      protocol,
+      host,
+      port != null ? (":" + port) : "",
+      serviceName != null ? ("/" + serviceName) : "",
+      // Workaround for Oracle JDBC bug #33150409. DN matching is enabled
+      // unless the property is set as a query parameter.
+      OracleR2dbcOptions.TLS_SERVER_DN_MATCH.name(),
+      dnMatch == null ? "false" : dnMatch);
+  }
+
+  /**
+   * <p>
+   * Composes the protocol section of an Oracle JDBC URL. This is an optional
+   * section that may appear after the '@' symbol. For instance, the follow URL
+   * would specify the "tcps" protocol:
+   * </p><p>
+   * <pre>
+   *   jdbc:oracle:thin:@tcps://...
+   * </pre>
+   * </p><p>
+   * If {@link ConnectionFactoryOptions#SSL} is set, then "tcps://" is returned.
+   * The {@code SSL} option is interpreted as a strict directive to use TLS, and
+   * so it takes precedence over any value that may be specified with the
+   * {@link ConnectionFactoryOptions#PROTOCOL} option.
+   * </p><p>
+   * Otherwise, if the {@code SSL} option is not set, then the protocol section
+   * is composed with any value set to the
+   * {@link ConnectionFactoryOptions#PROTOCOL} option. For
+   * instance, if the {@code PROTOCOL} option is set to "ldap" then the URL
+   * is composed as: {@code jdbc:oracle:thin:@ldap://...}.
+   * </p><p>
+   * If the {@code PROTOCOL} option is set to an empty string, this is
+   * considered equivalent to not setting the option at all. The R2DBC Pool
+   * library is known to set an empty string as the protocol .
+   * </p>
+   * @param options Options that may or may not specify a protocol. Not null.
+   * @return The specified protocol, or an empty string if none is specified.
+   */
+  private static String composeJdbcProtocol(ConnectionFactoryOptions options) {
+
+    Boolean isSSL =
+      parseOptionValue(SSL, options, Boolean.class, Boolean::valueOf);
+
+    if (Boolean.TRUE.equals(isSSL))
+      return "tcps://";
+
+    Object protocolObject = options.getValue(PROTOCOL);
+
+    if (protocolObject == null)
+      return "";
+
+    String protocol = protocolObject.toString();
+
+    if (protocol.isEmpty())
+      return "";
+
+    return protocol + "://";
   }
 
   /**

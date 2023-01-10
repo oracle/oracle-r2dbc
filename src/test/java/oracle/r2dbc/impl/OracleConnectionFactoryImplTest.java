@@ -189,4 +189,5 @@ public class OracleConnectionFactoryImplTest {
         .getMetadata()
         .getName());
   }
+
 }
