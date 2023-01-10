@@ -20,8 +20,59 @@
 */
 package oracle.r2dbc;
 
+/**
+ * <p>
+ * A {@link io.r2dbc.spi.Readable} that represents an instance of a user 
+ * defined OBJECT type.
+ * </p><p>
+ * An OBJECT returned by a {@link io.r2dbc.spi.Result} may be mapped to an
+ * {@code OracleR2dbcObject}:
+ * <pre>{@code
+ * Publisher<Pet> objectMapExample(Result result) {
+ *   return result.map(row -> {
+ *
+ *     OracleR2dbcObject oracleObject = row.get(0, OracleR2dbcObject.class); 
+ *
+ *     return new Pet(
+ *       oracleObject.get("name", String.class),
+ *       oracleObject.get("species", String.class),
+ *       oracleObject.get("weight", Float.class),
+ *       oracleObject.get("birthday", LocalDate.class));
+ *   });
+ * }
+ *
+ * }</pre>
+ * As seen in the example above, the values of an OBJECT's attributes may be 
+ * accessed by name with {@link #get(String)} or {@link #get(String, Class)}.
+ * Alternatively, attribute values may be accessed by index with {@link #get(int)} or
+ * {@link #get(int, Class)}. The {@code get} methods support all standard
+ * SQL-to-Java type mappings defined by the
+ * <a href="https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping">
+ * R2DBC Specification.
+ * </a>
+ * <p>
+ * Instances of {@code OracleR2dbcObject} may be set as a bind value when 
+ * passed to {@link io.r2dbc.spi.Statement#bind(int, Object)} or
+ * {@link io.r2dbc.spi.Statement#bind(String, Object)}:
+ * <pre>{@code
+ * Publisher<Result> objectBindExample(
+ *   OracleR2dbcObject oracleObject, Connection connection) {
+ *
+ *   Statement statement =
+ *     connection.createStatement("INSERT INTO petTable VALUES (:petObject)");
+ *   
+ *   statement.bind("petObject", oracleObject);
+ * 
+ *   return statement.execute();
+ * }
+ * }</pre>
+ */
 public interface OracleR2dbcObject extends io.r2dbc.spi.Readable {
 
+  /**
+   * Returns metadata for the attributes of this OBJECT.
+   * @return The metadata of this OBJECT's attributes. Not null.
+   */
   OracleR2dbcObjectMetadata getMetadata();
 
 }

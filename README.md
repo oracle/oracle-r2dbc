@@ -697,7 +697,7 @@ Publisher<Result> objectOutBindExample(Connection connection) {
 `oracle.r2dbc.OracleR2dbcObject`. The `OracleR2dbcObject` interface is a subtype
 of `io.r2dbc.spi.Readable`. Attribute values may be accessed using the standard
 `get` methods of `Readable`. The `get` methods of `OracleR2dbcObject` support
-alll SQL to Java type mappings defined by the
+all SQL to Java type mappings defined by the
 [R2DBC Specification](https://r2dbc.io/spec/1.0.0.RELEASE/spec/html/#datatypes.mapping):
 ```java
 Publisher<Pet> objectMapExample(Result result) {

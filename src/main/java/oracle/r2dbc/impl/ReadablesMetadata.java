@@ -105,6 +105,8 @@ class ReadablesMetadata<T extends ReadableMetadata> {
   /**
    * Creates {@code OracleR2dbcObjectMetadata} that supplies attribute metadata
    * from a JDBC {@code OracleStruct} object.
+   * @param oracleStruct Struct created by Oracle JDBC. Not null.
+   * @return R2DBC metadata for the attributes of the struct. Not null.
    */
   static OracleR2dbcObjectMetadataImpl createAttributeMetadata(
     OracleStruct oracleStruct) {
