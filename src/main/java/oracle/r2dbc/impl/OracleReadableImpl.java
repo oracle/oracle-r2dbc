@@ -142,6 +142,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * </p>
    * @param jdbcConnection JDBC connection that created the
    *   {@code jdbcReadable}. Not null.
+   * @param dependentCounter Counter that is increased for each dependent
+   * {@code Result} created by the returned {@code Row}
    * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
    * @param metadata Meta-data for the specified row. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
@@ -164,6 +166,8 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * </p>
    * @param jdbcConnection JDBC connection that created the
    *   {@code jdbcReadable}. Not null.
+   * @param dependentCounter Counter that is increased for each dependent
+   * {@code Result} created by the returned {@code OutParameters}
    * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
    * @param metadata Meta-data for the specified row. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
