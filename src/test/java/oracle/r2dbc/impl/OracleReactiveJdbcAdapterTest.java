@@ -28,11 +28,13 @@ import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.Option;
 import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.Result;
+import io.r2dbc.spi.Statement;
 import oracle.jdbc.OracleConnection;
 import oracle.jdbc.datasource.OracleDataSource;
 import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.test.DatabaseConfig;
 import oracle.r2dbc.util.TestContextFactory;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -46,6 +48,7 @@ import java.nio.file.StandardOpenOption;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
@@ -68,6 +71,7 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.DRIVER;
 import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
 import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PROTOCOL;
 import static io.r2dbc.spi.ConnectionFactoryOptions.STATEMENT_TIMEOUT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static java.lang.String.format;
@@ -85,6 +89,7 @@ import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
+import static oracle.r2dbc.util.Awaits.awaitQuery;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
@@ -604,20 +609,6 @@ public class OracleReactiveJdbcAdapterTest {
   }
 
   /**
-   * Returns an Oracle Net Descriptor having the values configured by
-   * {@link DatabaseConfig}
-   * @return An Oracle Net Descriptor for the test database.
-   */
-  private static String createDescriptor() {
-    return format(
-      "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=%s))" +
-        "(CONNECT_DATA=(SERVICE_NAME=%s)))",
-      host(), port(),
-      Objects.requireNonNullElse(protocol(), "tcp"),
-      serviceName());
-  }
-
-  /**
    * Verifies the {@link OracleR2dbcOptions#TIMEZONE_AS_REGION} option
    */
   @Test
@@ -663,6 +654,60 @@ public class OracleReactiveJdbcAdapterTest {
     finally {
       TimeZone.setDefault(timeZoneRestored);
     }
+  }
+
+
+  /**
+   * Verifies behavior when {@link ConnectionFactoryOptions#PROTOCOL} is set
+   * to an empty string. In this case, the driver is expected to behave as if
+   * no protocol were specified.
+   */
+  @Test
+  public void testEmptyProtocol() {
+    Assumptions.assumeTrue(
+      DatabaseConfig.protocol() == null,
+      "Test requires no PROTOCOL in config.properties");
+
+    ConnectionFactoryOptions.Builder optionsBuilder =
+      ConnectionFactoryOptions.builder()
+        .option(PROTOCOL, "")
+        .option(DRIVER, "oracle")
+        .option(HOST, DatabaseConfig.host())
+        .option(PORT, DatabaseConfig.port())
+        .option(DATABASE, DatabaseConfig.serviceName())
+        .option(USER, DatabaseConfig.user())
+        .option(PASSWORD, DatabaseConfig.password());
+
+    Duration timeout = DatabaseConfig.connectTimeout();
+    if (timeout != null)
+      optionsBuilder.option(CONNECT_TIMEOUT, timeout);
+
+    ConnectionFactoryOptions options = optionsBuilder.build();
+
+    Connection connection = awaitOne(ConnectionFactories.get(options).create());
+    try {
+      Statement statement =
+        connection.createStatement("SELECT 1 FROM sys.dual");
+
+      awaitQuery(List.of(1), row -> row.get(0, Integer.class), statement);
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Returns an Oracle Net Descriptor having the values configured by
+   * {@link DatabaseConfig}
+   * @return An Oracle Net Descriptor for the test database.
+   */
+  private static String createDescriptor() {
+    return format(
+      "(DESCRIPTION=(ADDRESS=(HOST=%s)(PORT=%d)(PROTOCOL=%s))" +
+        "(CONNECT_DATA=(SERVICE_NAME=%s)))",
+      host(), port(),
+      Objects.requireNonNullElse(protocol(), "tcp"),
+      serviceName());
   }
 
   /**
