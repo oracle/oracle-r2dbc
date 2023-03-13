@@ -49,7 +49,7 @@ declare the dependency in your project, ie:
 </dependency>
 ```
 
-# Installation
+## Installation
 Oracle R2DBC can be obtained from Maven Central.
 ```xml
 <dependency>
@@ -148,26 +148,26 @@ For help programming with Oracle R2DBC, ask questions on Stack Overflow tagged w
 
 Issues may be opened as described in [our contribution guide](CONTRIBUTING.md).
 
-# Contributing
+## Contributing
 
 This project welcomes contributions from the community. Before submitting a pull
 request, please [review our contribution guide](./CONTRIBUTING.md).
 
-# Security
+## Security
 
 Please consult the [security guide](./SECURITY.md) for our responsible security
 vulnerability disclosure process.
 
-# License
+## License
 
-Copyright (c) 2021 Oracle and/or its affiliates.
+Copyright (c) 2021, 2023 Oracle and/or its affiliates.
 
 This software is dual-licensed to you under the Universal Permissive License
 (UPL) 1.0 as shown at https://oss.oracle.com/licenses/upl or Apache License
 2.0 as shown at http://www.apache.org/licenses/LICENSE-2.0. You may choose
 either license.
 
-# Documentation
+## Documentation
 This document specifies the behavior of the R2DBC SPI as implemented for the 
 Oracle Database. This SPI implementation is referred to as the "Oracle R2DBC
 Driver" or "Oracle R2DBC" throughout the remainder of this document.
