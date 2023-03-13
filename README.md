@@ -78,7 +78,7 @@ Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime
 The Oracle R2DBC Driver has been verified with Oracle Database versions 18, 19,
  and 21.
 
-# Code Examples
+## Code Examples
 
 The following method returns an Oracle R2DBC `ConnectionFactory`
 ```java
@@ -143,7 +143,7 @@ is called.
 
 Additional code examples can be found [here](sample).
 
-# Help
+## Help
 For help programming with Oracle R2DBC, ask questions on Stack Overflow tagged with [[oracle] and [r2dbc]](https://stackoverflow.com/tags/oracle+r2dbc). The development team monitors Stack Overflow regularly.
 
 Issues may be opened as described in [our contribution guide](CONTRIBUTING.md).
