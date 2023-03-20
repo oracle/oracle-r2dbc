@@ -26,7 +26,7 @@
 
   <groupId>com.oracle.database.r2dbc</groupId>
   <artifactId>oracle-r2dbc</artifactId>
-  <version>1.1.0</version>
+  <version>1.1.1</version>
   <name>oracle-r2dbc</name>
   <description>
     Oracle R2DBC Driver implementing version 1.0.0 of the R2DBC SPI for Oracle Database.
