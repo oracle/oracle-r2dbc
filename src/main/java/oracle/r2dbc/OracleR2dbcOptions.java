@@ -367,6 +367,19 @@ public final class OracleR2dbcOptions {
    * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES}
    */
   public static final Option<CharSequence> NET_ENCRYPTION_TYPES;
+  
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_CC_NAME}
+   */
+  public static final Option<CharSequence> AUTHENTICATION_KRB5_CC_NAME;
+  
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_MUTUAL}
+   */
+  public static final Option<CharSequence> AUTHENTICATION_KRB5_MUTUAL;
+  
 
 
   /** The unmodifiable set of all extended options */
@@ -474,7 +487,11 @@ public final class OracleR2dbcOptions {
     NET_ENCRYPTION_LEVEL = Option.valueOf(
       OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_LEVEL),
     NET_ENCRYPTION_TYPES = Option.valueOf(
-      OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES)
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES),
+    AUTHENTICATION_KRB5_CC_NAME = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_CC_NAME),
+    AUTHENTICATION_KRB5_MUTUAL = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_MUTUAL)
   );
 
   /**
