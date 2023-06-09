@@ -35,6 +35,9 @@ import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.OracleR2dbcWarning;
 import oracle.r2dbc.test.DatabaseConfig;
+import oracle.r2dbc.test.TestUtils;
+import oracle.sql.json.OracleJsonFactory;
+import oracle.sql.json.OracleJsonObject;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -66,6 +69,7 @@ import java.util.stream.Stream;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
+import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.TestUtils.constructObject;
@@ -86,6 +90,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Verifies that
@@ -2975,6 +2980,78 @@ public class OracleStatementImplTest {
         "DROP TYPE TEST_IN_OUT_OBJECT"));
       tryAwaitNone(connection.close());
     }
+  }
+
+  /**
+   * Verifies inserts and queries with a JSON Duality View.
+   */
+  @Test
+  public void testJsonDualityView() {
+    // JSON Duality Views were introduced in Oracle Database version 23c, so
+    // this test is skipped if the version is older than 23c.
+    assumeTrue(databaseVersion() >= 23,
+      "JSON Duality Views are not supported by database versions older than" +
+        " 23");
+
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testJsonDualityViewTable (" +
+          "id NUMBER PRIMARY KEY, value VARCHAR(1000))"));
+      awaitExecution(connection.createStatement(
+        "CREATE JSON DUALITY VIEW testJsonDualityView AS" +
+          " SELECT JSON {'id' : t.id, 'value' : t.value}" +
+          " FROM testJsonDualityViewTable t" +
+          " WITH INSERT UPDATE DELETE"));
+
+      // Verify an insert
+      OracleJsonObject insertObject = new OracleJsonFactory().createObject();
+      insertObject.put("id", 1);
+      insertObject.put("value", "a");
+      Statement insert = connection.createStatement(
+        "INSERT INTO testJsonDualityView VALUES (?)")
+        .bind(0, insertObject);
+      awaitUpdate(1, insert);
+
+      // Verify a query
+      Statement query = connection.createStatement(
+        "SELECT data FROM testJsonDualityView");
+      Result queryResult = awaitOne(query.execute());
+      OracleJsonObject queryObject =
+        awaitOne(queryResult.map(row -> row.get(0, OracleJsonObject.class)));
+      queryObject =
+        new OracleJsonFactory().createObject(queryObject);
+      queryObject.remove("_metadata"); // Remove this field for assertEquals
+      assertEquals(insertObject, queryObject);
+
+      // Verify an update that returns generated keys
+      OracleJsonObject updateObject = new OracleJsonFactory().createObject();
+      updateObject.put("id", 1);
+      updateObject.put("value", "b");
+      Statement update = connection.createStatement(
+        "UPDATE testJsonDualityView v" +
+          " SET data = ?" +
+          " WHERE v.data.id = ?");
+      update.bind(0, updateObject);
+      update.bind(1, 1);
+      update.returnGeneratedValues("data");
+      Result updateResult = awaitOne(update.execute());
+      OracleJsonObject generatedUpdateObject =
+        awaitOne(updateResult.map(row -> row.get(0, OracleJsonObject.class)));
+      generatedUpdateObject =
+        new OracleJsonFactory().createObject(generatedUpdateObject);
+      generatedUpdateObject.remove("_metadata"); // Remove this field for assertEquals
+      assertEquals(updateObject, generatedUpdateObject);
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP VIEW testJsonDualityView"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testJsonDualityViewTable"));
+      tryAwaitNone(connection.close());
+    }
+
   }
 
   /**
