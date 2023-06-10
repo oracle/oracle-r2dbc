@@ -3042,6 +3042,7 @@ public class OracleStatementImplTest {
           " FROM testReturnParameterJsonDualityViewTable t" +
           " WITH INSERT UPDATE DELETE"));
 
+      // Verify returning the "data" column
       OracleJsonObject insertObject = new OracleJsonFactory().createObject();
       insertObject.put("id", 1);
       insertObject.put("value", "a");
@@ -3061,6 +3062,26 @@ public class OracleStatementImplTest {
           outParameters.get(0, OracleJsonObject.class)));
       insertObject.put("_metadata", returnObject.get("_metadata"));
       assertEquals(insertObject, returnObject);
+
+      // Verify returning a JSON_VALUE expression
+      OracleJsonObject insertObjectB = new OracleJsonFactory().createObject();
+      insertObjectB.put("id", 2);
+      insertObjectB.put("value", "b");
+      Statement returnStatementB = connection.createStatement(
+        "BEGIN" +
+          " INSERT INTO testReturnParameterJsonDualityView" +
+          " VALUES (?)" +
+          " RETURNING JSON_VALUE(DATA, '$.id')" +
+          " INTO ?;" +
+          " END;");
+      returnStatementB.bind(0, insertObjectB);
+      returnStatementB.bind(1, Parameters.out(R2dbcType.NUMERIC));
+
+      Result returnResultB = awaitOne(returnStatementB.execute());
+      int returnId =
+        awaitOne(returnResultB.map(outParameters ->
+          outParameters.get(0, Integer.class)));
+      assertEquals(insertObjectB.getInt("id"), returnId);
     }
     finally {
       tryAwaitExecution(connection.createStatement(
