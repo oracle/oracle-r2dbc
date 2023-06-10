@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
+import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcNonTransientException;
@@ -2973,6 +2974,43 @@ public class OracleStatementImplTest {
         "DROP PROCEDURE testInOutObjectProcedure"));
       tryAwaitExecution(connection.createStatement(
         "DROP TYPE TEST_IN_OUT_OBJECT"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies OUT parameter binds in a RETURNING INTO clause.
+   */
+  @Test
+  public void testReturnParameter() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testReturnParameter(id NUMBER, value VARCHAR(100))"));
+
+      TestRow insertRow = new TestRow(1, "a");
+      Statement returnStatement = connection.createStatement(
+        "BEGIN" +
+          " INSERT INTO testReturnParameter" +
+          " VALUES (?, ?)" +
+          " RETURNING id, value" +
+          " INTO ?, ?;" +
+          " END;");
+      returnStatement.bind(0, insertRow.id);
+      returnStatement.bind(1, insertRow.value);
+      returnStatement.bind(2, Parameters.out(R2dbcType.NUMERIC));
+      returnStatement.bind(3, Parameters.out(R2dbcType.VARCHAR));
+
+      Result returnResult = awaitOne(returnStatement.execute());
+      TestRow returnRow = awaitOne(returnResult.map(outParameters ->
+        new TestRow(
+          outParameters.get(0, Integer.class),
+          outParameters.get(1, String.class))));
+      assertEquals(insertRow, returnRow);
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testReturnParameter"));
       tryAwaitNone(connection.close());
     }
   }
