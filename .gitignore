@@ -6,3 +6,4 @@
 /sample/config.properties
 .github/workflows/startup/99_done.sh
 .github/workflows/startup/done
+.idea
