@@ -23,6 +23,7 @@ package oracle.r2dbc.impl;
 
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactories;
+import io.r2dbc.spi.OutParameters;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcNonTransientException;
@@ -35,6 +36,9 @@ import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.OracleR2dbcWarning;
 import oracle.r2dbc.test.DatabaseConfig;
+import oracle.r2dbc.test.TestUtils;
+import oracle.sql.json.OracleJsonFactory;
+import oracle.sql.json.OracleJsonObject;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -66,6 +70,7 @@ import java.util.stream.Stream;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
+import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.TestUtils.constructObject;
@@ -86,6 +91,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Verifies that
@@ -2975,6 +2981,188 @@ public class OracleStatementImplTest {
         "DROP TYPE TEST_IN_OUT_OBJECT"));
       tryAwaitNone(connection.close());
     }
+  }
+
+  /**
+   * Verifies OUT parameter binds in a RETURNING INTO clause.
+   */
+  @Test
+  public void testReturnParameter() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testReturnParameter(id NUMBER, value VARCHAR(100))"));
+
+      TestRow insertRow = new TestRow(1, "a");
+      Statement returnStatement = connection.createStatement(
+        "BEGIN" +
+          " INSERT INTO testReturnParameter" +
+          " VALUES (?, ?)" +
+          " RETURNING id, value" +
+          " INTO ?, ?;" +
+          " END;");
+      returnStatement.bind(0, insertRow.id);
+      returnStatement.bind(1, insertRow.value);
+      returnStatement.bind(2, Parameters.out(R2dbcType.NUMERIC));
+      returnStatement.bind(3, Parameters.out(R2dbcType.VARCHAR));
+
+      Result returnResult = awaitOne(returnStatement.execute());
+      TestRow returnRow = awaitOne(returnResult.map(outParameters ->
+        new TestRow(
+          outParameters.get(0, Integer.class),
+          outParameters.get(1, String.class))));
+      assertEquals(insertRow, returnRow);
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testReturnParameter"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies OUT parameter binds in a RETURNING INTO clause with a JSON
+   * Duality View.
+   */
+  @Test
+  public void testReturnParameterJsonDualityView() {
+    // JSON Duality Views were introduced in Oracle Database version 23c, so
+    // this test is skipped if the version is older than 23c.
+    assumeTrue(databaseVersion() >= 23,
+      "JSON Duality Views are not supported by database versions older than" +
+        " 23");
+
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testReturnParameterJsonDualityViewTable(" +
+          "id NUMBER PRIMARY KEY, value VARCHAR(100))"));
+      awaitExecution(connection.createStatement(
+        "CREATE JSON DUALITY VIEW testReturnParameterJsonDualityView AS" +
+          " SELECT JSON {'id' : t.id, 'value' : t.value}" +
+          " FROM testReturnParameterJsonDualityViewTable t" +
+          " WITH INSERT UPDATE DELETE"));
+
+      // Verify returning the "data" column
+      OracleJsonObject insertObject = new OracleJsonFactory().createObject();
+      insertObject.put("id", 1);
+      insertObject.put("value", "a");
+      Statement returnStatement = connection.createStatement(
+        "BEGIN" +
+          " INSERT INTO testReturnParameterJsonDualityView" +
+          " VALUES (?)" +
+          " RETURNING data" +
+          " INTO ?;" +
+          " END;");
+      returnStatement.bind(0, insertObject);
+      returnStatement.bind(1, Parameters.out(OracleR2dbcTypes.JSON));
+
+      Result returnResult = awaitOne(returnStatement.execute());
+      OracleJsonObject returnObject =
+        awaitOne(returnResult.map(outParameters ->
+          outParameters.get(0, OracleJsonObject.class)));
+      insertObject.put("_metadata", returnObject.get("_metadata"));
+      assertEquals(insertObject, returnObject);
+
+      // Verify returning a JSON_VALUE expression
+      OracleJsonObject insertObjectB = new OracleJsonFactory().createObject();
+      insertObjectB.put("id", 2);
+      insertObjectB.put("value", "b");
+      Statement returnStatementB = connection.createStatement(
+        "BEGIN" +
+          " INSERT INTO testReturnParameterJsonDualityView" +
+          " VALUES (?)" +
+          " RETURNING JSON_VALUE(DATA, '$.id')" +
+          " INTO ?;" +
+          " END;");
+      returnStatementB.bind(0, insertObjectB);
+      returnStatementB.bind(1, Parameters.out(R2dbcType.NUMERIC));
+
+      Result returnResultB = awaitOne(returnStatementB.execute());
+      int returnId =
+        awaitOne(returnResultB.map(outParameters ->
+          outParameters.get(0, Integer.class)));
+      assertEquals(insertObjectB.getInt("id"), returnId);
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testReturnParameterJsonDualityViewTable"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP VIEW testReturnParameterJsonDualityView"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies inserts and queries with a JSON Duality View.
+   */
+  @Test
+  public void testJsonDualityView() {
+    // JSON Duality Views were introduced in Oracle Database version 23c, so
+    // this test is skipped if the version is older than 23c.
+    assumeTrue(databaseVersion() >= 23,
+      "JSON Duality Views are not supported by database versions older than" +
+        " 23");
+
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testJsonDualityViewTable (" +
+          "id NUMBER PRIMARY KEY, value VARCHAR(1000))"));
+      awaitExecution(connection.createStatement(
+        "CREATE JSON DUALITY VIEW testJsonDualityView AS" +
+          " SELECT JSON {'id' : t.id, 'value' : t.value}" +
+          " FROM testJsonDualityViewTable t" +
+          " WITH INSERT UPDATE DELETE"));
+
+      // Verify an insert
+      OracleJsonObject insertObject = new OracleJsonFactory().createObject();
+      insertObject.put("id", 1);
+      insertObject.put("value", "a");
+      Statement insert = connection.createStatement(
+        "INSERT INTO testJsonDualityView VALUES (?)")
+        .bind(0, insertObject);
+      awaitUpdate(1, insert);
+
+      // Verify a query
+      Statement query = connection.createStatement(
+        "SELECT data FROM testJsonDualityView");
+      Result queryResult = awaitOne(query.execute());
+      OracleJsonObject queryObject =
+        awaitOne(queryResult.map(row -> row.get(0, OracleJsonObject.class)));
+      queryObject =
+        new OracleJsonFactory().createObject(queryObject);
+      queryObject.remove("_metadata"); // Remove this field for assertEquals
+      assertEquals(insertObject, queryObject);
+
+      // Verify an update that returns generated keys
+      OracleJsonObject updateObject = new OracleJsonFactory().createObject();
+      updateObject.put("id", 1);
+      updateObject.put("value", "b");
+      Statement update = connection.createStatement(
+        "UPDATE testJsonDualityView v" +
+          " SET data = ?" +
+          " WHERE v.data.id = ?");
+      update.bind(0, updateObject);
+      update.bind(1, 1);
+      update.returnGeneratedValues("data");
+      Result updateResult = awaitOne(update.execute());
+      OracleJsonObject generatedUpdateObject =
+        awaitOne(updateResult.map(row -> row.get(0, OracleJsonObject.class)));
+      generatedUpdateObject =
+        new OracleJsonFactory().createObject(generatedUpdateObject);
+      generatedUpdateObject.remove("_metadata"); // Remove this field for assertEquals
+      assertEquals(updateObject, generatedUpdateObject);
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP VIEW testJsonDualityView"));
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testJsonDualityViewTable"));
+      tryAwaitNone(connection.close());
+    }
+
   }
 
   /**
