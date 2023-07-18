@@ -368,6 +368,30 @@ public final class OracleR2dbcOptions {
    */
   public static final Option<CharSequence> NET_ENCRYPTION_TYPES;
 
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_CC_NAME}
+   */
+  public static final Option<CharSequence> KERBEROS_CREDENTIAL_CACHE_NAME;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_MUTUAL}
+   */
+  public static final Option<CharSequence> KERBEROS_MUTUAL_AUTHENTICATION;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_REALM}
+   */
+  public static final Option<CharSequence> KERBEROS_REALM;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_JAAS_LOGIN_MODULE}
+   */
+  public static final Option<CharSequence> KERBEROS_JAAS_LOGIN_MODULE;
+
 
   /** The unmodifiable set of all extended options */
   private static final Set<Option<?>> OPTIONS = Set.of(
@@ -474,7 +498,15 @@ public final class OracleR2dbcOptions {
     NET_ENCRYPTION_LEVEL = Option.valueOf(
       OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_LEVEL),
     NET_ENCRYPTION_TYPES = Option.valueOf(
-      OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES)
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES),
+    KERBEROS_CREDENTIAL_CACHE_NAME = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_CC_NAME),
+    KERBEROS_MUTUAL_AUTHENTICATION = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_MUTUAL),
+    KERBEROS_REALM = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_REALM),
+    KERBEROS_JAAS_LOGIN_MODULE = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_JAAS_LOGIN_MODULE)
   );
 
   /**
