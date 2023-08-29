@@ -56,9 +56,11 @@ public final class OracleR2dbcOptions {
    *   ...
    *   .build();
    * </pre>
-   * If this option is not configured, then Oracle R2DBC will use
-   * {@code ForkJoinPool}'s
-   * {@linkplain ForkJoinPool#commonPool() common pool} by default.
+   * If this option is not configured, then Oracle R2DBC will
+   * use the {@linkplain ForkJoinPool#commonPool() common ForkJoinPool} by
+   * default. However, if the common {@code ForkJoinPool} has a maximum pool
+   * size that is potentially zero, then a single-threaded {@code Executor} will
+   * be used by default.
    */
   public static final Option<Executor> EXECUTOR;
 
