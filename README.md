@@ -239,6 +239,15 @@ located:
 ```
 r2dbc:oracle://?oracle.r2dbc.descriptor=myAlias&TNS_ADMIN=/path/to/tnsnames/
 ```
+This is an example of how connection factory should work with DESCRIPTOR. With springboot 3.x, it requires ConnectionFactoryBuilder.withOptions in order to make it connection factory as option capable
+```
+ return ConnectionFactoryBuilder.withOptions(ConnectionFactoryOptions.builder()
+                .option(ConnectionFactoryOptions.DRIVER, "oracle")
+                .option(OracleR2dbcOptions.DESCRIPTOR, DESCRIPTOR)
+                .option(ConnectionFactoryOptions.USER, "BOP")
+                .option(ConnectionFactoryOptions.PASSWORD, "bop_adm12S")
+        ).build();
+```
 
 #### Configuring an LDAP URL
 Use `ldap` or `ldaps` as the URL protocol to have an Oracle Net Descriptor 
