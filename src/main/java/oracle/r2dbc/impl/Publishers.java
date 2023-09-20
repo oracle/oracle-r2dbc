@@ -46,7 +46,7 @@ class Publishers {
    * {@code onTerminationPublisher} emits an error, it will suppress any error
    * emitted by the first {@code publisher}. If a subscription to the returned
    * publisher is cancelled, the {@code onTerminationPublisher} is subscribed to
-   * it can not emit any error through the cancelled subscription.
+   * but it can not emit any error through the cancelled subscription.
    * </p><p>
    * The returned publisher behaves similarly to: <pre>{@code
    * Flux.concatDelayError(
