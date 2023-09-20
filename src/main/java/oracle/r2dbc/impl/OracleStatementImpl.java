@@ -1026,18 +1026,16 @@ final class OracleStatementImpl implements Statement {
      */
     final Publisher<OracleResultImpl> execute() {
 
-      Mono<OracleResultImpl> deallocate =
-        Mono.from(deallocate()).cast(OracleResultImpl.class);
+      Publisher<Void> deallocate = deallocate();
 
-      return Flux.concatDelayError(
+      return Publishers.concatTerminal(
         Mono.from(bind())
           .thenMany(executeJdbc())
           .map(this::getWarnings)
           .onErrorResume(R2dbcException.class, r2dbcException ->
             Mono.just(createErrorResult(r2dbcException)))
           .doOnNext(OracleResultImpl::addDependent),
-          deallocate)
-        .doOnCancel(deallocate::subscribe);
+        deallocate);
     }
 
     /**
