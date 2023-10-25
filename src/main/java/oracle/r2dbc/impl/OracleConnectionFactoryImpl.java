@@ -108,20 +108,13 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    * configured. It will use the common {@code ForkJoinPool}, unless it has
    * a maximum pool size of 0. See:
    * https://github.com/oracle/oracle-r2dbc/issues/129
-   * </p><p>
-   * As of JDK 11, it appears that ForkJoinPool does not expose a
-   * maximum pool size. {@link ForkJoinPool#getCommonPoolParallelism()} and
-   * {@link ForkJoinPool#getParallelism()} will return 1 when the maximum pool
-   * size is 0. For this reason, the conditional below will check for a
-   * parallelism that is greater than 1, rather than 0. It is noted that
-   * {@code CompletableFuture} uses the same logic when initializing its
-   * USE_COMMON_POOL field.
    * </p>
    */
   private static final Executor DEFAULT_EXECUTOR =
-    ForkJoinPool.getCommonPoolParallelism() > 1
-      ? ForkJoinPool.commonPool()
-      : new ForkJoinPool(1);
+    "0".equals(System.getProperty(
+      "java.util.concurrent.ForkJoinPool.common.parallelism"))
+      ? new ForkJoinPool(1)
+      : ForkJoinPool.commonPool();
 
   /** JDBC data source that this factory uses to open connections */
   private final DataSource dataSource;
