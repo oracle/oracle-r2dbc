@@ -35,7 +35,14 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
+import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
+import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PASSWORD;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -59,8 +66,8 @@ public class OracleConnectionFactoryImplTest {
       ConnectionFactories
         .get(ConnectionFactoryOptions.builder()
           .option(ConnectionFactoryOptions.DRIVER, "oracle")
-          .option(ConnectionFactoryOptions.HOST, "dbhost")
-          .option(ConnectionFactoryOptions.PORT, 1521)
+          .option(HOST, "dbhost")
+          .option(PORT, 1521)
           .option(ConnectionFactoryOptions.DATABASE, "service_name")
           .build())
         .getClass());
@@ -70,8 +77,8 @@ public class OracleConnectionFactoryImplTest {
       ConnectionFactories
         .find(ConnectionFactoryOptions.builder()
           .option(ConnectionFactoryOptions.DRIVER, "oracle")
-          .option(ConnectionFactoryOptions.HOST, "dbhost")
-          .option(ConnectionFactoryOptions.PORT, 1521)
+          .option(HOST, "dbhost")
+          .option(PORT, 1521)
           .option(ConnectionFactoryOptions.DATABASE, "service_name")
           .build())
         .getClass());
@@ -107,25 +114,7 @@ public class OracleConnectionFactoryImplTest {
   public void testCreate() {
     Publisher<? extends Connection> connectionPublisher =
       new OracleConnectionFactoryImpl(connectionFactoryOptions()).create();
-
-    // Expect publisher to emit one connection to each subscriber
-    Set<Connection> connections = new HashSet<>();
-    Flux.from(connectionPublisher)
-      .doOnNext(connections::add)
-      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
-      .blockLast(DatabaseConfig.connectTimeout());
-    assertEquals(1, connections.size());
-    Flux.from(connectionPublisher)
-      .doOnNext(connections::add)
-      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
-      .blockLast(DatabaseConfig.connectTimeout());
-    assertEquals(2, connections.size());
-    Flux.from(connectionPublisher)
-      .doOnNext(connections::add)
-      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
-      .blockLast(DatabaseConfig.connectTimeout());
-    assertEquals(3, connections.size());
-
+    verifyConnectionPublisher(connectionPublisher);
   }
 
   /**
@@ -182,12 +171,58 @@ public class OracleConnectionFactoryImplTest {
       new OracleConnectionFactoryImpl(
         ConnectionFactoryOptions.builder()
           .option(ConnectionFactoryOptions.DRIVER, "oracle")
-          .option(ConnectionFactoryOptions.HOST, "dbhost")
-          .option(ConnectionFactoryOptions.PORT, 1521)
+          .option(HOST, "dbhost")
+          .option(PORT, 1521)
           .option(ConnectionFactoryOptions.DATABASE, "service_name")
           .build())
         .getMetadata()
         .getName());
+  }
+
+  @Test
+  public void testSupplierOption() {
+    Supplier<String> hostSupplier = DatabaseConfig::host;
+    IntSupplier portSupplier = DatabaseConfig::port;
+    Supplier<String> databaseSupplier = DatabaseConfig::serviceName;
+    Supplier<String> userSupplier = DatabaseConfig::user;
+    Supplier<CharSequence> passwordSupplier = DatabaseConfig::password;
+
+    ConnectionFactoryOptions connectionFactoryOptions =
+      connectionFactoryOptions()
+        .mutate()
+        .option(HOST, HOST.cast(hostSupplier))
+        .option(PORT, PORT.cast(portSupplier))
+        .option(DATABASE, DATABASE.cast(databaseSupplier))
+        .option(USER, USER.cast(userSupplier))
+        .option(PASSWORD, PASSWORD.cast(passwordSupplier))
+        .build();
+
+    Publisher<? extends Connection> connectionPublisher =
+      new OracleConnectionFactoryImpl(connectionFactoryOptions).create();
+    verifyConnectionPublisher(connectionPublisher);
+  }
+
+  /** Verifies that a publisher emits connections to multiple subscribers */
+  private static void verifyConnectionPublisher(
+    Publisher<? extends Connection> connectionPublisher) {
+
+    // Expect publisher to emit one connection to each subscriber
+    Set<Connection> connections = new HashSet<>();
+    Flux.from(connectionPublisher)
+      .doOnNext(connections::add)
+      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
+      .blockLast(DatabaseConfig.connectTimeout());
+    assertEquals(1, connections.size());
+    Flux.from(connectionPublisher)
+      .doOnNext(connections::add)
+      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
+      .blockLast(DatabaseConfig.connectTimeout());
+    assertEquals(2, connections.size());
+    Flux.from(connectionPublisher)
+      .doOnNext(connections::add)
+      .doOnNext(connection -> Mono.from(connection.close()).subscribe())
+      .blockLast(DatabaseConfig.connectTimeout());
+    assertEquals(3, connections.size());
   }
 
 }
