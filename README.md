@@ -214,6 +214,37 @@ that is specific to Oracle Database and the Oracle JDBC Driver. Extended options
 are declared in the
 [OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java) class.
 
+#### Support for Supplier and Publisher as Option Values
+The value of _any_ `Option` can be provided by a `Supplier` or `Publisher`. The 
+following example configures the `PASSWORD` option with as `Supplier`:
+```java
+  void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
+    Supplier<CharSequence> passwordSupplier = () -> getCurrentPassword();
+    optionsBuilder.option(PASSWORD, PASSWORD.cast(passwordSupplier)) 
+  }
+```
+A similar code example configures `TLS_WALLET_PASSWORD` as a `Publisher`
+```java
+  void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
+    Publisher<CharSequence> passwordPublisher = Mono.fromSupplier(() -> getWalletPassword());
+    optionsBuilder.option(TLS_WALLET_PASSWORD, TLS_WALLET_PASSWORD.cast(passwordPublisher))
+  }
+```
+Oracle R2DBC requests an `Option` value from a `Supplier` or `Publisher` each 
+`ConnectionFactory.create()` is called to create a new `Connection`. This 
+allows connections to be configured with values that change over time, such as a
+password which is periodically rotated.
+
+If an `Option` is configured as a `Supplier`, then Oracle R2DBC requests the
+value  of that `Option` by invoking its `Supplier.get()` method. If concurrent 
+access to a `ConnectionFactory` is possible, then the `Supplier` must have a 
+thread safe `get()` method, as multiple threads may invoke 
+`ConnectionFactory.create()` concurrently.
+
+If an `Option` is configured as a `Publisher`, then Oracle R2DBC requests the 
+value of that `Option` by subscribing to the `Publisher` and signalling demand.
+The first value emitted to `onNext` will be used as the value of the `Option`.
+
 #### Configuring an Oracle Net Descriptor
 The `oracle.r2dbc.OracleR2dbcOptions.DESCRIPTOR` option may be used to configure
 an Oracle Net Descriptor of the form ```(DESCRIPTION=...)```. If this option is
