@@ -215,7 +215,7 @@ are declared in the
 [OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java) class.
 
 #### Support for Supplier and Publisher as Option Values
-The value of _any_ `Option` can be provided by a `Supplier` or `Publisher`. The 
+The value of most options can be provided by a `Supplier` or `Publisher`. The 
 following example configures the `PASSWORD` option with as `Supplier`:
 ```java
   void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
@@ -231,19 +231,30 @@ A similar code example configures `TLS_WALLET_PASSWORD` as a `Publisher`
   }
 ```
 Oracle R2DBC requests an `Option` value from a `Supplier` or `Publisher` each 
-`ConnectionFactory.create()` is called to create a new `Connection`. This 
+time `ConnectionFactory.create()` is called to create a new `Connection`. This 
 allows connections to be configured with values that change over time, such as a
-password which is periodically rotated.
+password that is periodically rotated.
 
 If an `Option` is configured as a `Supplier`, then Oracle R2DBC requests the
-value  of that `Option` by invoking its `Supplier.get()` method. If concurrent 
+value  of that `Option` by invoking its `get()` method. If concurrent 
 access to a `ConnectionFactory` is possible, then the `Supplier` must have a 
 thread safe `get()` method, as multiple threads may invoke 
-`ConnectionFactory.create()` concurrently.
+`ConnectionFactory.create()` concurrently. If the `Supplier` returns `null`,
+then no value is configured for the `Option`. If the `Supplier` throws a
+`RuntimeException`, then it is set as the initial cause of an
+`R2dbcException` emitted by `create()` `Publisher`.
 
 If an `Option` is configured as a `Publisher`, then Oracle R2DBC requests the 
 value of that `Option` by subscribing to the `Publisher` and signalling demand.
 The first value emitted to `onNext` will be used as the value of the `Option`.
+If the `Publisher` emits `onComplete` before `onNext`, then no value is 
+configured for the `Option`. If the `Publisher` emits a `Throwable` to `onError`
+before `onNext`, it is set as the initial cause of an `R2dbcException` emitted 
+by `create()` `Publisher`.
+
+A small subset of `Options` can not be configured with a `Supplier` or 
+`Publisher`:
+ - `DRIVER`
 
 #### Configuring an Oracle Net Descriptor
 The `oracle.r2dbc.OracleR2dbcOptions.DESCRIPTOR` option may be used to configure
