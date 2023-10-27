@@ -265,6 +265,6 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
    */
   @Override
   public ConnectionFactoryMetadata getMetadata() {
-    return () -> "Oracle Database";
+    return OracleConnectionFactoryMetadataImpl.INSTANCE;
   }
 }
