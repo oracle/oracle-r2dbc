@@ -3222,7 +3222,7 @@ public class OracleStatementImplTest {
       // Create many statements and execute them in parallel.
       @SuppressWarnings({"unchecked","rawtypes"})
       Publisher<Long>[] publishers =
-        new Publisher[Runtime.getRuntime().availableProcessors() * 4];
+        new Publisher[Runtime.getRuntime().availableProcessors() * 2];
 
       for (int i = 0; i < publishers.length; i++) {
 

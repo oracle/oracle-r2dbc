@@ -102,6 +102,20 @@ import java.util.concurrent.ForkJoinPool;
  */
 final class OracleConnectionFactoryImpl implements ConnectionFactory {
 
+  /**
+   * <p>
+   * The default executor when {@link OracleR2dbcOptions#EXECUTOR} is not
+   * configured. It will use the common {@code ForkJoinPool}, unless it has
+   * a maximum pool size of 0. See:
+   * https://github.com/oracle/oracle-r2dbc/issues/129
+   * </p>
+   */
+  private static final Executor DEFAULT_EXECUTOR =
+    "0".equals(System.getProperty(
+      "java.util.concurrent.ForkJoinPool.common.parallelism"))
+      ? new ForkJoinPool(1)
+      : ForkJoinPool.commonPool();
+
   /** JDBC data source that this factory uses to open connections */
   private final DataSource dataSource;
 
@@ -200,7 +214,7 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
 
     Object executor = options.getValue(OracleR2dbcOptions.EXECUTOR);
     if (executor == null) {
-      this.executor = ForkJoinPool.commonPool();
+      this.executor = DEFAULT_EXECUTOR;
     }
     else if (executor instanceof Executor) {
       this.executor = (Executor) executor;
@@ -267,4 +281,5 @@ final class OracleConnectionFactoryImpl implements ConnectionFactory {
   public ConnectionFactoryMetadata getMetadata() {
     return () -> "Oracle Database";
   }
+
 }
