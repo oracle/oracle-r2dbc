@@ -223,7 +223,7 @@ allows connections to be configured with values that change over time, such as a
 password that gets periodically rotated.
 
 If a `Supplier` provides the value of an `Option`, then Oracle R2DBC requests 
-the value by invoking `Supplier.get()` method. If the `get()` returns `null`,
+the value by invoking `Supplier.get()`. If `get()` returns `null`,
 then no value is configured for the `Option`. If `get()` throws a
 `RuntimeException`, then it is set as the initial cause of an
 `R2dbcException` emitted by the `create()` `Publisher`. If concurrent
@@ -292,6 +292,15 @@ set of options:
 
 Providing values for these options would not be interoperable with
 `io.r2dbc.spi.ConnectionFactories` and `r2dbc-pool`.
+
+Normally, Oracle R2DBC will not retain references to `Option` values after
+`ConnectionFactories.create(ConnectionFactoryOptions)` returns. However, if
+the value of at least one `Option` is provided by a `Supplier` or `Publisher`, 
+then Oracle R2DBC will retain a reference to all `Option` values until the 
+`ConnectionFactory.create()` `Publisher` emits a `Connection` or error. This is
+important to keep in mind when `Option` values may be mutated. In particular,
+a password may only be cleared from memory after the `create()` `Publisher` 
+emits a `Connection` or error.
 
 #### Configuring an Oracle Net Descriptor
 The `oracle.r2dbc.OracleR2dbcOptions.DESCRIPTOR` option may be used to configure
