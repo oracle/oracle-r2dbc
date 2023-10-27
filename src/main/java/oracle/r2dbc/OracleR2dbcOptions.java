@@ -22,10 +22,12 @@ package oracle.r2dbc;
 
 import io.r2dbc.spi.Option;
 import oracle.jdbc.OracleConnection;
+import org.reactivestreams.Publisher;
 
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
+import java.util.function.Supplier;
 
 /**
  * Extended {@link Option}s supported by the Oracle R2DBC Driver.
@@ -486,6 +488,68 @@ public final class OracleR2dbcOptions {
    */
   public static Set<Option<?>> options() {
     return OPTIONS;
+  }
+
+  /**
+   * <p>
+   * Casts an <code>Option&lt;T&gt;</code> to
+   * <code>Option&lt;Supplier&lt;T&gt;&gt;</code>. For instance, if an
+   * <code>Option&lt;CharSequence&gt;</code> is passed to this method, it is
+   * returned as an
+   * <code>Option&lt;Supplier&lt;CharSequence&gt;&gt;</code>.
+   * </p><p>
+   * This method can used when configuring an <code>Option</code> with values
+   * from a <code>Supplier</code>:
+   * <pre>{@code
+   * void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
+   *   optionsBuilder.option(supplied(PASSWORD), () -> getPassword());
+   * }
+   *
+   * CharSequence getPassword() {
+   *   // ... return a database password ...
+   * }
+   * }</pre>
+   * </p><p>
+   * It is not strictly necessary to use this method when configuring an
+   * <code>Option</code> with a value from a <code>Supplier</code>. This method
+   * is offered for code readability and convenience.
+   * </p>
+   */
+  public static <T> Option<Supplier<T>> supplied(Option<T> option) {
+    @SuppressWarnings("unchecked")
+    Option<Supplier<T>> supplierOption = (Option<Supplier<T>>)option;
+    return supplierOption;
+  }
+
+  /**
+   * <p>
+   * Casts an <code>Option&lt;T&gt;</code> to
+   * <code>Option&lt;Publisher&lt;T&gt;&gt;</code>. For instance, if an
+   * <code>Option&lt;CharSequence&gt;</code> is passed to this method, it
+   * is returned as an
+   * <code>Option&lt;Publisher&lt;CharSequence&gt;&gt;</code>.
+   * </p><p>
+   * This method can used when configuring an <code>Option</code> with values
+   * from a <code>Publisher</code>:
+   * <pre>{@code
+   * void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
+   *   optionsBuilder.option(published(PASSWORD), getPasswordPublisher());
+   * }
+   *
+   * Publisher<CharSequence> getPasswordPublisher() {
+   *   // ... publish a database password ...
+   * }
+   * }</pre>
+   * </p><p>
+   * It is not strictly necessary to use this method when configuring an
+   * <code>Option</code> with a value from a <code>Publisher</code>. This method
+   * is offered for code readability and convenience.
+   * </p>
+   */
+  public static <T> Option<Publisher<T>> published(Option<T> option) {
+    @SuppressWarnings("unchecked")
+    Option<Publisher<T>> publisherOption = (Option<Publisher<T>>)option;
+    return publisherOption;
   }
 
 }
