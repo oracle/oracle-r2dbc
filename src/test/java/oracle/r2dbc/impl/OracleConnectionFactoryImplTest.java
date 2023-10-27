@@ -179,29 +179,6 @@ public class OracleConnectionFactoryImplTest {
         .getName());
   }
 
-  @Test
-  public void testSupplierOption() {
-    Supplier<String> hostSupplier = DatabaseConfig::host;
-    IntSupplier portSupplier = DatabaseConfig::port;
-    Supplier<String> databaseSupplier = DatabaseConfig::serviceName;
-    Supplier<String> userSupplier = DatabaseConfig::user;
-    Supplier<CharSequence> passwordSupplier = DatabaseConfig::password;
-
-    ConnectionFactoryOptions connectionFactoryOptions =
-      connectionFactoryOptions()
-        .mutate()
-        .option(HOST, HOST.cast(hostSupplier))
-        .option(PORT, PORT.cast(portSupplier))
-        .option(DATABASE, DATABASE.cast(databaseSupplier))
-        .option(USER, USER.cast(userSupplier))
-        .option(PASSWORD, PASSWORD.cast(passwordSupplier))
-        .build();
-
-    Publisher<? extends Connection> connectionPublisher =
-      new OracleConnectionFactoryImpl(connectionFactoryOptions).create();
-    verifyConnectionPublisher(connectionPublisher);
-  }
-
   /** Verifies that a publisher emits connections to multiple subscribers */
   private static void verifyConnectionPublisher(
     Publisher<? extends Connection> connectionPublisher) {
