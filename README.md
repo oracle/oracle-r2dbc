@@ -242,15 +242,15 @@ thread safe `get()` method, as multiple threads may invoke
 `ConnectionFactory.create()` concurrently. If the `Supplier` returns `null`,
 then no value is configured for the `Option`. If the `Supplier` throws a
 `RuntimeException`, then it is set as the initial cause of an
-`R2dbcException` emitted by `create()` `Publisher`.
+`R2dbcException` emitted by the `create()` `Publisher`.
 
 If an `Option` is configured as a `Publisher`, then Oracle R2DBC requests the 
 value of that `Option` by subscribing to the `Publisher` and signalling demand.
 The first value emitted to `onNext` will be used as the value of the `Option`.
 If the `Publisher` emits `onComplete` before `onNext`, then no value is 
 configured for the `Option`. If the `Publisher` emits a `Throwable` to `onError`
-before `onNext`, it is set as the initial cause of an `R2dbcException` emitted 
-by `create()` `Publisher`.
+before `onNext`, then it is set as the initial cause of an `R2dbcException` 
+emitted by the `create()` `Publisher`.
 
 A small subset of `Options` can not be configured with a `Supplier` or 
 `Publisher`:
