@@ -925,14 +925,11 @@ abstract class OracleResultImpl implements Result {
     protected final <T extends Segment, U> Publisher<U> mapSegments(
       Class<T> segmentType, Function<? super T, U> segmentMapper) {
 
-      @SuppressWarnings("unchecked")
-      Publisher<U> removeDependent = (Publisher<U>) dependentCounter.decrement();
+      Publisher<Void> removeDependent = dependentCounter.decrement();
 
-      return Flux.concatDelayError(
+      return Publishers.concatTerminal(
         mapDependentSegments(segmentType, segmentMapper),
-        removeDependent)
-        .doOnCancel(() ->
-          Mono.from(removeDependent).subscribe());
+        removeDependent);
     }
 
     /**
