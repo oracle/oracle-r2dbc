@@ -217,27 +217,27 @@ are declared in the
 #### Support for Supplier and Publisher as Option Values
 Most options can have a value provided by a `Supplier` or `Publisher`.
 
-Oracle R2DBC requests the value of a `Option` from a `Supplier` or `Publisher`
-each time `ConnectionFactory.create()` is called to create a new `Connection`. This
-allows connections to be configured with values that change over time, such as a
-password that gets periodically rotated.
+Oracle R2DBC requests the value of an `Option` from a `Supplier` or `Publisher`
+each time the `Publisher` returned by `ConnectionFactory.create()` creates a new
+`Connection`. Each `Connection` can then be configured with values that change 
+over time, such as a password which is periodically rotated.
 
 If a `Supplier` provides the value of an `Option`, then Oracle R2DBC requests 
 the value by invoking `Supplier.get()`. If `get()` returns `null`,
 then no value is configured for the `Option`. If `get()` throws a
 `RuntimeException`, then it is set as the initial cause of an
-`R2dbcException` emitted by the `create()` `Publisher`. If concurrent
-access to a `ConnectionFactory` is possible, then the `Supplier` must have a
-thread safe `get()` method, as multiple threads may invoke
-`ConnectionFactory.create()` concurrently.
+`R2dbcException` emitted by the `Publisher` returned by
+`ConnectionFactory.create()`. The `Supplier` must have a thread safe `get()` 
+method, as multiple subscribers may request connections concurrently.
 
 If a `Publisher` provides the value of an `Option`, then Oracle R2DBC requests
 the value by subscribing to the `Publisher` and signalling demand.
 The first value emitted to `onNext` will be used as the value of the `Option`.
 If the `Publisher` emits `onComplete` before `onNext`, then no value is
 configured for the `Option`. If the `Publisher` emits `onError` before `onNext`, 
-then the `Throwable` is set as the initial cause of an `R2dbcException` emitted 
-by the `create()` `Publisher`.
+then the `Throwable` is set as the initial cause of an
+`R2dbcException` emitted by the `Publisher` returned by
+`ConnectionFactory.create()`.
 
 The following example configures the `PASSWORD` option with a `Supplier`:
 ```java
@@ -253,7 +253,7 @@ The following example configures the `PASSWORD` option with a `Supplier`:
     optionsBuilder.option(suppliedOption, supplier); 
   }
 ```
-A similar and more concise example configures `TLS_WALLET_PASSWORD` as a `Publisher`
+A more concise example configures `TLS_WALLET_PASSWORD` as a `Publisher`
 ```java
   void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
     optionsBuilder.option(
@@ -263,13 +263,12 @@ A similar and more concise example configures `TLS_WALLET_PASSWORD` as a `Publis
 ```
 These examples use the `supplied(Option)` and `published(Option)` methods 
 declared by `oracle.r2dbc.OracleR2dbcOptions`. These methods cast an `Option<T>`
-to `Option<Supplier<T>>` or `Option<Publisher<T>>`, respectively. Casting the
-`Option` is required for
-`ConnectionFactoryOptions.Builder.option(Option<T>, T)` to compile and not throw
-a `ClassCastException` at runtime.
-
-It is not strictly necessary to use the `supplied(Option)` or `published(Option)` methods when 
-casting the `Option`. These methods are offered only for code readability and 
+to `Option<Supplier<T>>` and `Option<Publisher<T>>`, respectively. It is 
+necessary to cast the generic type of the `Option` when calling
+`ConnectionFactoryOptions.Builder.option(Option<T>, T)` in order for the call to
+compile and not throw a `ClassCastException` at runtime. It is not strictly 
+required that `supplied(Option)` or `published(Option)` be used to cast the 
+`Option`. These methods are only meant to offer code readability and
 convenience.
 
 Note that the following code would compile, but fails at runtime with a
@@ -285,8 +284,8 @@ To avoid a `ClassCastException`, the generic type of an `Option` must match the
 actual type of the value passed to 
 `ConnectionFactoryOptions.Builder.option(Option<T>, T)`.
 
-Providing values with a `Supplier` or `Publisher` is not supported for a small
-set of options:
+For a small set of options, providing values with a `Supplier` or `Publisher` 
+is not supported:
 - `DRIVER`
 - `PROTOCOL`
 
