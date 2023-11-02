@@ -65,9 +65,9 @@
 
   <properties>
     <java.version>11</java.version>
-    <ojdbc.version>21.7.0.0</ojdbc.version>
+    <ojdbc.version>21.11.0.0</ojdbc.version>
     <r2dbc.version>1.0.0.RELEASE</r2dbc.version>
-    <reactor.version>3.5.0</reactor.version>
+    <reactor.version>3.5.11</reactor.version>
     <reactive-streams.version>1.0.3</reactive-streams.version>
     <junit.version>5.9.1</junit.version>
     <spring-jdbc.version>5.3.19</spring-jdbc.version>
