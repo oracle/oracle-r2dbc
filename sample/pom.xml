@@ -64,7 +64,7 @@
 
   <properties>
     <java.version>11</java.version>
-    <oracle-r2dbc.version>1.1.1</oracle-r2dbc.version>
+    <oracle-r2dbc.version>1.2.0</oracle-r2dbc.version>
     <reactor.version>3.5.11</reactor.version>
   </properties>
 
