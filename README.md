@@ -33,6 +33,7 @@ Fixes in this release:
 
 New features in this release:
 - [Supporting Option Values from Supplier and Publisher](https://github.com/oracle/oracle-r2dbc/pull/137)
+- [Added Options for Kerberos](https://github.com/oracle/oracle-r2dbc/pull/127)
 
 Updated dependencies:
 - Updated Oracle JDBC from 21.7.0.0 to 21.11.0.0
