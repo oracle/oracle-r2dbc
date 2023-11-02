@@ -2,7 +2,13 @@
 
 The Oracle R2DBC Driver is a Java library that supports reactive programming with Oracle Database.
 
-Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified by the Reactive Relational Database Connectivity (R2DBC) project. The R2DBC SPI exposes Reactive Streams as an abstraction for remote database operations. Reactive Streams is a well defined standard for asynchronous, non-blocking, and back-pressured communication. This standard allows an R2DBC driver to interoperate with other reactive libraries and frameworks, such as Spring, Project Reactor, RxJava, and Akka Streams.
+Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified
+by the Reactive Relational Database Connectivity (R2DBC) project. The R2DBC SPI
+exposes Reactive Streams as an abstraction for remote database operations.
+Reactive Streams is a well defined standard for asynchronous, non-blocking, and
+back-pressured communication. This standard allows an R2DBC driver to
+interoperate with other reactive libraries and frameworks, such as Spring,
+Project Reactor, RxJava, and Akka Streams.
 
 ### Learn More About R2DBC:
 [R2DBC Project Home Page](https://r2dbc.io)
@@ -37,7 +43,7 @@ Oracle R2DBC only interoperates with libraries that support the  1.0.0.RELEASE
 version of the R2DBC SPI. When using libraries like Spring and r2dbc-pool, be
 sure to use a version which supports the 1.0.0.RELEASE of the SPI.
 
-Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.7.0.0. Other 
+Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.11.0.0. Other 
 libraries may depend on a different version of Oracle JDBC which is 
 incompatible. To resolve this incompatibility, it may be necessary to explicitly 
 declare the dependency in your project, ie:
@@ -45,7 +51,7 @@ declare the dependency in your project, ie:
 <dependency>
     <groupId>com.oracle.database.jdbc</groupId>
     <artifactId>ojdbc11</artifactId>
-    <version>21.7.0.0</version>
+    <version>21.11.0.0</version>
 </dependency>
 ```
 
@@ -70,8 +76,8 @@ Oracle R2DBC can also be built from source using Maven:
 Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime dependencies:
 - R2DBC SPI 1.0.0.RELEASE
 - Reactive Streams 1.0.3
-- Project Reactor 3.4.18
-- Oracle JDBC 21.7.0.0 for JDK 11 (ojdbc11.jar)
+- Project Reactor 3.5.11
+- Oracle JDBC 21.11.0.0 for JDK 11 (ojdbc11.jar)
   - Oracle R2DBC relies on the Oracle JDBC Driver's [Reactive Extensions
   ](https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/jdbc-reactive-extensions.html#GUID-1C40C43B-3823-4848-8B5A-D2F97A82F79B) APIs.
 
@@ -102,7 +108,9 @@ The following method returns an Oracle R2DBC `ConnectionFactory`
   }
 ```
 
-The following method uses Project Reactor's [Flux](https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html) to open a connection, execute a SQL query, and then close the connection:
+The following method uses Project Reactor's
+[Flux](https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html)
+to open a connection, execute a SQL query, and then close the connection:
 ```java
 Flux.usingWhen(
   getConnectionFactory().create(),
