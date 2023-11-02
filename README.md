@@ -82,7 +82,7 @@ Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime
   ](https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/jdbc-reactive-extensions.html#GUID-1C40C43B-3823-4848-8B5A-D2F97A82F79B) APIs.
 
 The Oracle R2DBC Driver has been verified with Oracle Database versions 18, 19,
- and 21.
+21, and 23.
 
 ## Code Examples
 
