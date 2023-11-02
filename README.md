@@ -285,8 +285,10 @@ The same property can also be configured programmatically:
   .option(OracleR2dbcOptions.TLS_WALLET_LOCATION, "/path/to/wallet")
 ```
 
-The following is a list of all Oracle JDBC connection properties that are 
-supported by Oracle R2DBC:
+The next sections list Oracle JDBC connection properties which are supported by
+Oracle R2DBC.
+
+##### TLS/SSL Connection Properties
   - [oracle.net.tns_admin](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_TNS_ADMIN)
   - [oracle.net.wallet_location](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_WALLET_LOCATION)
   - [oracle.net.wallet_password](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_WALLET_PASSWORD)
@@ -305,6 +307,8 @@ supported by Oracle R2DBC:
   - [ssl.keyManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_SSL_KEYMANAGERFACTORY_ALGORITHM)
   - [ssl.trustManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_SSL_TRUSTMANAGERFACTORY_ALGORITHM)
   - [oracle.net.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_SSL_CONTEXT_PROTOCOL)
+
+##### Miscellaneous Connection Properties
   - [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
   - [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
   - [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
@@ -314,19 +318,49 @@ supported by Oracle R2DBC:
     - Cached query results can cause phantom reads even if the serializable
       transaction isolation level is set. Set this to "false" if using the
       serializable isolation level.
+  - [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
+    - Setting this option to "false" may resolve "ORA-01882: timezone region not
+      found". The ORA-01882 error happens when Oracle Database doesn't recognize
+      the name returned by `java.util.TimeZone.getDefault().getId()`.
+
+##### Database Tracing Connection Properties
   - [v$session.terminal](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL)
   - [v$session.machine](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE)
   - [v$session.osuser](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_OSUSER)
   - [v$session.program](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM)
   - [v$session.process](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS)
-  - [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
-    - Setting this option to "false" may resolve "ORA-01882: timezone region not 
-      found". The ORA-01882 error happens when Oracle Database doesn't recognize 
-      the name returned by `java.util.TimeZone.getDefault().getId()`.
+
+##### Oracle Net Encryption Connection Properties
   - [oracle.net.encryption_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_LEVEL)
   - [oracle.net.encryption_types_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES)
   - [oracle.net.crypto_checksum_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_LEVEL)
   - [oracle.net.crypto_checksum_types_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_TYPES)
+
+##### Kerberos Connection Properties
+  - [oracle.net.kerberos5_cc_name](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_CC_NAME)
+  - [oracle.net.kerberos5_mutual_authentication](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_MUTUAL)
+  - [oracle.net.KerberosRealm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_REALM)
+  - [oracle.net.KerberosJaasLoginModule](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_JAAS_LOGIN_MODULE)
+
+##### LDAP Connection Properties
+  - [oracle.net.ldap.security.authentication](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SECURITY_AUTHENTICATION)
+  - [oracle.net.ldap.security.principal](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SECURITY_PRINCIPAL)
+  - [oracle.net.ldap.security.credentials](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SECURITY_CREDENTIALS)
+  - [com.sun.jndi.ldap.connect.timeout](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_JNDI_LDAP_CONNECT_TIMEOUT)
+  - [com.sun.jndi.ldap.read.timeout](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_JNDI_LDAP_READ_TIMEOUT)
+  - [oracle.net.ldap.ssl.walletLocation](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_WALLET_LOCATION)
+  - [oracle.net.ldap.ssl.walletPassword](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_WALLET_PASSWORD)
+  - [oracle.net.ldap.ssl.keyStoreType](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYSTORE_TYPE)
+  - [oracle.net.ldap.ssl.keyStore](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYSTORE)
+  - [oracle.net.ldap.ssl.keyStorePassword](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYSTORE_PASSWORD)
+  - [oracle.net.ldap.ssl.trustStoreType](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTSTORE_TYPE)
+  - [oracle.net.ldap.ssl.trustStore](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTSTORE)
+  - [oracle.net.ldap.ssl.trustStorePassword](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTSTORE_PASSWORD)
+  - [oracle.net.ldap.ssl.supportedCiphers](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_CIPHER_SUITES)
+  - [oracle.net.ldap.ssl.supportedVersions](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_VERSIONS)
+  - [oracle.net.ldap.ssl.keyManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYMANAGER_FACTORY_ALGORITHM)
+  - [oracle.net.ldap.ssl.trustManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTMANAGER_FACTORY_ALGORITHM)
+  - [oracle.net.ldap.ssl.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_CONTEXT_PROTOCOL)
 
 ### Thread Safety and Parallel Execution
 Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are the only 
