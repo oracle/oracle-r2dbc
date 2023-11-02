@@ -25,35 +25,18 @@ Project Reactor, RxJava, and Akka Streams.
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
 
 # About This Version
-The 1.1.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
+The 1.2.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
 
 Fixes in this release:
- - [Resolved a memory leak of java.sql.ResultSet objects](https://github.com/oracle/oracle-r2dbc/pull/88)
- - [Warnings are no longer emitted as onError signals](https://github.com/oracle/oracle-r2dbc/pull/98)
- - [The option to disable DN Matching is no longer ignored](https://github.com/oracle/oracle-r2dbc/pull/103)
+ - [Fixed "Operator has been terminated" message](https://github.com/oracle/oracle-r2dbc/pull/134)
+ - [Checking for Zero Threads in the common ForkJoinPool](https://github.com/oracle/oracle-r2dbc/pull/131)
 
 New features in this release:
-- [Added an option to configure oracle.jdbc.timezoneAsRegion](https://github.com/oracle/oracle-r2dbc/pull/81)
-- [Added support for LDAP URLs](https://github.com/oracle/oracle-r2dbc/pull/99)
-- [Added support for REF CURSOR values](https://github.com/oracle/oracle-r2dbc/pull/94)
-- [Added support for user defined ARRAY and OBJECT types](https://github.com/oracle/oracle-r2dbc/pull/104)
+- [Supporting Option Values from Supplier and Publisher](https://github.com/oracle/oracle-r2dbc/pull/137)
 
-### Integration with Spring and Other Libraries
-Oracle R2DBC only interoperates with libraries that support the  1.0.0.RELEASE
-version of the R2DBC SPI. When using libraries like Spring and r2dbc-pool, be
-sure to use a version which supports the 1.0.0.RELEASE of the SPI.
-
-Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.11.0.0. Other 
-libraries may depend on a different version of Oracle JDBC which is 
-incompatible. To resolve this incompatibility, it may be necessary to explicitly 
-declare the dependency in your project, ie:
-```xml
-<dependency>
-    <groupId>com.oracle.database.jdbc</groupId>
-    <artifactId>ojdbc11</artifactId>
-    <version>21.11.0.0</version>
-</dependency>
-```
+Updated dependencies:
+- Updated Oracle JDBC from 21.7.0.0 to 21.11.0.0
+- Updated Project Reactor from 3.5.0 to 3.5.11
 
 ## Installation
 Oracle R2DBC can be obtained from Maven Central.
@@ -61,7 +44,7 @@ Oracle R2DBC can be obtained from Maven Central.
 <dependency>
   <groupId>com.oracle.database.r2dbc</groupId>
   <artifactId>oracle-r2dbc</artifactId>
-  <version>1.0.0</version>
+  <version>1.2.0</version>
 </dependency>
 ```
 
@@ -83,6 +66,23 @@ Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime
 
 The Oracle R2DBC Driver has been verified with Oracle Database versions 18, 19,
 21, and 23.
+
+### Integration with Spring and Other Libraries
+Oracle R2DBC can only interoperate with libraries that support the 1.0.0.RELEASE
+version of the R2DBC SPI. When using libraries like Spring and r2dbc-pool, be
+sure to use a version which supports the 1.0.0.RELEASE of the SPI.
+
+Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.11.0.0. Other
+libraries may depend on a different version of Oracle JDBC, and this version may
+be incompatible. To resolve incompatibilities, it may be necessary to explicitly
+declare the dependency in your project, ie:
+```xml
+<dependency>
+    <groupId>com.oracle.database.jdbc</groupId>
+    <artifactId>ojdbc11</artifactId>
+    <version>21.11.0.0</version>
+</dependency>
+```
 
 ## Code Examples
 
@@ -189,8 +189,10 @@ the Reactive Streams 1.0.3 [Specification](https://github.com/reactive-streams/r
 and [Javadoc](http://www.reactive-streams.org/reactive-streams-1.0.3-javadoc/org/reactivestreams/package-summary.html)
 
 The R2DBC and Reactive Streams specifications include requirements that are
-optional for a compliant implementation. The remainder of this document specifies 
-the Oracle R2DBC Driver's implementation of these optional requirements.
+optional for a compliant implementation. Oracle R2DBC's implementation of these
+optional are specified in this document. This document also specifies additional
+functionality that is supported by Oracle R2DBC, but is not part of the R2DBC
+1.0.0 Specification.
 
 ### Connection Creation
 The Oracle R2DBC Driver is identified by the name "oracle". The driver 
