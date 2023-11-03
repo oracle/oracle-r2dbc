@@ -96,7 +96,11 @@ public final class OracleConnectionFactoryProviderImpl
   public ConnectionFactory create(ConnectionFactoryOptions options) {
     assert supports(options) : "Options are not supported: " + options;
     requireNonNull(options, "options must not be null.");
-    return new OracleConnectionFactoryImpl(options);
+
+    if (SuppliedOptionConnectionFactory.containsSuppliedValue(options))
+      return new SuppliedOptionConnectionFactory(options);
+    else
+      return new OracleConnectionFactoryImpl(options);
   }
 
   /**

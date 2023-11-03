@@ -214,6 +214,93 @@ that is specific to Oracle Database and the Oracle JDBC Driver. Extended options
 are declared in the
 [OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java) class.
 
+#### Support for Supplier and Publisher as Option Values
+Most options can have a value provided by a `Supplier` or `Publisher`.
+
+Oracle R2DBC requests the value of an `Option` from a `Supplier` or `Publisher`
+each time the `Publisher` returned by `ConnectionFactory.create()` creates a new
+`Connection`. Each `Connection` can then be configured with values that change 
+over time, such as a password which is periodically rotated.
+
+If a `Supplier` provides the value of an `Option`, then Oracle R2DBC requests 
+the value by invoking `Supplier.get()`. If `get()` returns `null`,
+then no value is configured for the `Option`. If `get()` throws a
+`RuntimeException`, then it is set as the initial cause of an
+`R2dbcException` emitted by the `Publisher` returned by
+`ConnectionFactory.create()`. The `Supplier` must have a thread safe `get()` 
+method, as multiple subscribers may request connections concurrently.
+
+If a `Publisher` provides the value of an `Option`, then Oracle R2DBC requests
+the value by subscribing to the `Publisher` and signalling demand.
+The first value emitted to `onNext` will be used as the value of the `Option`.
+If the `Publisher` emits `onComplete` before `onNext`, then no value is
+configured for the `Option`. If the `Publisher` emits `onError` before `onNext`, 
+then the `Throwable` is set as the initial cause of an
+`R2dbcException` emitted by the `Publisher` returned by
+`ConnectionFactory.create()`.
+
+The following example configures the `PASSWORD` option with a `Supplier`:
+```java
+  void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
+  
+    // Cast the PASSWORD option
+    Option<Supplier<CharSequence>> suppliedOption = OracleR2dbcOptions.supplied(PASSWORD);
+    
+    // Supply a password
+    Supplier<CharSequence> supplier = () -> getPassword();
+    
+    // Configure the builder
+    optionsBuilder.option(suppliedOption, supplier); 
+  }
+```
+A more concise example configures `TLS_WALLET_PASSWORD` as a `Publisher`
+```java
+  void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
+    optionsBuilder.option(
+      OracleR2dbcOptions.published(TLS_WALLET_PASSWORD),
+      Mono.fromSupplier(() -> getWalletPassword()));
+  }
+```
+These examples use the `supplied(Option)` and `published(Option)` methods 
+declared by `oracle.r2dbc.OracleR2dbcOptions`. These methods cast an `Option<T>`
+to `Option<Supplier<T>>` and `Option<Publisher<T>>`, respectively. It is 
+necessary to cast the generic type of the `Option` when calling
+`ConnectionFactoryOptions.Builder.option(Option<T>, T)` in order for the call to
+compile and not throw a `ClassCastException` at runtime. It is not strictly 
+required that `supplied(Option)` or `published(Option)` be used to cast the 
+`Option`. These methods are only meant to offer code readability and
+convenience.
+
+Note that the following code would compile, but fails at runtime with a
+`ClassCastException`:
+```java
+  void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
+    Publisher<CharSequence> publisher = Mono.fromSupplier(() -> getPassword());
+    // Doesn't work. Throws ClassCastException at runtime:
+    optionsBuilder.option(PASSWORD, PASSWORD.cast(publisher));
+  }
+```
+To avoid a `ClassCastException`, the generic type of an `Option` must match the
+actual type of the value passed to 
+`ConnectionFactoryOptions.Builder.option(Option<T>, T)`.
+
+For a small set of options, providing values with a `Supplier` or `Publisher` 
+is not supported:
+- `DRIVER`
+- `PROTOCOL`
+
+Providing values for these options would not be interoperable with
+`io.r2dbc.spi.ConnectionFactories` and `r2dbc-pool`.
+
+Normally, Oracle R2DBC will not retain references to `Option` values after
+`ConnectionFactories.create(ConnectionFactoryOptions)` returns. However, if
+the value of at least one `Option` is provided by a `Supplier` or `Publisher`, 
+then Oracle R2DBC will retain a reference to all `Option` values until the 
+`ConnectionFactory.create()` `Publisher` emits a `Connection` or error. This is
+important to keep in mind when `Option` values may be mutated. In particular,
+a password may only be cleared from memory after the `create()` `Publisher` 
+emits a `Connection` or error.
+
 #### Configuring an Oracle Net Descriptor
 The `oracle.r2dbc.OracleR2dbcOptions.DESCRIPTOR` option may be used to configure
 an Oracle Net Descriptor of the form ```(DESCRIPTION=...)```. If this option is

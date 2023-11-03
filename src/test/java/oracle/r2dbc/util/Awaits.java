@@ -104,9 +104,9 @@ public final class Awaits {
    * @throws Throwable If the publisher emits {@code onError} with a
    * {@code Throwable} that is not an instance of {@code errorType}.
    */
-  public static void awaitError(
-    Class<? extends Throwable> errorType, Publisher<?> errorPublisher) {
-    assertThrows(
+  public static <T extends Throwable> T awaitError(
+    Class<T> errorType, Publisher<?> errorPublisher) {
+    return assertThrows(
       errorType,
       () -> Flux.from(errorPublisher).blockLast(sqlTimeout()),
       "Unexpected signal from Publisher of an error");
