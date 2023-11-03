@@ -51,7 +51,7 @@ echo "touch $startUpMount/done" > $startUpScripts/99_done.sh
 # TODO: Also test with newer database versions
 git clone https://github.com/oracle/docker-images.git
 cd docker-images/OracleDatabase/SingleInstance/dockerfiles/
-./buildContainerImage.sh -v 18.4.0 -x
+./buildContainerImage.sh -v 23.2.0 -f
 
 # Run the image in a detached container
 # The startup directory is mounted. It contains a createUser.sql script that
