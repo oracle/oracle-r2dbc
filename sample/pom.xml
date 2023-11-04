@@ -25,7 +25,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.oracle.database.r2dbc</groupId>
   <artifactId>oracle-r2dbc-samples</artifactId>
-  <version>0.2.0</version>
+  <version>1.2.0</version>
   <name>oracle-r2dbc-samples</name>
   <description>
     Code examples for the Oracle R2DBC Driver 
@@ -64,8 +64,8 @@
 
   <properties>
     <java.version>11</java.version>
-    <oracle-r2dbc.version>0.3.0</oracle-r2dbc.version>
-    <reactor.version>3.3.0.RELEASE</reactor.version>
+    <oracle-r2dbc.version>1.2.0</oracle-r2dbc.version>
+    <reactor.version>3.5.11</reactor.version>
   </properties>
 
   <build>

@@ -50,17 +50,17 @@ import static oracle.r2dbc.samples.DatabaseConfig.WALLET_LOCATION;
  *  <dependency>
  *    <groupId>com.oracle.database.security</groupId>
  *    <artifactId>oraclepki</artifactId>
- *    <version>21.1.0.0</version>
+ *    <version>21.11.0.0</version>
  *  </dependency>
  *  <dependency>
  *    <groupId>com.oracle.database.security</groupId>
  *    <artifactId>osdt_cert</artifactId>
- *    <version>21.1.0.0</version>
+ *    <version>21.11.0.0</version>
  *  </dependency>
  *  <dependency>
  *    <groupId>com.oracle.database.security</groupId>
  *    <artifactId>osdt_core</artifactId>
- *    <version>21.1.0.0</version>
+ *    <version>21.11.0.0</version>
  *  </dependency>
  * </pre>
  *

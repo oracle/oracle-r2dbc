@@ -2,7 +2,13 @@
 
 The Oracle R2DBC Driver is a Java library that supports reactive programming with Oracle Database.
 
-Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified by the Reactive Relational Database Connectivity (R2DBC) project. The R2DBC SPI exposes Reactive Streams as an abstraction for remote database operations. Reactive Streams is a well defined standard for asynchronous, non-blocking, and back-pressured communication. This standard allows an R2DBC driver to interoperate with other reactive libraries and frameworks, such as Spring, Project Reactor, RxJava, and Akka Streams.
+Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified
+by the Reactive Relational Database Connectivity (R2DBC) project. The R2DBC SPI
+exposes Reactive Streams as an abstraction for remote database operations.
+Reactive Streams is a well defined standard for asynchronous, non-blocking, and
+back-pressured communication. This standard allows an R2DBC driver to
+interoperate with other reactive libraries and frameworks, such as Spring,
+Project Reactor, RxJava, and Akka Streams.
 
 ### Learn More About R2DBC:
 [R2DBC Project Home Page](https://r2dbc.io)
@@ -19,35 +25,19 @@ Oracle R2DBC implements the R2DBC Service Provider Interface (SPI) as specified 
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
 
 # About This Version
-The 1.1.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
+The 1.2.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
 
 Fixes in this release:
- - [Resolved a memory leak of java.sql.ResultSet objects](https://github.com/oracle/oracle-r2dbc/pull/88)
- - [Warnings are no longer emitted as onError signals](https://github.com/oracle/oracle-r2dbc/pull/98)
- - [The option to disable DN Matching is no longer ignored](https://github.com/oracle/oracle-r2dbc/pull/103)
+ - [Fixed "Operator has been terminated" message](https://github.com/oracle/oracle-r2dbc/pull/134)
+ - [Checking for Zero Threads in the common ForkJoinPool](https://github.com/oracle/oracle-r2dbc/pull/131)
 
 New features in this release:
-- [Added an option to configure oracle.jdbc.timezoneAsRegion](https://github.com/oracle/oracle-r2dbc/pull/81)
-- [Added support for LDAP URLs](https://github.com/oracle/oracle-r2dbc/pull/99)
-- [Added support for REF CURSOR values](https://github.com/oracle/oracle-r2dbc/pull/94)
-- [Added support for user defined ARRAY and OBJECT types](https://github.com/oracle/oracle-r2dbc/pull/104)
+- [Supporting Option Values from Supplier and Publisher](https://github.com/oracle/oracle-r2dbc/pull/137)
+- [Added Options for Kerberos](https://github.com/oracle/oracle-r2dbc/pull/127)
 
-### Integration with Spring and Other Libraries
-Oracle R2DBC only interoperates with libraries that support the  1.0.0.RELEASE
-version of the R2DBC SPI. When using libraries like Spring and r2dbc-pool, be
-sure to use a version which supports the 1.0.0.RELEASE of the SPI.
-
-Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.7.0.0. Other 
-libraries may depend on a different version of Oracle JDBC which is 
-incompatible. To resolve this incompatibility, it may be necessary to explicitly 
-declare the dependency in your project, ie:
-```xml
-<dependency>
-    <groupId>com.oracle.database.jdbc</groupId>
-    <artifactId>ojdbc11</artifactId>
-    <version>21.7.0.0</version>
-</dependency>
-```
+Updated dependencies:
+- Updated Oracle JDBC from 21.7.0.0 to 21.11.0.0
+- Updated Project Reactor from 3.5.0 to 3.5.11
 
 ## Installation
 Oracle R2DBC can be obtained from Maven Central.
@@ -55,7 +45,7 @@ Oracle R2DBC can be obtained from Maven Central.
 <dependency>
   <groupId>com.oracle.database.r2dbc</groupId>
   <artifactId>oracle-r2dbc</artifactId>
-  <version>1.0.0</version>
+  <version>1.2.0</version>
 </dependency>
 ```
 
@@ -70,13 +60,30 @@ Oracle R2DBC can also be built from source using Maven:
 Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime dependencies:
 - R2DBC SPI 1.0.0.RELEASE
 - Reactive Streams 1.0.3
-- Project Reactor 3.4.18
-- Oracle JDBC 21.7.0.0 for JDK 11 (ojdbc11.jar)
+- Project Reactor 3.5.11
+- Oracle JDBC 21.11.0.0 for JDK 11 (ojdbc11.jar)
   - Oracle R2DBC relies on the Oracle JDBC Driver's [Reactive Extensions
   ](https://docs.oracle.com/en/database/oracle/oracle-database/21/jjdbc/jdbc-reactive-extensions.html#GUID-1C40C43B-3823-4848-8B5A-D2F97A82F79B) APIs.
 
 The Oracle R2DBC Driver has been verified with Oracle Database versions 18, 19,
- and 21.
+21, and 23.
+
+### Integration with Spring and Other Libraries
+Oracle R2DBC can only interoperate with libraries that support the 1.0.0.RELEASE
+version of the R2DBC SPI. When using libraries like Spring and r2dbc-pool, be
+sure to use a version which supports the 1.0.0.RELEASE of the SPI.
+
+Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.11.0.0. Other
+libraries may depend on a different version of Oracle JDBC, and this version may
+be incompatible. To resolve incompatibilities, it may be necessary to explicitly
+declare the dependency in your project, ie:
+```xml
+<dependency>
+    <groupId>com.oracle.database.jdbc</groupId>
+    <artifactId>ojdbc11</artifactId>
+    <version>21.11.0.0</version>
+</dependency>
+```
 
 ## Code Examples
 
@@ -102,7 +109,9 @@ The following method returns an Oracle R2DBC `ConnectionFactory`
   }
 ```
 
-The following method uses Project Reactor's [Flux](https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html) to open a connection, execute a SQL query, and then close the connection:
+The following method uses Project Reactor's
+[Flux](https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html)
+to open a connection, execute a SQL query, and then close the connection:
 ```java
 Flux.usingWhen(
   getConnectionFactory().create(),
@@ -181,8 +190,10 @@ the Reactive Streams 1.0.3 [Specification](https://github.com/reactive-streams/r
 and [Javadoc](http://www.reactive-streams.org/reactive-streams-1.0.3-javadoc/org/reactivestreams/package-summary.html)
 
 The R2DBC and Reactive Streams specifications include requirements that are
-optional for a compliant implementation. The remainder of this document specifies 
-the Oracle R2DBC Driver's implementation of these optional requirements.
+optional for a compliant implementation. Oracle R2DBC's implementation of these
+optional are specified in this document. This document also specifies additional
+functionality that is supported by Oracle R2DBC, but is not part of the R2DBC
+1.0.0 Specification.
 
 ### Connection Creation
 The Oracle R2DBC Driver is identified by the name "oracle". The driver 
@@ -372,8 +383,10 @@ The same property can also be configured programmatically:
   .option(OracleR2dbcOptions.TLS_WALLET_LOCATION, "/path/to/wallet")
 ```
 
-The following is a list of all Oracle JDBC connection properties that are 
-supported by Oracle R2DBC:
+The next sections list Oracle JDBC connection properties which are supported by
+Oracle R2DBC.
+
+##### TLS/SSL Connection Properties
   - [oracle.net.tns_admin](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_TNS_ADMIN)
   - [oracle.net.wallet_location](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_WALLET_LOCATION)
   - [oracle.net.wallet_password](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_WALLET_PASSWORD)
@@ -392,6 +405,8 @@ supported by Oracle R2DBC:
   - [ssl.keyManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_SSL_KEYMANAGERFACTORY_ALGORITHM)
   - [ssl.trustManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_SSL_TRUSTMANAGERFACTORY_ALGORITHM)
   - [oracle.net.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_SSL_CONTEXT_PROTOCOL)
+
+##### Miscellaneous Connection Properties
   - [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
   - [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
   - [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
@@ -401,19 +416,49 @@ supported by Oracle R2DBC:
     - Cached query results can cause phantom reads even if the serializable
       transaction isolation level is set. Set this to "false" if using the
       serializable isolation level.
+  - [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
+    - Setting this option to "false" may resolve "ORA-01882: timezone region not
+      found". The ORA-01882 error happens when Oracle Database doesn't recognize
+      the name returned by `java.util.TimeZone.getDefault().getId()`.
+
+##### Database Tracing Connection Properties
   - [v$session.terminal](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL)
   - [v$session.machine](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_MACHINE)
   - [v$session.osuser](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_OSUSER)
   - [v$session.program](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROGRAM)
   - [v$session.process](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_PROCESS)
-  - [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
-    - Setting this option to "false" may resolve "ORA-01882: timezone region not 
-      found". The ORA-01882 error happens when Oracle Database doesn't recognize 
-      the name returned by `java.util.TimeZone.getDefault().getId()`.
+
+##### Oracle Net Encryption Connection Properties
   - [oracle.net.encryption_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_LEVEL)
   - [oracle.net.encryption_types_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_ENCRYPTION_TYPES)
   - [oracle.net.crypto_checksum_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_LEVEL)
   - [oracle.net.crypto_checksum_types_client](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_CHECKSUM_TYPES)
+
+##### Kerberos Connection Properties
+  - [oracle.net.kerberos5_cc_name](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_CC_NAME)
+  - [oracle.net.kerberos5_mutual_authentication](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB5_MUTUAL)
+  - [oracle.net.KerberosRealm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_REALM)
+  - [oracle.net.KerberosJaasLoginModule](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_JAAS_LOGIN_MODULE)
+
+##### LDAP Connection Properties
+  - [oracle.net.ldap.security.authentication](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SECURITY_AUTHENTICATION)
+  - [oracle.net.ldap.security.principal](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SECURITY_PRINCIPAL)
+  - [oracle.net.ldap.security.credentials](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SECURITY_CREDENTIALS)
+  - [com.sun.jndi.ldap.connect.timeout](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_JNDI_LDAP_CONNECT_TIMEOUT)
+  - [com.sun.jndi.ldap.read.timeout](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_JNDI_LDAP_READ_TIMEOUT)
+  - [oracle.net.ldap.ssl.walletLocation](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_WALLET_LOCATION)
+  - [oracle.net.ldap.ssl.walletPassword](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_WALLET_PASSWORD)
+  - [oracle.net.ldap.ssl.keyStoreType](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYSTORE_TYPE)
+  - [oracle.net.ldap.ssl.keyStore](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYSTORE)
+  - [oracle.net.ldap.ssl.keyStorePassword](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYSTORE_PASSWORD)
+  - [oracle.net.ldap.ssl.trustStoreType](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTSTORE_TYPE)
+  - [oracle.net.ldap.ssl.trustStore](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTSTORE)
+  - [oracle.net.ldap.ssl.trustStorePassword](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTSTORE_PASSWORD)
+  - [oracle.net.ldap.ssl.supportedCiphers](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_CIPHER_SUITES)
+  - [oracle.net.ldap.ssl.supportedVersions](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_VERSIONS)
+  - [oracle.net.ldap.ssl.keyManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYMANAGER_FACTORY_ALGORITHM)
+  - [oracle.net.ldap.ssl.trustManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTMANAGER_FACTORY_ALGORITHM)
+  - [oracle.net.ldap.ssl.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_CONTEXT_PROTOCOL)
 
 ### Thread Safety and Parallel Execution
 Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are the only 
