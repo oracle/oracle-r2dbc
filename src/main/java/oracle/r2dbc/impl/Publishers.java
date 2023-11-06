@@ -53,11 +53,11 @@ class Publishers {
    *   publisher,
    *   onTerminationPublisher)
    *   .doOnCancel(onTerminationPublisher::subscribe)
-   * }</pre>
+   * }</pre><p>
    * However, the code above can result in:
-   * <pre>
+   * </p><pre>
    *   reactor.core.Exceptions$StaticThrowable: Operator has been terminated
-   * </pre>
+   * </pre><p>
    * This seems to happen when the concatDelayError publisher receives a cancel
    * from a downstream subscriber after it has already received onComplete from
    * a upstream publisher.

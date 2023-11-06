@@ -534,7 +534,7 @@ public final class OracleR2dbcOptions {
    * </p><p>
    * This method can used when configuring an <code>Option</code> with values
    * from a <code>Supplier</code>:
-   * <pre>{@code
+   * </p><pre>{@code
    * void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
    *   optionsBuilder.option(supplied(PASSWORD), () -> getPassword());
    * }
@@ -542,12 +542,14 @@ public final class OracleR2dbcOptions {
    * CharSequence getPassword() {
    *   // ... return a database password ...
    * }
-   * }</pre>
-   * </p><p>
+   * }</pre><p>
    * It is not strictly necessary to use this method when configuring an
    * <code>Option</code> with a value from a <code>Supplier</code>. This method
    * is offered for code readability and convenience.
    * </p>
+   * @param <T> The original value type of the option.
+   * @param option The option to cast.
+   * @return The option cast to have a Supplier value type.
    */
   public static <T> Option<Supplier<T>> supplied(Option<T> option) {
     @SuppressWarnings("unchecked")
@@ -565,7 +567,7 @@ public final class OracleR2dbcOptions {
    * </p><p>
    * This method can used when configuring an <code>Option</code> with values
    * from a <code>Publisher</code>:
-   * <pre>{@code
+   * </p><pre>{@code
    * void configurePassword(ConnectionFactoryOptions.Builder optionsBuilder) {
    *   optionsBuilder.option(published(PASSWORD), getPasswordPublisher());
    * }
@@ -573,12 +575,14 @@ public final class OracleR2dbcOptions {
    * Publisher<CharSequence> getPasswordPublisher() {
    *   // ... publish a database password ...
    * }
-   * }</pre>
-   * </p><p>
+   * }</pre><p>
    * It is not strictly necessary to use this method when configuring an
    * <code>Option</code> with a value from a <code>Publisher</code>. This method
    * is offered for code readability and convenience.
    * </p>
+   * @param <T> The original value type of the option.
+   * @param option The option to cast.
+   * @return The option cast to have a Publisher value type.
    */
   public static <T> Option<Publisher<T>> published(Option<T> option) {
     @SuppressWarnings("unchecked")
