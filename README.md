@@ -416,7 +416,7 @@ Oracle R2DBC.
     - Cached query results can cause phantom reads even if the serializable
       transaction isolation level is set. Set this to "false" if using the
       serializable isolation level.
-  - [oracle.jdbc.timeZoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
+  - [oracle.jdbc.timezoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
     - Setting this option to "false" may resolve "ORA-01882: timezone region not
       found". The ORA-01882 error happens when Oracle Database doesn't recognize
       the name returned by `java.util.TimeZone.getDefault().getId()`.
