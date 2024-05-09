@@ -65,7 +65,7 @@
 
   <properties>
     <java.version>11</java.version>
-    <ojdbc.version>21.11.0.0</ojdbc.version>
+    <ojdbc.version>23.4.0.24.05</ojdbc.version>
     <r2dbc.version>1.0.0.RELEASE</r2dbc.version>
     <reactor.version>3.5.11</reactor.version>
     <reactive-streams.version>1.0.3</reactive-streams.version>

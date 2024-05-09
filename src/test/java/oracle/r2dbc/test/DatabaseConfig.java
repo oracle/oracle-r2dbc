@@ -189,6 +189,20 @@ public final class DatabaseConfig {
   }
 
   /**
+   * Returns the major version number of the Oracle JDBC Driver installed as
+   * a service provider for java.sql.Driver.
+   * @return The major version number, such as 21 or 23.
+   */
+  public static int jdbcVersion() {
+    try {
+      return DriverManager.getDriver("jdbc:oracle:thin:").getMajorVersion();
+    }
+    catch (SQLException sqlException) {
+      throw new AssertionError(sqlException);
+    }
+  }
+
+  /**
    * Returns the options parsed from the "config.properties" resource.
    */
   public static ConnectionFactoryOptions connectionFactoryOptions() {

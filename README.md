@@ -460,7 +460,7 @@ Oracle R2DBC.
   - [oracle.net.ldap.ssl.trustManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTMANAGER_FACTORY_ALGORITHM)
   - [oracle.net.ldap.ssl.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/21/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_CONTEXT_PROTOCOL)
 
-### Thread Safety and Parallel Execution
+### Thread Safety
 Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are the only 
 classes that have a thread safe implementation. All other classes implemented 
 by Oracle R2DBC are not thread safe. For instance, it is not safe for multiple
@@ -468,25 +468,129 @@ threads to concurrently access a single instance of `Result`.
 > It is recommended to use a Reactive Streams library such as Project Reactor
 > or RxJava to manage the consumption of non-thread safe objects
 
-Oracle Database does not allow multiple database calls to execute in parallel
-over a single `Connection`. If an attempt is made to execute a database call
-before a previous call has completed, then Oracle R2DBC will enqueue that call
-and only execute it after the previous call has completed.
+While it is not safe for multiple threads to concurrently access the _same_ 
+object, it is safe from them to do so with _different_ objects from the _same_
+`Connection`. For example, two threads can concurrently subscribe to two
+`Statement` objects from the same `Connection`. When this happens, the two 
+statements are executed in a "pipeline". Pipelining will be covered in the next
+section.
 
-To illustrate, the following code attempts to execute two statements in 
-parallel:
+### Pipelining
+Pipelining allows Oracle R2DBC to send a call without having to wait for a previous call
+to complete. [If all requirements are met](#requirements-for-pipelining), then
+pipelining will be activated by concurrently subscribing to publishers 
+from the same connection. For example, the following code concurrently
+subscribes to two statements:
 ```java
 Flux.merge(
   connection.createStatement(
-    "INSERT INTO example (id, value) VALUES (0, 'x')")
+    "INSERT INTO example (id, value) VALUES (0, 'X')")
     .execute(),
   connection.createStatement(
-    "INSERT INTO example (id, value) VALUES (1, 'y')")
+    "INSERT INTO example (id, value) VALUES (1, 'Y')")
     .execute())
 ```
-When the publisher of the second statement is subscribed to, Oracle R2DBC will 
-enqueue a task for sending that statement to the database. The enqueued task 
-will only be executed after the publisher of the first statement has completed.
+When the `Publisher` returned by `merge` is subscribed to, both INSERTs are 
+immediately sent to the database. The network traffic can be visualized as:
+```
+TIME | ORACLE R2DBC     | NETWORK | ORACLE DATABASE
+-----+------------------+---------+-----------------
+   0 | Send INSERT-X    | ------> | WAITING
+   0 | Send INSERT-Y    | ------> | WAITING
+   1 | WAITING          | <------ | Send Result-X
+   1 | WAITING          | <------ | Send Result-Y
+   2 | Receive Result-X |         | WAITING
+   2 | Receive Result-Y |         | WAITING
+
+```
+In this visual, 1 unit of TIME is required to transfer data over the
+network. The TIME column is only measuring network latency. It does not include 
+computational time spent on executing the INSERTs.
+
+The key takeaway from this visual is that the INSERTs are sent and 
+received _concurrently_, rather than _sequentially_. Both INSERTs are sent at
+TIME=0, and both are received at TIME=1. And, the results are both sent at TIME=1,
+and are received at TIME=2. 
+
+> Recall that TIME is not measuring computational time. If each action by Oracle
+> R2DBC and Oracle Database requires 0.1 units of computational TIME, then we 
+> can say:
+> 
+> INSERTs are sent at TIME=0.1 and TIME=0.2, and are received at TIME=1.1 and
+> TIME=1.2. And, the results are sent at TIME=1.2 and
+> TIME=1.3, and are received at TIME=2.2 and TIME=2.3. 
+> 
+> This is a bit more complicated to think about, but it is important to keep in 
+> mind. All database calls will require at least some computational time.
+
+Below is another visual of the network traffic, but in this case the INSERTs are
+sent and received _without pipelining_:
+```
+TIME | ORACLE R2DBC     | NETWORK | ORACLE DATABASE
+-----+------------------+---------+-----------------
+   0 | Send INSERT-X    | ------> | WAITING
+   1 | WAITING          | <------ | Send Result-X
+   2 | Receive Result-X |         | WAITING
+   2 | Send INSERT-Y    | ------> | WAITING
+   3 | WAITING          | <------ | Send Result-Y
+   4 | Receive Result-Y |         | WAITING
+
+```
+This visual shows a _sequential_ process of sending and receiving. It can be
+compared to the _concurrent_ process seen in the previous visual. In both cases,
+Oracle R2DBC and Oracle Database have the same number of WAITING actions. These
+actions are waiting for network transfers. And in both cases, each network 
+transfer requires 1 unit of TIME.
+
+So if network latency is the same, and the number of
+WAITING actions are the same (,and the
+computational times are the same), then how are these INSERTs completing in less
+TIME with pipelining? The answer is that _pipelining allowed the
+network transfer times to be waited for __concurrently___.
+
+In the first visual, with pipelining, the database waits for _both_ INSERT-X and
+INSERT-Y at TIME=0. Compare that to the second visual, without pipelining, where
+the database waits for INSERT-X at TIME=0, and then _waits again_ for INSERT-Y
+at TIME=2. That's 1 additional unit of TIME when compared to pipelining. The 
+other additional unit of TIME happens on the Oracle R2DBC side. Without 
+pipelining, it waits for Result-X at TIME=1, and then _waits again_ for Result-Y
+at TIME=3. With pipelining, it _waits for both results concurrently_ at TIME=1.
+
+### Requirements for Pipelining
+
+There are some requirements which must be met in order to use pipelining. As
+explained in the previous section, the availability of pipelining can have a
+significant impact on performance. Users should review the requirements listed
+in this section when developing applications that rely on this performance gain.
+
+In terms of functional behavior, the availability of pipelining will have no
+impact: With or without it, the same database calls are going be executed. Users
+who are not relying on pipelining performance do not necessarily need to review 
+the requirements listed in this section. Oracle JDBC is designed to 
+automatically check for these requirements, and it will fallback to using
+sequential network transfers if any requirement is not met.
+
+#### Product Versions
+Pipelining is only available with Oracle Database version 23.4 or newer. It also
+requires an Oracle JDBC version of 23.4 or newer, but this is already a 
+transitive dependency of Oracle R2DBC.
+
+#### Out Of Band Breaks
+Pipelining requires out-of-band (OOB) breaks (ie: TCP urgent data) for cancelling 
+statement execution. The Oracle JDBC Driver automatically checks if OOB is 
+available, and will disable pipelining if it is not. The availability of OOB may 
+depend on the operating system where Oracle R2DBC is running. Notably, _OOB is 
+not available on Mac OS_ (or at least not available in the way which Oracle JDBC
+needs it to be for sending TCP urgent data to Oracle Database).
+
+__For experimentation only__, Mac OS users can choose to by-pass the OOB 
+requirement by setting a JVM system property:
+```
+-Doracle.jdbc.disablePipeline=false
+```
+Bypassing the OOB requirement on Mac OS will result in non-functional 
+implementations of `Connection.setStatementTimeout(Duration)`, and 
+`Subscription.cancel()` for a `Subscription` from `Statement.execute()`.
 
 ### Reactive Streams
 Every method implemented by Oracle R2DBC that returns a Publisher has a JavaDoc

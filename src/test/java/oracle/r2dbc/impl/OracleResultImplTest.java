@@ -47,6 +47,7 @@ import java.util.function.Predicate;
 
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
+import static oracle.r2dbc.test.DatabaseConfig.jdbcVersion;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitError;
@@ -662,8 +663,13 @@ public class OracleResultImplTest {
       Result.Segment secondSegment = segments.get(1);
       OracleR2dbcWarning warning =
         assertInstanceOf(OracleR2dbcWarning.class, secondSegment);
-      assertEquals(
-        warning.message(), "Warning: execution completed with warning");
+      String expectedMessage =
+        // Oracle JDBC includes more information in 23.3
+        jdbcVersion() == 21
+          ? "Warning: execution completed with warning"
+          : "Warning: ORA-17110: Execution completed with warning.\n" +
+              "https://docs.oracle.com/error-help/db/ora-17110/";
+      assertEquals(expectedMessage, warning.message());
       assertEquals(warning.errorCode(), 17110);
       assertEquals("99999", warning.sqlState()); // Default SQL state
       R2dbcException exception =

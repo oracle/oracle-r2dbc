@@ -396,7 +396,6 @@ public final class OracleR2dbcOptions {
    */
   public static final Option<CharSequence> KERBEROS_JAAS_LOGIN_MODULE;
 
-
   /** The unmodifiable set of all extended options */
   private static final Set<Option<?>> OPTIONS = Set.of(
     DESCRIPTOR = Option.valueOf("oracle.r2dbc.descriptor"),
