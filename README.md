@@ -668,11 +668,12 @@ types of Oracle Database.
 
 | Oracle SQL Type                                                                                                                                         | Java Type                                                     |
 |---------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------|
-| [JSON](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-E441F541-BA31-4E8C-B7B4-D2FB8C42D0DF)                   | `javax.json.JsonObject` or `oracle.sql.json.OracleJsonObject` |
-| [DATE](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-5405B652-C30E-4F4F-9D33-9A4CB2110F1B)                   | `java.time.LocalDateTime`                                     |
-| [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration`                                          |
-| [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period`                                            |
-| [SYS_REFCURSOR](https://docs.oracle.com/en/database/oracle/oracle-database/21/lnpls/static-sql.html#GUID-470A7A99-888A-46C2-BDAF-D4710E650F27)          | `io.r2dbc.spi.Result`                                         |
+| [JSON](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-E441F541-BA31-4E8C-B7B4-D2FB8C42D0DF)                   | `javax.json.JsonObject` or `oracle.sql.json.OracleJsonObject` |
+| [DATE](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-5405B652-C30E-4F4F-9D33-9A4CB2110F1B)                   | `java.time.LocalDateTime`                                     |
+| [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration`                                          |
+| [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period`                                            |
+| [SYS_REFCURSOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/lnpls/static-sql.html#GUID-470A7A99-888A-46C2-BDAF-D4710E650F27)          | `io.r2dbc.spi.Result`                                         |
+| [VECTOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-801FFE49-217D-4012-9C55-66DAE1BA806F)                 | `double[]`, `float[]` or `byte[]`                             |
 > Unlike the standard SQL type named "DATE", the Oracle Database type named 
 > "DATE" stores values for year, month, day, hour, minute, and second. The 
 > standard SQL type only stores year, month, and day. LocalDateTime objects are able 
