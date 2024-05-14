@@ -673,7 +673,7 @@ types of Oracle Database.
 | [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration`                                          |
 | [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period`                                            |
 | [SYS_REFCURSOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/lnpls/static-sql.html#GUID-470A7A99-888A-46C2-BDAF-D4710E650F27)          | `io.r2dbc.spi.Result`                                         |
-| [VECTOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-801FFE49-217D-4012-9C55-66DAE1BA806F)                 | `double[]`, `float[]` or `byte[]`                             |
+| [VECTOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-801FFE49-217D-4012-9C55-66DAE1BA806F)                 | `double[]`, `float[]`, `byte[]`, or `oracle.sql.VECTOR`       |
 > Unlike the standard SQL type named "DATE", the Oracle Database type named 
 > "DATE" stores values for year, month, day, hour, minute, and second. The 
 > standard SQL type only stores year, month, and day. LocalDateTime objects are able 
@@ -876,8 +876,8 @@ void printObjectMetadata(OracleR2dbcObject oracleObject) {
 ```
 
 ### REF Cursor
-Use the `oracle.r2dbc.OracleR2dbcTypes.REF_CURSOR` type to bind `SYS_REFCURSOR` out 
-parameters:
+Use the `oracle.r2dbc.OracleR2dbcTypes.REF_CURSOR` type to bind `SYS_REFCURSOR`
+out parameters:
 ```java
 Publisher<Result> executeProcedure(Connection connection) {
   connection.createStatement(
@@ -901,6 +901,92 @@ Publisher<ExampleObject> mapRefCursorRows(Result refCursorResult) {
     new ExampleObject(
       row.get("id_column", Long.class),
       row.get("value_column", String.class)));
+}
+```
+
+### VECTOR
+The default mapping for `VECTOR` is the
+[oracle.sql.VECTOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/sql/VECTOR.html)
+class. Instances of this class may be passed to
+`Statement.bind(int/String, Object)`:
+```java
+void bindVector(Statement statement, float[] floatArray) throws SQLException {
+  final VECTOR vector;
+  try {
+    vector = VECTOR.ofFloat32Values(floatArray);
+  }
+  catch (SQLException sqlException) {
+    throw new IllegalArgumentException(sqlException);
+  }
+  statement.bind("vector", vector);
+}
+```
+The `oracle.sql.VECTOR` class defines three factory methods: `ofFloat64Values`,
+`ofFloat32Values`, and `ofInt8Values`. These methods support Java to VECTOR 
+conversions of `boolean[]`, `byte[]`, `short[]`, `int[]`, `long[]`, 
+`float[]`, and `double[]`:
+```java
+void bindVector(Statement statement, int[] intArray) {
+  final VECTOR vector;
+  try {
+    vector = VECTOR.ofFloat64Values(intArray);
+  }
+  catch (SQLException sqlException) {
+    throw new IllegalArgumentException(sqlException);
+  }
+  statement.bind("vector", vector);
+}
+```
+The factory methods of `oracle.sql.VECTOR` may perform lossy conversions, such
+as when converting a `double[]` into a VECTOR of 32-bit floating point numbers. 
+[The JavaDocs of these methods specify which conversions are lossy](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/sql/VECTOR.html).
+
+The `OracleR2dbcTypes.VECTOR` type descriptor can be used to register an OUT or 
+IN/OUT parameter:
+```java
+void registerOutVector(Statement statement) {
+  Parameter outVector = Parameters.out(OracleR2dbcTypes.VECTOR);
+  statement.bind("vector", outVector);
+}
+```
+The `OracleR2dbcTypes.VECTOR` type descriptor can also be used as an alternative to
+`oracle.sql.VECTOR` when binding an IN parameter to a `double[]`, `float[]`, or
+`byte[]`:
+```java
+void bindVector(Statement statement, float[] floatArray) {
+  Parameter inVector = Parameters.in(OracleR2dbcTypes.VECTOR, floatArray);
+  statement.bind("vector", inVector);
+}
+```
+Note that `double[]`, `float[]`, and `byte[]` can NOT be passed directly to
+`Statement.bind(int/String, Object)` when binding `VECTOR` data. The R2DBC 
+Specification defines `ARRAY` as the default mapping for Java arrays.
+
+#### Returning VECTOR from DML
+Returning a VECTOR column with `Statement.returningGeneratedValues(String...)`
+is not supported due to a defect in the 23.4 release of Oracle JDBC. Attempting
+to return a `VECTOR` column will result in a `Subscriber` that never receives 
+`onComplete` or `onError`. The defect will be fixed in the next release of 
+Oracle JDBC.
+
+A `RETURNING ... INTO` clause can be used as a temporary workaround. This clause
+must appear within a PL/SQL block, denoted by the `BEGIN` and `END;` keywords.
+In the following example, a `VECTOR` column named "embedding" is returned:
+```java
+Publisher<double[]> returningVectorExample(Connection connection, String vectorString) {
+
+  Statement statement = connection.createStatement(
+      "BEGIN INSERT INTO example(embedding)"
+      + " VALUES (TO_VECTOR(:vectorString, 999, FLOAT64))"
+      + " RETURNING embedding INTO :embedding;"
+      + " END;")
+    .bind("vectorString", vectorString)
+    .bind("embedding", Parameters.out(OracleR2dbcTypes.VECTOR));
+
+    return Flux.from(statement.execute())
+      .flatMap(result ->
+        result.map(outParameters ->
+          outParameters.get("embedding", double[].class)));
 }
 ```
 

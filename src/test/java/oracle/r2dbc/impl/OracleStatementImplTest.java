@@ -29,6 +29,7 @@ import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.R2dbcNonTransientException;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
+import io.r2dbc.spi.Result.Message;
 import io.r2dbc.spi.Result.UpdateCount;
 import io.r2dbc.spi.Statement;
 import oracle.r2dbc.OracleR2dbcObject;
@@ -36,9 +37,10 @@ import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.OracleR2dbcWarning;
 import oracle.r2dbc.test.DatabaseConfig;
-import oracle.r2dbc.test.TestUtils;
+import oracle.sql.VECTOR;
 import oracle.sql.json.OracleJsonFactory;
 import oracle.sql.json.OracleJsonObject;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -46,6 +48,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Signal;
 
 import java.sql.RowId;
+import java.sql.SQLException;
 import java.sql.SQLWarning;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -64,6 +67,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -71,6 +75,8 @@ import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
+import static oracle.r2dbc.test.DatabaseConfig.jdbcMinorVersion;
+import static oracle.r2dbc.test.DatabaseConfig.jdbcVersion;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.TestUtils.constructObject;
@@ -86,6 +92,7 @@ import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.consumeOne;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -3162,12 +3169,174 @@ public class OracleStatementImplTest {
         "DROP TABLE testJsonDualityViewTable"));
       tryAwaitNone(connection.close());
     }
+  }
 
+  /**
+   * Verifies the case where the VECTOR type descriptor is used to register an
+   * OUT parameter.
+   */
+  @Test
+  public void testVectorOutParameter() throws SQLException {
+    Assumptions.assumeTrue(databaseVersion() >= 23); //  VECTOR is added in 23
+
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testVectorOutParameter (id NUMBER, value VECTOR)"));
+
+      class IdVector {
+        final int id;
+        final VECTOR vector;
+
+        IdVector(int id, VECTOR vector) {
+          this.id = id;
+          this.vector = vector;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+          return other instanceof IdVector
+            && ((IdVector)other).id == id
+            && Objects.equals(((IdVector)other).vector, vector);
+        }
+      }
+
+      // Round 1: Use PL/SQL to return column values
+      IdVector expected1 = new IdVector(
+        0,
+        VECTOR.ofFloat64Values(
+          DoubleStream.iterate(-3.0, previous -> previous + 0.1)
+            .limit(60)
+            .toArray()));
+
+      awaitOne(
+        expected1,
+        Flux.from(connection.createStatement(
+          "BEGIN"
+            + " INSERT INTO testVectorOutParameter VALUES(:inId, :inVector)"
+            + " RETURNING id, value INTO :outId, :outVector;"
+            + " END;")
+          .bind("inId", expected1.id)
+          .bind("inVector", expected1.vector)
+          .bind("outId", Parameters.out(R2dbcType.NUMERIC))
+          .bind("outVector", Parameters.out(OracleR2dbcTypes.VECTOR))
+          .execute())
+          .flatMap(result ->
+            result.map(outParameters ->
+              new IdVector(
+                outParameters.get("outId", Integer.class),
+                outParameters.get("outVector", VECTOR.class)))));
+
+      // Round 2: Use returnGeneratedValues(String...) to return column values
+
+      // Oracle JDBC 23.4 has a defect which prevents the Subscriber from
+      // receiving a terminal signal. The defect has been reported as bug
+      // #36607804, and is expected to be fixed in the 23.5 release.
+      Assumptions.assumeTrue(
+        jdbcMinorVersion() >= 5,
+        "Oracle JDBC 23.4 does not support generated keys for VECTOR");
+
+      IdVector expected2 = new IdVector(
+        0,
+        VECTOR.ofFloat64Values(
+          DoubleStream.iterate(-3.0, previous -> previous + 0.1)
+            .limit(60)
+            .toArray()));
+
+      awaitMany(
+        List.of(/*update count ->*/1L, expected2),
+        Flux.from(connection.createStatement(
+          "INSERT INTO testVectorOutParameter VALUES(:id, :vector)")
+            .bind("id", expected2.id)
+            .bind("vector", expected2.vector)
+            .returnGeneratedValues("id", "value")
+            .execute())
+          .flatMap(result ->
+            result.flatMap(segment -> {
+              if (segment instanceof UpdateCount) {
+                return Mono.just(((UpdateCount) segment).value());
+              }
+              else if (segment instanceof Result.RowSegment) {
+                OutParameters outParameters =
+                  ((Result.OutSegment)segment).outParameters();
+
+                return Mono.just(new IdVector(
+                  outParameters.get("outId", Integer.class),
+                  outParameters.get("outVector", VECTOR.class)));
+              }
+              else if (segment instanceof Message) {
+                throw ((Message)segment).exception();
+              }
+              else {
+                throw new AssertionError("Unexpected segment: " + segment);
+              }
+            })));
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testVectorOutParameter"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  @Test
+  public void testVectorReturningExample() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE example (text CLOB, embedding VECTOR)"));
+
+      double[] expected =
+        DoubleStream.iterate(0, previous -> previous + 1)
+          .limit(999)
+          .toArray();
+
+      double[] actual =
+        awaitOne(returningVectorExample(connection, Arrays.toString(expected)));
+      assertArrayEquals(expected, actual);
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement("DROP TABLE example"));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  Publisher<double[]> returningVectorExample(
+    Connection connection, String vectorString) {
+
+    Statement statement = connection.createStatement(
+      "BEGIN INSERT INTO example(embedding)"
+        + " VALUES (TO_VECTOR(:vectorString, 999, FLOAT64))"
+        + " RETURNING embedding INTO :embedding;"
+        + " END;")
+      .bind("vectorString", vectorString)
+      .bind("embedding", Parameters.out(OracleR2dbcTypes.VECTOR));
+
+    return Flux.from(statement.execute())
+      .flatMap(result ->
+        result.map(outParameters ->
+            outParameters.get("embedding", double[].class)));
+  }
+
+  Publisher<double[]> returningVectorExample0(Connection connection, String text) {
+    return Flux.from(connection.createStatement(
+          "BEGIN"
+            + " INSERT INTO example(text, embedding) VALUES("
+            +"   :text,"
+            +"   TO_VECTOR(VECTOR_EMBEDDING(doc_model USING :text as data)))"
+            +" RETURNING embedding INTO :embedding;"
+            + " END;")
+        .bind("text", text)
+        .bind("embedding", Parameters.out(OracleR2dbcTypes.VECTOR))
+        .execute())
+      .flatMap(result->
+        result.map(outParameters->
+          outParameters.get("outVector", double[].class)));
   }
 
   /**
    * Connect to the database configured by {@link DatabaseConfig}, with a
-   * the connection configured to use a given {@code executor} for async
+   * connection configured to use a given {@code executor} for async
    * callbacks.
    * @param executor Executor for async callbacks
    * @return Connection that uses the {@code executor}

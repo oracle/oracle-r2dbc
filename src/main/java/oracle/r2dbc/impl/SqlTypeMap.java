@@ -25,6 +25,7 @@ import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
 import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcTypes;
+import oracle.sql.VECTOR;
 import oracle.sql.json.OracleJsonObject;
 
 import java.math.BigDecimal;
@@ -85,6 +86,7 @@ final class SqlTypeMap {
       entry(JDBCType.NUMERIC, R2dbcType.NUMERIC),
       entry(JDBCType.NVARCHAR, R2dbcType.NVARCHAR),
       entry(JDBCType.REAL, R2dbcType.REAL),
+      entry(JDBCType.REF_CURSOR, OracleR2dbcTypes.REF_CURSOR),
       entry(JDBCType.ROWID, OracleR2dbcTypes.ROWID),
       entry(JDBCType.SMALLINT, R2dbcType.SMALLINT),
       entry(JDBCType.TIME, R2dbcType.TIME),
@@ -101,7 +103,7 @@ final class SqlTypeMap {
       entry(JDBCType.TINYINT, R2dbcType.TINYINT),
       entry(JDBCType.VARBINARY, R2dbcType.VARBINARY),
       entry(JDBCType.VARCHAR, R2dbcType.VARCHAR),
-      entry(JDBCType.REF_CURSOR, OracleR2dbcTypes.REF_CURSOR)
+      entry(OracleType.VECTOR, OracleR2dbcTypes.VECTOR)
     );
 
   /**
@@ -177,10 +179,13 @@ final class SqlTypeMap {
       entry(float[].class, JDBCType.ARRAY),
       entry(double[].class, JDBCType.ARRAY),
 
-      // Support binding OracleR2dbcReadable, Object[], and Map<String, Object>
-      // to OBJECT (ie: STRUCT)
+      // Support binding Map<String, Object> and OracleR2dbcObject to OBJECT
+      // (ie: STRUCT)
       entry(Map.class, JDBCType.STRUCT),
-      entry(OracleR2dbcObject.class, JDBCType.STRUCT)
+      entry(OracleR2dbcObject.class, JDBCType.STRUCT),
+
+      // Support binding oracle.sql.VECTOR to VECTOR
+      entry(VECTOR.class, OracleType.VECTOR)
     );
 
   /**
@@ -269,6 +274,7 @@ final class SqlTypeMap {
    *   <li>{@link Period} : INTERVAL YEAR TO MONTH</li>
    *   <li>{@link RowId} : ROWID</li>
    *   <li>{@link OracleJsonObject} : JSON</li>
+   *   <li>{@link oracle.sql.VECTOR} : VECTOR</li>
    * </ul>
    * @param javaType Java type to map
    * @return SQL type mapping for the {@code javaType}
