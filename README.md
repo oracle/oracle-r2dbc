@@ -962,6 +962,16 @@ Note that `double[]`, `float[]`, and `byte[]` can NOT be passed directly to
 `Statement.bind(int/String, Object)` when binding `VECTOR` data. The R2DBC 
 Specification defines `ARRAY` as the default mapping for Java arrays.
 
+A `VECTOR` column or OUT parameter is converted to `oracle.sql.VECTOR` by 
+default. The column or OUT parameter can also be converted to `double[]`, 
+`float[]`, or `byte[]` by passing the corresponding array class to the `get`
+methods:
+```java
+float[] getVector(io.r2dbc.Readable readable) {
+  return readable.get("vector", float[].class);
+}
+```
+
 #### Returning VECTOR from DML
 Returning a VECTOR column with `Statement.returningGeneratedValues(String...)`
 is not supported due to a defect in the 23.4 release of Oracle JDBC. Attempting
