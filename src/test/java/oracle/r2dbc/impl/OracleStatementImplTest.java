@@ -3281,6 +3281,8 @@ public class OracleStatementImplTest {
 
   @Test
   public void testVectorReturningExample() {
+    assumeTrue(databaseVersion() >= 23); // VECTOR is not added until 23.4
+
     Connection connection = awaitOne(sharedConnection());
     try {
       awaitExecution(connection.createStatement(
