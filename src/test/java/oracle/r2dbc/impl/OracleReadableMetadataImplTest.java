@@ -27,14 +27,15 @@ import io.r2dbc.spi.Nullability;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.ReadableMetadata;
-import io.r2dbc.spi.Statement;
 import io.r2dbc.spi.Type;
 import oracle.jdbc.OracleType;
 import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcObjectMetadata;
 import oracle.r2dbc.OracleR2dbcTypes;
+import oracle.sql.VECTOR;
 import oracle.sql.json.OracleJsonFactory;
 import oracle.sql.json.OracleJsonObject;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -43,6 +44,7 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.JDBCType;
 import java.sql.RowId;
+import java.sql.SQLException;
 import java.sql.SQLType;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -53,6 +55,7 @@ import java.time.Period;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.stream.Collectors;
+import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
 
 import static java.lang.String.format;
@@ -258,10 +261,6 @@ public class OracleReadableMetadataImplTest {
         OracleR2dbcTypes.INTERVAL_DAY_TO_SECOND, 9, 9, Duration.class,
         Duration.parse("+P123456789DT23H59M59.123456789S"));
 
-      // Expect ROWID and String to map.
-      // Expect UROWID and String to map.
-      // Expect JSON and OracleJsonObject to map.
-
     }
     finally {
       tryAwaitNone(connection.close());
@@ -305,17 +304,14 @@ public class OracleReadableMetadataImplTest {
 
   /**
    * Verifies the implementation of {@link OracleReadableMetadataImpl} for
-   * JSON type columns. When the test database older than version 21c, this test
-   * is expected to fail with an ORA-00902 error indicating that JSON is not
-   * a valid data type. The JSON type was added in 21c.
+   * JSON type columns. When the test database is older than version 21c, this
+   * test is ignored; The JSON type was added in 21c.
    */
   @Test
   public void testJsonType() {
-
     // The JSON data type was introduced in Oracle Database version 21c, so this
     // test is a no-op if the version is older than 21c.
-    if (databaseVersion() < 21)
-      return;
+    Assumptions.assumeTrue(databaseVersion() >= 21);
 
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
@@ -527,6 +523,36 @@ public class OracleReadableMetadataImplTest {
         "DROP TYPE TEST_OBJECT_TYPE_ARRAY_TYPE"));
       tryAwaitNone(connection.close());
     }
+  }
+
+  /**
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
+   * VECTOR type columns. When the test database is older than version 23ai,
+   * this test is ignored; The VECTOR type was added in 23ai.
+   */
+  @Test
+  public void testVectorType() throws SQLException {
+    Assumptions.assumeTrue(databaseVersion() >= 23);
+
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      double[] doubleArray =
+        DoubleStream.iterate(0d, previous -> previous + 0.1d)
+          .limit(30)
+          .toArray();
+      VECTOR vector = VECTOR.ofFloat64Values(doubleArray);
+
+      // Expect VECTOR and double[] to map.
+      verifyColumnMetadata(
+        connection, "VECTOR", OracleType.VECTOR, OracleR2dbcTypes.VECTOR,
+        null, null,
+        VECTOR.class, vector);
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+
   }
 
   /**

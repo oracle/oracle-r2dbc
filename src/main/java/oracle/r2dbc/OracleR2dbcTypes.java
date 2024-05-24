@@ -104,6 +104,15 @@ public final class OracleR2dbcTypes {
     new TypeImpl(Result.class, "SYS_REFCURSOR");
 
   /**
+   * A vector of 64-bit floating point numbers, 32-bit floating point numbers,
+   * or 8-bit signed integers. Maps to <code>double[]</code> by default, as a
+   * <code>double</code> can store all the possible number formats without
+   * losing information.
+   */
+  public static final Type VECTOR =
+    new TypeImpl(oracle.sql.VECTOR.class, "VECTOR");
+
+  /**
    * <p>
    * Creates an {@link ArrayType} representing a user defined {@code ARRAY}
    * type. The {@code name} passed to this method must identify the name of a

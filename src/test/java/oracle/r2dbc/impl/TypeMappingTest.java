@@ -34,6 +34,7 @@ import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.OracleR2dbcTypes.ArrayType;
 import oracle.r2dbc.OracleR2dbcTypes.ObjectType;
 import oracle.r2dbc.test.TestUtils;
+import oracle.sql.VECTOR;
 import oracle.sql.json.OracleJsonFactory;
 import oracle.sql.json.OracleJsonObject;
 import org.junit.jupiter.api.Assertions;
@@ -45,6 +46,7 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.sql.RowId;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -63,6 +65,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
+import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -1535,6 +1538,77 @@ public class TypeMappingTest {
 
   }
 
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * for the VECTOR data type. The R2DBC 1.0.0 Specification does not contain
+   * mapping guidelines for the VECTOR data type. The Oracle R2DBC Driver is
+   * expected to map VECTOR to a {@link oracle.sql.VECTOR} value.
+   *</p>
+   */
+  @Test
+  public void testVectorMapping() throws SQLException {
+
+    // The VECTOR data type was introduced in Oracle Database version 23ai, so
+    // this test is skipped if the version is older than 23.
+    assumeTrue(databaseVersion() >= 23,
+      "JSON columns are not supported by database versions older than 21");
+
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      double[] doubleArray =
+        DoubleStream.iterate(-2.0d, previous -> previous + 0.1d)
+          .limit(40)
+          .toArray();
+
+      // Expect VECTOR and oracle.sql.VECTOR to map.
+      VECTOR vector = VECTOR.ofFloat64Values(doubleArray);
+      verifyTypeMapping(connection, vector, "VECTOR");
+
+      // Expect VECTOR and double[] to map
+      verifyTypeMapping(
+        connection,
+        Parameters.in(OracleR2dbcTypes.VECTOR, doubleArray),
+        "VECTOR",
+        row ->
+          row.get(0, double[].class),
+        (ignored, actualValue) ->
+          assertArrayEquals(doubleArray, actualValue));
+
+      float[] floatArray = new float[doubleArray.length];
+      for (int i = 0; i < floatArray.length; i++)
+        floatArray[i] = (float) doubleArray[i];
+
+      // Expect VECTOR and float[] to map
+      verifyTypeMapping(
+        connection,
+        Parameters.in(OracleR2dbcTypes.VECTOR, floatArray),
+        "VECTOR",
+        row ->
+          row.get(0, float[].class),
+        (ignored, actualValue) ->
+          assertArrayEquals(floatArray, actualValue));
+
+      byte[] byteArray = new byte[doubleArray.length];
+      for (int i = 0; i < byteArray.length; i++)
+        byteArray[i] = (byte) doubleArray[i];
+
+      // Expect VECTOR and byte[] to map
+      verifyTypeMapping(
+        connection,
+        Parameters.in(OracleR2dbcTypes.VECTOR, byteArray),
+        "VECTOR",
+        row ->
+          row.get(0, byte[].class),
+        (ignored, actualValue) ->
+          assertArrayEquals(byteArray, actualValue));
+
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
 
   /**
    * For an ARRAY type of a given {@code typeName}, verifies the following
