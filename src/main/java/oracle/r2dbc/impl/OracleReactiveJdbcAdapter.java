@@ -46,6 +46,8 @@ import java.nio.ByteBuffer;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.Connection;
+import java.sql.Driver;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -102,7 +104,7 @@ import static org.reactivestreams.FlowAdapters.toSubscriber;
  *     Connection without blocking a thread. Oracle JDBC implements thread
  *     safety by blocking threads, and this can cause deadlocks in common
  *     R2DBC programming scenarios. See the JavaDoc of
- *     {@link AsyncLock} for more details.
+ *     {@link AsyncLockImpl} for more details.
  *   </li>
  * </ul><p>
  * A instance of this class is obtained by invoking {@link #getInstance()}. A
@@ -124,12 +126,21 @@ import static org.reactivestreams.FlowAdapters.toSubscriber;
 final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
   /** Guards access to a JDBC {@code Connection} created by this adapter */
-  private final AsyncLock asyncLock = new AsyncLock();
+  private final AsyncLock asyncLock;
 
   /**
    * Used to construct the instances of this class.
    */
-  private OracleReactiveJdbcAdapter() { }
+  private OracleReactiveJdbcAdapter() {
+    int driverVersion = new oracle.jdbc.OracleDriver().getMajorVersion();
+
+    // Since 23.1, Oracle JDBC no longer blocks threads during asynchronous
+    // calls. Use the no-op implementation of AsyncLock if the driver is 23 or
+    // newer.
+     asyncLock = driverVersion < 23
+       ? new AsyncLockImpl()
+       : new NoOpAsyncLock();
+  }
 
   /**
    * Returns an instance of this adapter.
@@ -618,7 +629,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
 
     // Have the Oracle JDBC Driver implement behavior that the JDBC
     // Specification defines as correct. The javadoc for this property lists
-    // all of it's effects. One effect is to have ResultSetMetaData describe
+    // its effects. One effect is to have ResultSetMetaData describe
     // FLOAT columns as the FLOAT type, rather than the NUMBER type. This
     // effect allows the Oracle R2DBC Driver obtain correct metadata for
     // FLOAT type columns. The property is deprecated, but the deprecation note
@@ -653,6 +664,16 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     // TODO: Disable the result set cache? This is needed to support the
     //  SERIALIZABLE isolation level, which requires result set caching to be
     //  disabled.
+
+    // Disable "zero copy IO" by default. This is important when using JSON or
+    // VECTOR binds, which are usually sent with zero copy IO. The 23.4 database
+    // does not fully support zero copy IO with pipelined calls. In particular,
+    // it won't respond if a SQL operation results in an error, and zero copy IO
+    // was used to send bind values. This will likely be resolved in a later
+    // release; Keep an eye on bug #36485816 to see when it's fixed.
+    setPropertyIfAbsent(oracleDataSource,
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_USE_ZERO_COPY_IO,
+      "false");
   }
 
   /**

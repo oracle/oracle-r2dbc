@@ -98,7 +98,7 @@ public class OracleBatchImplTest {
           .add("SELECT 4 FROM sys.dual")
           .add("SELECT 5 FROM sys.dual")
           .execute())
-          .flatMap(result ->
+          .flatMapSequential(result ->
             result.map((row, metadata) -> row.get(0, Integer.class))));
 
     }

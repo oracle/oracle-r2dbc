@@ -1402,8 +1402,8 @@ public class OracleStatementImplTest {
       // Result with one rows having the previous value. Expect the IN
       // parameter's default value to have been inserted by the call.
       consumeOne(connection.createStatement(
-        "BEGIN testMultiInOutCallAdd(?, :value2); END;")
-        .bind(0, Parameters.inOut(R2dbcType.NUMERIC, 2))
+        "BEGIN testMultiInOutCallAdd(:value1, :value2); END;")
+        .bind("value1", Parameters.inOut(R2dbcType.NUMERIC, 2))
         .bind("value2", Parameters.inOut(R2dbcType.NUMERIC, 102))
         .execute(),
         result ->
@@ -3340,6 +3340,7 @@ public class OracleStatementImplTest {
    * Connect to the database configured by {@link DatabaseConfig}, with a
    * connection configured to use a given {@code executor} for async
    * callbacks.
+   * connection configured to use a given {@code executor} for async callbacks.
    * @param executor Executor for async callbacks
    * @return Connection that uses the {@code executor}
    */
@@ -3386,6 +3387,7 @@ public class OracleStatementImplTest {
    * @param connection Connection to verify
    */
   private void verifyConcurrentFetch(Connection connection) {
+    connection.setStatementTimeout(DatabaseConfig.sqlTimeout());
     try {
       awaitExecution(connection.createStatement(
         "CREATE TABLE testConcurrentFetch (value NUMBER)"));

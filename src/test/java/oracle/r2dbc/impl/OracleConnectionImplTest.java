@@ -713,7 +713,7 @@ public class OracleConnectionImplTest {
           .add("SELECT 1 FROM dual")
           .add("SELECT 2 FROM dual")
           .execute())
-          .flatMap(result ->
+          .flatMapSequential(result ->
             result.map((row, metadata) -> row.get(0, Integer.class))));
     }
     finally {

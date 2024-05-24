@@ -78,6 +78,7 @@ import static java.lang.String.format;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
+import static oracle.r2dbc.test.DatabaseConfig.jdbcVersion;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
 import static oracle.r2dbc.test.DatabaseConfig.protocol;
@@ -101,7 +102,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Verifies that
  * {@link OracleReadableMetadataImpl} implements behavior that is specified in
- * it's class and method level javadocs.
+ * its class and method level javadocs.
  */
 public class OracleReactiveJdbcAdapterTest {
 
@@ -121,12 +122,19 @@ public class OracleReactiveJdbcAdapterTest {
     defaultProperties.setProperty(
       OracleConnection.CONNECTION_PROPERTY_J2EE13_COMPLIANT, "true");
     defaultProperties.setProperty(
-      OracleConnection.CONNECTION_PROPERTY_ENABLE_AC_SUPPORT, "false");
-    defaultProperties.setProperty(
       OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE, "25");
     defaultProperties.setProperty(
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
       "1048576");
+    defaultProperties.setProperty(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_USE_ZERO_COPY_IO,
+      "false");
+
+    if (jdbcVersion() == 21) {
+      // Oracle JDBC no longer sets this AC property by default in 23.3
+      defaultProperties.setProperty(
+        OracleConnection.CONNECTION_PROPERTY_ENABLE_AC_SUPPORT, "false");
+    }
 
     // Expect only default connection properties when no extended
     // options are supplied
@@ -378,10 +386,10 @@ public class OracleReactiveJdbcAdapterTest {
       Mono.from(ConnectionFactories.get(connectionFactoryOptions()
         .mutate()
         .option(STATEMENT_TIMEOUT, Duration.ofSeconds(2))
-        // Disable OOB to support testing with an 18.x database
+        // Disable OOB to support when testing with an 18.x database
         .option(Option.valueOf(
           OracleConnection.CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK),
-          "true")
+          String.valueOf(DatabaseConfig.databaseVersion() <= 18))
         .build())
         .create())
         .block(connectTimeout());
