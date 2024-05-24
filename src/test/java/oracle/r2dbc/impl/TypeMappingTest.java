@@ -72,6 +72,7 @@ import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
+import static oracle.r2dbc.test.DatabaseConfig.jdbcVersion;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
@@ -277,6 +278,13 @@ public class TypeMappingTest {
       // "NUMBER" is equivalent to the standard types named "DECIMAL" and
       // "NUMERIC".
       verifyTypeMapping(connection, pi, "NUMBER");
+
+      if (jdbcVersion() == 23) {
+        // Bug #34545424 is present in the 23.3.0.23.09 release of Oracle JDBC.
+        // This bug causes a loss of precision when binding a double with more
+        // than 14 significant decimal digits after the decimal point.
+        pi = new BigDecimal("3.14159265358979");
+      }
 
       // Expect FLOAT and Double to map.
       verifyTypeMapping(connection, pi.doubleValue(), "FLOAT");
@@ -1472,7 +1480,7 @@ public class TypeMappingTest {
       // Verify non-default mappings of all SQL types
       verifyObjectTypeMapping(
         "OBJECT_TEST_NON_DEFAULT", new String[] {
-          "NUMBER",
+          // "NUMBER", See comment about Boolean to NUMBER mapping below
           "NUMBER",
           "NUMBER",
           "NUMBER",
@@ -1486,8 +1494,15 @@ public class TypeMappingTest {
           "TIMESTAMP(9) WITH TIME ZONE",
         },
         i -> new Object[]{
+
+          // Boolean to NUMBER mapping no longer works with the 23.3 JDBC
+          // driver, which added support for the BOOLEAN data type. It now
+          // converts a Java boolean to a SQL BOOLEAN. But, PL/SQL does not
+          // support conversion of BOOLEAN to NUMBER. This would cause:
+          //   PLS-00306: wrong number or types of arguments in call to 'OBJECT_TEST_NON_DEFAULT'
           // Expect NUMBER and Boolean to map
-          true,
+          // true,
+
           // Expect NUMBER and Integer to map
           i,
           // Expect NUMBER and Byte to map

@@ -535,7 +535,7 @@ interface ReactiveJdbcAdapter {
   Publisher<Void> publishClobFree(Clob clob) throws R2dbcException;
 
   /**
-   * Returns the {@link AsyncLock} that guards access to the JDBC
+   * Returns the {@link AsyncLockImpl} that guards access to the JDBC
    * {@link java.sql.Connection} created by this adapter (with
    * {@link #publishConnection(DataSource, Executor)}). This lock may be
    * acquired asynchronously, such that threads do not contend for the JDBC

@@ -127,9 +127,6 @@ final class OracleBatchImpl implements Batch {
    * signals {@code onError} with {@code IllegalStateException} to any
    * subsequent subscribers.
    * </p>
-   * @implNote Oracle Database does not offer native support for batched
-   * execution of arbitrary SQL statements. This SPI method is implemented by
-   * individually executing each statement in this batch.
    */
   @Override
   public Publisher<OracleResultImpl> execute() {
@@ -137,7 +134,7 @@ final class OracleBatchImpl implements Batch {
     Queue<OracleStatementImpl> currentStatements = statements;
     statements = new LinkedList<>();
     return Flux.fromIterable(currentStatements)
-      .concatMap(OracleStatementImpl::execute);
+      .flatMapSequential(OracleStatementImpl::execute);
   }
 
 }
