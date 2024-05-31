@@ -436,16 +436,15 @@ public class TypeMappingTest {
       tryAwaitNone(connection.close());
     }
   }
-
   /**
    * <p>
    * Verifies the implementation of Java to SQL and SQL to Java type mappings
    * where the Java type is {@link Boolean} and the SQL type is a numeric type.
-   * The R2DBC 0.9.0 Specification only requires that Java {@code Boolean} be
-   * mapped to the SQL BOOLEAN type, however Oracle Database does not support a
-   * BOOLEAN column type. To allow the use of the {@code Boolean} bind
-   * values, Oracle JDBC supports binding the Boolean as a NUMBER. Oracle
-   * R2DBC is expected to expose this functionality as well.
+   * The R2DBC 1.0.0 Specification only requires that Java {@code Boolean} be
+   * mapped to the SQL BOOLEAN type, however Oracle Database did not support a
+   * BOOLEAN column type until the 23ai release. To allow the use of the
+   * {@code Boolean} bind values, Oracle JDBC supports binding the Boolean as a
+   * NUMBER. Oracle R2DBC is expected to expose this functionality as well.
    *</p>
    */
   @Test
@@ -466,6 +465,41 @@ public class TypeMappingTest {
         row -> row.get(0, Boolean.class),
         (expected, actual) -> assertTrue(actual));
       verifyTypeMapping(connection, false, "NUMBER",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertFalse(actual));
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * <p>
+   * Verifies the implementation of Java to SQL and SQL to Java type mappings
+   * where the Java type is {@link Boolean} and the SQL type is BOOLEAN. Oracle
+   * Database added support for a BOOLEAN column type in the 23ai release.
+   *</p>
+   */
+  @Test
+  public void testBooleanMapping() {
+    assumeTrue(databaseVersion() >= 23,
+      "BOOLEAN requires Oracle Database 23ai or newer");
+
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Expect BOOLEAN and Boolean to map
+      verifyTypeMapping(connection, true, "BOOLEAN",
+        (expected, actual) -> assertEquals(Boolean.TRUE, actual));
+      verifyTypeMapping(connection, false, "BOOLEAN",
+        (expected, actual) -> assertEquals(Boolean.FALSE, actual));
+
+      // Expect NUMBER and Boolean to map, with Row.get(..., Boolean.class)
+      // mapping the NUMBER column value to Boolean
+      verifyTypeMapping(connection, true, "BOOLEAN",
+        row -> row.get(0, Boolean.class),
+        (expected, actual) -> assertTrue(actual));
+      verifyTypeMapping(connection, false, "BOOLEAN",
         row -> row.get(0, Boolean.class),
         (expected, actual) -> assertFalse(actual));
     }

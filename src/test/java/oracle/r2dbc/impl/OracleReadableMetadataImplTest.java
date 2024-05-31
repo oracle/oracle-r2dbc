@@ -532,7 +532,8 @@ public class OracleReadableMetadataImplTest {
    */
   @Test
   public void testVectorType() throws SQLException {
-    Assumptions.assumeTrue(databaseVersion() >= 23);
+    Assumptions.assumeTrue(databaseVersion() >= 23,
+      "VECTOR requires Oracle Database 23ai or newer");
 
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
@@ -552,7 +553,30 @@ public class OracleReadableMetadataImplTest {
     finally {
       tryAwaitNone(connection.close());
     }
+  }
 
+  /**
+   * Verifies the implementation of {@link OracleReadableMetadataImpl} for
+   * BOOLEAN type columns. When the test database is older than version 23ai,
+   * this test is ignored; The BOOLEAN type was added in 23ai.
+   */
+  @Test
+  public void testBooleanType() throws SQLException {
+    Assumptions.assumeTrue(databaseVersion() >= 23,
+      "BOOLEAN requires Oracle Database 23ai or newer");
+
+    Connection connection =
+      Mono.from(sharedConnection()).block(connectTimeout());
+    try {
+      // Expect BOOLEAN and Boolean to map.
+      verifyColumnMetadata(
+        connection, "BOOLEAN", JDBCType.BOOLEAN, R2dbcType.BOOLEAN,
+        null, null,
+        Boolean.class, true);
+    }
+    finally {
+      tryAwaitNone(connection.close());
+    }
   }
 
   /**
