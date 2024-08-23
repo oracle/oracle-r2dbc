@@ -986,7 +986,7 @@ Use the `oracle.r2dbc.OracleR2dbcTypes.REF_CURSOR` type to bind `SYS_REFCURSOR`
 out parameters:
 ```java
 Publisher<Result> executeProcedure(Connection connection) {
-  connection.createStatement(
+  return connection.createStatement(
     "BEGIN example_procedure(:cursor_parameter); END;")
   .bind("cursor_parameter", Parameters.out(OracleR2dbcTypes.REF_CURSOR))
   .execute()
