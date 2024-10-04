@@ -341,7 +341,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
   public DataSource createDataSource(ConnectionFactoryOptions options) {
 
     OracleDataSource oracleDataSource =
-      fromJdbc(oracle.jdbc.pool.OracleDataSource::new);
+      fromJdbc(oracle.jdbc.datasource.impl.OracleDataSource::new);
 
     runJdbc(() -> oracleDataSource.setURL(composeJdbcUrl(options)));
     configureStandardOptions(oracleDataSource, options);
@@ -632,15 +632,14 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     // its effects. One effect is to have ResultSetMetaData describe
     // FLOAT columns as the FLOAT type, rather than the NUMBER type. This
     // effect allows the Oracle R2DBC Driver obtain correct metadata for
-    // FLOAT type columns. The property is deprecated, but the deprecation note
-    // explains that setting this to "false" is deprecated, and that it
-    // should be set to true; If not set, the 21c driver uses a default value
-    // of false.
-    @SuppressWarnings("deprecation")
-    String enableJdbcSpecCompliance =
-      OracleConnection.CONNECTION_PROPERTY_J2EE13_COMPLIANT;
+    // FLOAT type columns.
+    // The OracleConnection.CONNECTION_PROPERTY_J2EE13_COMPLIANT field is
+    // deprecated, so the String literal value of this field is used instead,
+    // just in case the field were to be removed in a future release of Oracle
+    // JDBC.
     runJdbc(() ->
-      oracleDataSource.setConnectionProperty(enableJdbcSpecCompliance, "true"));
+      oracleDataSource.setConnectionProperty(
+        "oracle.jdbc.J2EE13Compliant", "true"));
 
     // Cache PreparedStatements by default. The default value of the
     // OPEN_CURSORS parameter in the 21c and 19c databases is 50:

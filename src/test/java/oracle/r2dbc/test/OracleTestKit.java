@@ -93,7 +93,8 @@ public class OracleTestKit implements TestKit<Integer> {
   private final JdbcOperations jdbcOperations;
   {
     try {
-      OracleDataSource dataSource = new oracle.jdbc.pool.OracleDataSource();
+      OracleDataSource dataSource =
+        new oracle.jdbc.datasource.impl.OracleDataSource();
       dataSource.setURL(String.format("jdbc:oracle:thin:@%s%s:%d/%s",
         Optional.ofNullable(protocol())
           .map(protocol -> protocol + ":")
