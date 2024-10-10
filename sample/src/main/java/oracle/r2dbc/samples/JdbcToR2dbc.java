@@ -26,7 +26,7 @@ import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.r2dbc.spi.R2dbcException;
 import io.r2dbc.spi.Result;
-import oracle.jdbc.pool.OracleDataSource;
+import oracle.jdbc.datasource.impl.OracleDataSource;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
@@ -141,7 +141,8 @@ public final class JdbcToR2dbc {
    */
   static DataSource configureJdbc() throws SQLException {
 
-    OracleDataSource dataSource = new oracle.jdbc.pool.OracleDataSource();
+    OracleDataSource dataSource =
+      new oracle.jdbc.datasource.impl.OracleDataSource();
     dataSource.setDriverType("thin");
     dataSource.setServerName(DatabaseConfig.HOST);
     dataSource.setPortNumber(DatabaseConfig.PORT);

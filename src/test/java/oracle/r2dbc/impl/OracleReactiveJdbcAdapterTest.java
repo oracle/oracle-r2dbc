@@ -34,11 +34,11 @@ import oracle.jdbc.datasource.OracleDataSource;
 import oracle.r2dbc.OracleR2dbcOptions;
 import oracle.r2dbc.test.DatabaseConfig;
 import oracle.r2dbc.util.TestContextFactory;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import javax.sql.DataSource;
 import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
@@ -49,6 +49,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
@@ -63,6 +64,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.CONNECT_TIMEOUT;
@@ -78,7 +80,6 @@ import static java.lang.String.format;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
-import static oracle.r2dbc.test.DatabaseConfig.jdbcVersion;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
 import static oracle.r2dbc.test.DatabaseConfig.protocol;
@@ -98,6 +99,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Verifies that
@@ -118,23 +120,7 @@ public class OracleReactiveJdbcAdapterTest {
     // properties. The defaultProperties variable contains properties that
     // are set to default values by OracleReactiveJdbcAdapter and the Oracle
     // JDBC Driver
-    Properties defaultProperties = new Properties();
-    defaultProperties.setProperty(
-      OracleConnection.CONNECTION_PROPERTY_J2EE13_COMPLIANT, "true");
-    defaultProperties.setProperty(
-      OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE, "25");
-    defaultProperties.setProperty(
-      OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
-      "1048576");
-    defaultProperties.setProperty(
-      OracleConnection.CONNECTION_PROPERTY_THIN_NET_USE_ZERO_COPY_IO,
-      "false");
-
-    if (jdbcVersion() == 21) {
-      // Oracle JDBC no longer sets this AC property by default in 23.3
-      defaultProperties.setProperty(
-        OracleConnection.CONNECTION_PROPERTY_ENABLE_AC_SUPPORT, "false");
-    }
+    Properties defaultProperties = getJdbcDefaultProperties();
 
     // Expect only default connection properties when no extended
     // options are supplied
@@ -672,7 +658,7 @@ public class OracleReactiveJdbcAdapterTest {
    */
   @Test
   public void testEmptyProtocol() {
-    Assumptions.assumeTrue(
+    assumeTrue(
       DatabaseConfig.protocol() == null,
       "Test requires no PROTOCOL in config.properties");
 
@@ -702,6 +688,100 @@ public class OracleReactiveJdbcAdapterTest {
     finally {
       tryAwaitNone(connection.close());
     }
+  }
+
+  @Test
+  public void testJdbcPropertyOptions() throws SQLException {
+
+    // Create a map where every Option of OracleR2dbcOptions is assigned to a
+    // value. The values are not necessarily valid, or even of the right class
+    // (every option is cast to Option<String>). That's OK because this test
+    // just wants to make sure the values are transferred to OracleDataSource,
+    // and it won't actually attempt to create a connection with these values.
+    Map<Option<String>, String> optionValues =
+      OracleR2dbcOptions.options()
+        .stream()
+        .map(option -> {
+          @SuppressWarnings("unchecked")
+          Option<String> stringOption = (Option<String>)option;
+          return stringOption;
+        })
+        .collect(Collectors.toMap(
+          Function.identity(),
+          option -> "VALUE OF " + option.name()
+        ));
+
+    ConnectionFactoryOptions.Builder optionsBuilder =
+      ConnectionFactoryOptions.builder();
+    optionValues.forEach(optionsBuilder::option);
+
+    DataSource dataSource =
+      OracleReactiveJdbcAdapter.getInstance()
+        .createDataSource(optionsBuilder.build());
+    assumeTrue(dataSource.isWrapperFor(OracleDataSource.class));
+
+    Properties actualProperties =
+      dataSource.unwrap(OracleDataSource.class)
+        .getConnectionProperties();
+
+    Properties expectedProperties = getJdbcDefaultProperties();
+    optionValues.forEach((option, value) ->
+      expectedProperties.setProperty(option.name(), value));
+
+    expectedProperties.entrySet()
+        .removeAll(actualProperties.entrySet());
+
+    // Don't expect OracleDataSource.getConnectionProperties() to have entries
+    // for options that Oracle R2DBC doesn't set as connection properties.
+    expectedProperties.entrySet()
+        .removeIf(entry ->
+          entry.getKey().toString().startsWith("oracle.r2dbc."));
+
+    // Don't expect OracleDataSource.getConnectionProperties() to have entries
+    // for options of security sensitive values.
+    expectedProperties.entrySet()
+      .removeIf(entry ->
+        entry.getKey().toString().toLowerCase().contains("password"));
+
+    assertTrue(
+      expectedProperties.isEmpty(),
+      "One or more properties were not set: " + expectedProperties);
+  }
+
+  /**
+   * Returns the connection properties that will be set by default when an
+   * {@link OracleDataSource} is created. Tests which verify the setting of
+   * properties can assume these default properties will be set as well.
+   *
+   * @return Properties that OracleDataSource sets by default.
+   */
+  private static Properties getJdbcDefaultProperties() throws SQLException {
+
+    // Start with any properties that JDBC will set by default. For example, the
+    // 21 driver would set CONNECTION_PROPERTY_ENABLE_AC_SUPPORT="false" by
+    // default.
+    Properties defaultProperties =
+      new oracle.jdbc.datasource.impl.OracleDataSource()
+        .getConnectionProperties();
+
+    if (defaultProperties == null)
+      defaultProperties = new Properties();
+
+    // Set the properties that Oracle R2DBC will set by default
+    // Not referencing the deprecated
+    // OracleConnection.CONNECTION_PROPERTY_J2EE13_COMPLIANT field, just in case
+    // it  gets removed in a future release of Oracle JDBC.
+    defaultProperties.setProperty("oracle.jdbc.J2EE13Compliant", "true");
+    defaultProperties.setProperty(
+      OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE, "25");
+    defaultProperties.setProperty(
+      OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
+      "1048576");
+    defaultProperties.setProperty(
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_USE_ZERO_COPY_IO,
+      "false");
+
+    return defaultProperties;
   }
 
   /**
