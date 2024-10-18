@@ -38,6 +38,8 @@ import reactor.core.publisher.Mono;
 import java.sql.SQLException;
 import java.sql.Savepoint;
 import java.time.Duration;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static io.r2dbc.spi.IsolationLevel.READ_COMMITTED;
 import static io.r2dbc.spi.IsolationLevel.SERIALIZABLE;
@@ -125,6 +127,12 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * </p>
    */
   private TransactionDefinition currentTransaction = null;
+
+  /**
+   * A queue of tasks that must complete before the {@link #jdbcConnection} is
+   * closed.
+   */
+  private final Queue<Publisher<?>> closeTasks = new ConcurrentLinkedQueue<>();
 
   /**
    * Constructs a new connection that uses the specified {@code adapter} to
@@ -369,7 +377,46 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    */
   @Override
   public Publisher<Void> close() {
-    return adapter.publishClose(jdbcConnection);
+
+    Publisher<Void> closeTasksPublisher = Mono.defer(() -> {
+      Publisher<?>[] closeTasksArray = closeTasks.toArray(Publisher<?>[]::new);
+      closeTasks.clear();
+
+      return Flux.concatDelayError(closeTasksArray).then();
+    });
+
+    return Flux.concatDelayError(
+      closeTasksPublisher,
+      adapter.publishClose(jdbcConnection));
+  }
+
+  /**
+   * <p>
+   * Adds a publisher that must be subscribed to and must terminate before
+   * closing the JDBC connection. This can be used to ensure that a publisher
+   * has completed a task before the {@link #jdbcConnection()} has been closed
+   * and becomes unusable.
+   * </p><p>
+   * <i> A call to this method should always be accompanied with a call to
+   * {@link #removeCloseTask(Publisher)}</i>: If the publisher is subscribed to
+   * and it terminates before {@link #close()} is called, then any reference
+   * to the Publisher must be removed so that it can be garbage collected.
+   * </p>
+   * @param publisher Publisher that must terminate before closing the JDBC
+   * connection. Not null.
+   */
+  void addCloseTask(Publisher<?> publisher) {
+    closeTasks.add(publisher);
+  }
+
+  /**
+   * Removes a publisher that was previously added with
+   * {@link #addCloseTask(Publisher)}.
+   *
+   * @param publisher Publisher to remove. Not null.
+   */
+  void removeCloseTask(Publisher<?> publisher) {
+    closeTasks.remove(publisher);
   }
 
   /**
@@ -417,7 +464,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   @Override
   public Batch createBatch() {
     requireOpenConnection(jdbcConnection);
-    return new OracleBatchImpl(statementTimeout, jdbcConnection, adapter);
+    return new OracleBatchImpl(statementTimeout, this);
   }
 
   /**
@@ -441,8 +488,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   public Statement createStatement(String sql) {
     requireNonNull(sql, "sql is null");
     requireOpenConnection(jdbcConnection);
-    return new OracleStatementImpl(
-      sql, statementTimeout, jdbcConnection, adapter);
+    return new OracleStatementImpl(sql, statementTimeout, this);
   }
 
   /**
@@ -824,6 +870,26 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
       runJdbc(jdbcConnection::endRequest);
       return null;
     });
+  }
+
+  /**
+   * Returns the JDBC connection that this R2DBC connection executes database
+   * calls with.
+   *
+   * @return The JDBC connection that backs this R2DBC connection. Not null.
+   */
+  java.sql.Connection jdbcConnection() {
+    return jdbcConnection;
+  }
+
+  /**
+   * Returns the adapter that adapts the asynchronous API of the
+   * {@link #jdbcConnection()} that backs this R2DBC connection.
+   *
+   * @return The JDBC connection that backs this R2DBC connection. Not null.
+   */
+  ReactiveJdbcAdapter adapter() {
+    return adapter;
   }
 
 }

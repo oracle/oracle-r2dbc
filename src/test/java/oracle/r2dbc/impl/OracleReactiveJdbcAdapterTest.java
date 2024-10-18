@@ -98,6 +98,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Verifies that
@@ -382,6 +383,14 @@ public class OracleReactiveJdbcAdapterTest {
    */
   @Test
   public void testStatementTimeout() {
+    // Assume that oracle.jdbc.disablePipeline is only set to false when
+    // experimenting with pipelining on Mac OS. In this scenario, statement
+    // cancellation is known to not work.
+    String disabledProperty = System.getProperty("oracle.jdbc.disablePipeline");
+    assumeTrue(
+      disabledProperty == null || disabledProperty.equalsIgnoreCase("true"),
+      "oracle.jdbc.disablePipeline is set, and the value is not \"true\"");
+
     Connection connection0 =
       Mono.from(ConnectionFactories.get(connectionFactoryOptions()
         .mutate()
