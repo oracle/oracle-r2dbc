@@ -38,8 +38,8 @@ import reactor.core.publisher.Mono;
 import java.sql.SQLException;
 import java.sql.Savepoint;
 import java.time.Duration;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static io.r2dbc.spi.IsolationLevel.READ_COMMITTED;
 import static io.r2dbc.spi.IsolationLevel.SERIALIZABLE;
@@ -47,8 +47,8 @@ import static io.r2dbc.spi.TransactionDefinition.ISOLATION_LEVEL;
 import static io.r2dbc.spi.TransactionDefinition.LOCK_WAIT_TIMEOUT;
 import static io.r2dbc.spi.TransactionDefinition.NAME;
 import static io.r2dbc.spi.TransactionDefinition.READ_ONLY;
-import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.fromJdbc;
+import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.runJdbc;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
@@ -129,10 +129,10 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   private TransactionDefinition currentTransaction = null;
 
   /**
-   * A queue of tasks that must complete before the {@link #jdbcConnection} is
-   * closed.
+   * A set of tasks that must complete before the {@link #jdbcConnection} is
+   * closed. The tasks are executed by subscribing to a Publisher.
    */
-  private final Queue<Publisher<?>> closeTasks = new ConcurrentLinkedQueue<>();
+  private final Set<Publisher<?>> closeTasks = ConcurrentHashMap.newKeySet();
 
   /**
    * Constructs a new connection that uses the specified {@code adapter} to
@@ -393,30 +393,36 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
   /**
    * <p>
    * Adds a publisher that must be subscribed to and must terminate before
-   * closing the JDBC connection. This can be used to ensure that a publisher
-   * has completed a task before the {@link #jdbcConnection()} has been closed
-   * and becomes unusable.
+   * closing the JDBC connection. This method can be used to ensure that certain
+   * tasks are completed before the {@link #jdbcConnection()} is closed and
+   * becomes unusable.
    * </p><p>
-   * <i> A call to this method should always be accompanied with a call to
-   * {@link #removeCloseTask(Publisher)}</i>: If the publisher is subscribed to
-   * and it terminates before {@link #close()} is called, then any reference
-   * to the Publisher must be removed so that it can be garbage collected.
+   * The publisher returned by this method emits the same result as the
+   * publisher passed into this method. However, when the returned publisher
+   * terminates, it will also remove any reference to the publisher that was
+   * passed into this method. <i>If the returned publisher is never subscribed
+   * to, then the reference will not be cleared until the connection is
+   * closed!</i> So, this method should only be used in cases where the user is
+   * responsible for subscribing to the returned publisher, in the same way they
+   * would be responsible for calling close() on an AutoCloseable. If the user
+   * is not responsible for subscribing, then there is no reasonable way for
+   * them to reduce the number object references that this method will create;
+   * They would either need to close this connection, or subscribe to a
+   * publisher when there is no obligation to do so.
    * </p>
-   * @param publisher Publisher that must terminate before closing the JDBC
-   * connection. Not null.
-   */
-  void addCloseTask(Publisher<?> publisher) {
-    closeTasks.add(publisher);
-  }
-
-  /**
-   * Removes a publisher that was previously added with
-   * {@link #addCloseTask(Publisher)}.
    *
-   * @param publisher Publisher to remove. Not null.
+   * @param publisher Publisher that must be subscribed to before closing the
+   * JDBC connection. Not null.
+   *
+   * @return A publisher that emits the same result as the publisher passed into
+   * this method, and clears any reference to it when terminated. Not null.
    */
-  void removeCloseTask(Publisher<?> publisher) {
-    closeTasks.remove(publisher);
+  <T> Publisher<T> addCloseTask(Publisher<T> publisher) {
+    closeTasks.add(publisher);
+
+    return Publishers.concatTerminal(
+      publisher,
+      Mono.fromRunnable(() -> closeTasks.remove(publisher)));
   }
 
   /**
@@ -876,7 +882,7 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * Returns the JDBC connection that this R2DBC connection executes database
    * calls with.
    *
-   * @return The JDBC connection that backs this R2DBC connection. Not null.
+   * @return The JDBC connection which backs this R2DBC connection. Not null.
    */
   java.sql.Connection jdbcConnection() {
     return jdbcConnection;

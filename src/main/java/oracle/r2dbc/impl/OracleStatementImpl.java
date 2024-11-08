@@ -1001,13 +1001,9 @@ final class OracleStatementImpl implements Statement {
       // executes SELECT ... FOR UPDATE, then JDBC will implicitly execute a
       // commit() when the Statement (or really the ResultSet) is closed. This
       // commit operation fails if the JDBC connection is already closed.
-      Publisher<Void> closePublisher = closeStatement();
-      r2dbcConnection.addCloseTask(closePublisher);
-
-      dependentCounter = new DependentCounter(Publishers.concatTerminal(
-        closePublisher,
-        Mono.fromRunnable(() ->
-          r2dbcConnection.removeCloseTask(closePublisher))));
+      Publisher<Void> closePublisher =
+        r2dbcConnection.addCloseTask(closeStatement());
+      dependentCounter = new DependentCounter(closePublisher);
 
       // Add this statement as a "party" (think j.u.c.Phaser) to the dependent
       // results by calling increment(). After the Result publisher returned by
@@ -1266,7 +1262,8 @@ final class OracleStatementImpl implements Statement {
       return fromJdbc(() -> {
         if (isResultSet) {
           return createQueryResult(
-            dependentCounter, preparedStatement.getResultSet(), adapter);
+            r2dbcConnection, dependentCounter,
+            preparedStatement.getResultSet());
         }
         else {
           long updateCount = preparedStatement.getLargeUpdateCount();
@@ -1885,25 +1882,17 @@ final class OracleStatementImpl implements Statement {
           Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
             .thenReturn(jdbcBlob),
         jdbcBlob -> {
-          Publisher<Void> freePublisher = adapter.publishBlobFree(jdbcBlob);
-
           // Work around for Oracle JDBC bug #37160069: All LOBs need to be
           // freed before closeAsyncOracle is called. This bug should be fixed
           // by the 23.7 release of Oracle JDBC. The fix can be verified by the
           // clobInsert and blobInsert methods in the TestKit class of the R2DBC
           // SPI test: These tests will subscribe to Connection.close() before
           // this freePublisher is subscribed to.
-          r2dbcConnection.addCloseTask(freePublisher);
+          Publisher<Void> freePublisher =
+            r2dbcConnection.addCloseTask(adapter.publishBlobFree(jdbcBlob));
+          addDeallocation(freePublisher);
 
-          addDeallocation(
-            Publishers.concatTerminal(
-              freePublisher,
-              Mono.fromRunnable(() ->
-                r2dbcConnection.removeCloseTask(freePublisher))));
-
-          // TODO: Why is discard() called here? It should be called by the
-          //  user who allocated the Blob, not by Oracle R2DBC.
-          return r2dbcBlob.discard();
+          return Mono.empty();
         });
     }
 
@@ -1929,25 +1918,17 @@ final class OracleStatementImpl implements Statement {
           Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
             .thenReturn(jdbcClob),
         jdbcClob -> {
-          Publisher<Void> freePublisher = adapter.publishClobFree(jdbcClob);
-
           // Work around for Oracle JDBC bug #37160069: All LOBs need to be
           // freed before closeAsyncOracle is called. This bug should be fixed
           // by the 23.7 release of Oracle JDBC. The fix can be verified by the
           // clobInsert and blobInsert methods in the TestKit class of the R2DBC
           // SPI test: These tests will subscribe to Connection.close() before
           // this freePublisher is subscribed to.
-          r2dbcConnection.addCloseTask(freePublisher);
+          Publisher<Void> freePublisher =
+            r2dbcConnection.addCloseTask(adapter.publishClobFree(jdbcClob));
+          addDeallocation(freePublisher);
 
-          addDeallocation(
-            Publishers.concatTerminal(
-              freePublisher,
-              Mono.fromRunnable(() ->
-                r2dbcConnection.removeCloseTask(freePublisher))));
-
-          // TODO: Why is discard() called here? It should be called by the
-          //  user who allocated the Clob, not by Oracle R2DBC.
-          return r2dbcClob.discard();
+          return Mono.empty();
         });
     }
 
@@ -2065,9 +2046,10 @@ final class OracleStatementImpl implements Statement {
         Mono.just(createCallResult(
           dependentCounter,
           createOutParameters(
-            fromJdbc(preparedStatement::getConnection),
+            r2dbcConnection,
             dependentCounter,
-            new JdbcOutParameters(), metadata, adapter),
+            new JdbcOutParameters(),
+            metadata),
           adapter)));
     }
 
@@ -2251,8 +2233,10 @@ final class OracleStatementImpl implements Statement {
 
               if (generatedKeys.isBeforeFirst()) {
                 return Mono.just(createGeneratedValuesResult(
-                  preparedStatement.getLargeUpdateCount(),
-                    dependentCounter, generatedKeys, adapter))
+                    r2dbcConnection,
+                    preparedStatement.getLargeUpdateCount(),
+                    dependentCounter,
+                    generatedKeys))
                   .concatWith(super.getResults(
                     preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
               }

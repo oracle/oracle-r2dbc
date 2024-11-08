@@ -30,18 +30,17 @@ import io.r2dbc.spi.Statement;
 import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.test.DatabaseConfig;
-import oracle.r2dbc.test.TestUtils;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.Arrays.asList;
@@ -51,10 +50,13 @@ import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
 import static oracle.r2dbc.util.Awaits.awaitNone;
 import static oracle.r2dbc.util.Awaits.awaitOne;
+import static oracle.r2dbc.util.Awaits.awaitQuery;
 import static oracle.r2dbc.util.Awaits.awaitUpdate;
 import static oracle.r2dbc.util.Awaits.tryAwaitExecution;
 import static oracle.r2dbc.util.Awaits.tryAwaitNone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies the Oracle R2DBC Driver implements behavior related to {@link Blob}
@@ -500,6 +502,140 @@ public class OracleLargeObjectsTest {
         "DROP TABLE testClobObject"));
       tryAwaitExecution(connection.createStatement(
         "DROP type " + objectType.getName()));
+      tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies behavior around discarding LOBs.
+   *
+   * A Blob/Clob bind should not be discarded until a user calls discard() and
+   * subscribes. Oracle R2DBC used to call discard() itself on Blob/Clob binds,
+   * which is not correct.
+   *
+   * When Connection.close() is called and subscribed to, it should not fail
+   * due to Oracle JDBC bug #37160069 which requires all LOBs to be freed before
+   * closeAsyncOracle is called.
+   */
+  @Test
+  public void testLobDiscard() {
+    byte[] data = getBytes(64 * 1024);
+
+    class TestBlob implements Blob {
+      final ByteBuffer blobData = ByteBuffer.wrap(data);
+
+      boolean isDiscarded = false;
+
+      @Override
+      public Publisher<ByteBuffer> stream() {
+        return Mono.just(blobData);
+      }
+
+      @Override
+      public Publisher<Void> discard() {
+        return Mono.<Void>empty()
+          .doOnSuccess(nil -> isDiscarded = true);
+      }
+    }
+
+    class TestClob implements Clob {
+      final CharBuffer clobData =
+        CharBuffer.wrap(new String(data, StandardCharsets.US_ASCII));
+
+      boolean isDiscarded = false;
+
+      @Override
+      public Publisher<CharSequence> stream() {
+        return Mono.just(clobData);
+      }
+
+      @Override
+      public Publisher<Void> discard() {
+        return Mono.<Void>empty()
+          .doOnSuccess(nil -> isDiscarded = true);
+      }
+    }
+
+    Connection connection =
+      Mono.from(DatabaseConfig.newConnection()).block(connectTimeout());
+    try {
+      awaitExecution(
+        connection.createStatement(
+          "CREATE TABLE testLobDiscard (blobValue BLOB, clobValue CLOB)"));
+
+      // Verify that LOBs are not discarded until discard() is subscribed to
+      TestBlob testBlob = new TestBlob();
+      TestClob testClob = new TestClob();
+      awaitUpdate(1, connection.createStatement(
+        "INSERT INTO testLobDiscard VALUES (?, ?)")
+        .bind(0, testBlob)
+        .bind(1, testClob));
+      assertFalse(testBlob.isDiscarded);
+      assertFalse(testClob.isDiscarded);
+      awaitNone(testBlob.discard());
+      awaitNone(testClob.discard());
+      assertTrue(testBlob.isDiscarded);
+      assertTrue(testClob.isDiscarded);
+
+      // Query temporary LOBs, and don't discard them
+      Object[] blobAndClob =
+        awaitOne(Flux.from(connection.createStatement(
+          "SELECT TO_BLOB(HEXTORAW('ABCDEF')), TO_CLOB('ABCDEF') FROM sys.dual")
+          .execute())
+          .flatMap(result ->
+            result.map(row ->
+              new Object[]{
+                row.get(0, Blob.class),
+                row.get(1, Clob.class)})));
+
+      awaitExecution(connection.createStatement(
+        "DROP TABLE testLobDiscard"));
+
+      // Close the connection. It should not fail due to Oracle JDBC bug
+      // #37160069.
+      awaitNone(connection.close());
+    }
+    catch (Exception exception) {
+      try {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TABLE testLobDiscard"));
+        tryAwaitNone(connection.close());
+      }
+      catch (Exception closeException) {
+        exception.addSuppressed(closeException);
+      }
+      throw exception;
+    }
+  }
+
+  /**
+   * Verifies inserts and selects on NULL valued BLOBs and CLOBs
+   */
+  @Test
+  public void testNullLob() {
+    Connection connection = awaitOne(sharedConnection());
+    try {
+      awaitExecution(connection.createStatement(
+        "CREATE TABLE testNullLob(blobValue BLOB, clobValue CLOB)"));
+
+      awaitUpdate(1, connection.createStatement(
+        "INSERT INTO testNullLob VALUES (?, ?)")
+        .bindNull(0, Blob.class)
+        .bindNull(1, Clob.class));
+
+      awaitQuery(
+        List.of(
+          Arrays.asList(null, null)),
+        row -> Arrays.asList(
+          row.get(0, Blob.class),
+          row.get(1, Clob.class)),
+        connection.createStatement(
+          "SELECT blobValue, clobValue FROM testNullLob"));
+
+    }
+    finally {
+      tryAwaitExecution(connection.createStatement(
+        "DROP TABLE testNullLob"));
       tryAwaitNone(connection.close());
     }
   }
