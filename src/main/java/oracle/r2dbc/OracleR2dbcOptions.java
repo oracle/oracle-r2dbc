@@ -396,6 +396,18 @@ public final class OracleR2dbcOptions {
    */
   public static final Option<CharSequence> KERBEROS_JAAS_LOGIN_MODULE;
 
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_DEFAULT_ROW_PREFETCH}
+   */
+  public static final Option<Integer> DEFAULT_FETCH_SIZE;
+
+  /**
+   * Configures the Oracle JDBC Connection used by Oracle R2DBC as specified by:
+   * {@link OracleConnection#CONNECTION_PROPERTY_PROXY_CLIENT_NAME}
+   */
+  public static final Option<CharSequence> PROXY_CLIENT_NAME;
+
   /** The unmodifiable set of all extended options */
   private static final Set<Option<?>> OPTIONS = Set.of(
     DESCRIPTOR = Option.valueOf("oracle.r2dbc.descriptor"),
@@ -509,7 +521,11 @@ public final class OracleR2dbcOptions {
     KERBEROS_REALM = Option.valueOf(
       OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_REALM),
     KERBEROS_JAAS_LOGIN_MODULE = Option.valueOf(
-      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_JAAS_LOGIN_MODULE)
+      OracleConnection.CONNECTION_PROPERTY_THIN_NET_AUTHENTICATION_KRB_JAAS_LOGIN_MODULE),
+    DEFAULT_FETCH_SIZE = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_DEFAULT_ROW_PREFETCH),
+    PROXY_CLIENT_NAME = Option.valueOf(
+      OracleConnection.CONNECTION_PROPERTY_PROXY_CLIENT_NAME)
   );
 
   /**

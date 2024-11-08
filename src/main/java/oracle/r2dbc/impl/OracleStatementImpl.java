@@ -602,8 +602,7 @@ final class OracleStatementImpl implements Statement {
     return adapter.getLock().get(() -> {
       PreparedStatement preparedStatement =
         jdbcConnection.prepareStatement(sql);
-      preparedStatement.setFetchSize(currentFetchSize);
-      preparedStatement.setQueryTimeout(timeout);
+      configureJdbcStatement(preparedStatement, currentFetchSize, timeout);
       return new JdbcStatement(preparedStatement, currentBinds);
     });
   }
@@ -634,8 +633,7 @@ final class OracleStatementImpl implements Statement {
     return adapter.getLock().get(() -> {
       PreparedStatement preparedStatement =
         jdbcConnection.prepareStatement(sql);
-      preparedStatement.setFetchSize(currentFetchSize);
-      preparedStatement.setQueryTimeout(timeout);
+      configureJdbcStatement(preparedStatement, currentFetchSize, timeout);
       return finalInvalidBinds == null
         ? new JdbcBatch(preparedStatement, currentBatch)
         : new JdbcBatchInvalidBinds(
@@ -654,8 +652,7 @@ final class OracleStatementImpl implements Statement {
 
     return adapter.getLock().get(() -> {
       CallableStatement callableStatement = jdbcConnection.prepareCall(sql);
-      callableStatement.setFetchSize(currentFetchSize);
-      callableStatement.setQueryTimeout(timeout);
+      configureJdbcStatement(callableStatement, currentFetchSize, timeout);
       return new JdbcCall(callableStatement, currentBinds, parameterNames);
     });
   }
@@ -676,10 +673,41 @@ final class OracleStatementImpl implements Statement {
         currentGeneratedColumns.length == 0
           ? jdbcConnection.prepareStatement(sql, RETURN_GENERATED_KEYS)
           : jdbcConnection.prepareStatement(sql, currentGeneratedColumns);
-      preparedStatement.setFetchSize(currentFetchSize);
-      preparedStatement.setQueryTimeout(timeout);
+      configureJdbcStatement(preparedStatement, currentFetchSize, timeout);
       return new JdbcReturningGenerated(preparedStatement, currentBinds);
     });
+  }
+
+  /**
+   * Configures a JDBC Statement with values that have been configured on an
+   * R2DBC Statement.
+   *
+   * @param statement The statement to configure. Not null.
+   *
+   * @param fetchSize Configuration of {@link #fetchSize(int)}, possibly 0 if
+   * a default size should be used.
+   *
+   * @param queryTimeout Configuration of {@link #timeout}, possibly 0 if no
+   * timeout should be used.
+   *
+   * @throws SQLException If the JDBC statement is closed.
+   */
+  private static void configureJdbcStatement(
+    java.sql.Statement statement, int fetchSize, int queryTimeout)
+    throws SQLException {
+
+    // It is noted that Oracle JDBC's feature of auto-tuning fetch sizes will
+    // be disabled if 0 is passed to setFetchSize. Perhaps similar behavior
+    // occurs with methods like setQueryTimeout as well? To be sure, don't call
+    // any methods unless non-default values are set.
+
+    if (fetchSize != 0) {
+      statement.setFetchSize(fetchSize);
+    }
+
+    if (queryTimeout != 0) {
+      statement.setQueryTimeout(queryTimeout);
+    }
   }
 
   /**
