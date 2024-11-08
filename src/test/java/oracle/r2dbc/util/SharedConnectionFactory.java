@@ -245,7 +245,7 @@ public class SharedConnectionFactory implements ConnectionFactory {
     return new RuntimeException(
       "V$OPEN_CUROSR is not accessible to the test user. " +
         "Grant access as SYSDBA with: " +
-        "\"GRANT SELECT ON v_$open_cursor TO "+user()+"\", " +
+        "\"GRANT SELECT ON v$open_cursor TO "+user()+"\", " +
         "or disable open cursor checks with: " +
         " -Doracle.r2bdc.disableCursorCloseVerification=true");
   }

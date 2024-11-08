@@ -2476,6 +2476,11 @@ public class OracleStatementImplTest {
         public String toString() {
           return id + ", " + Arrays.toString(value);
         }
+
+        @Override
+        public int hashCode() {
+          return Objects.hash(id, Arrays.hashCode(value));
+        }
       }
 
       TestRow row0 = new TestRow(0L, new int[]{1, 2, 3});
@@ -2683,6 +2688,11 @@ public class OracleStatementImplTest {
         @Override
         public String toString() {
           return id + ", " + Arrays.toString(value);
+        }
+
+        @Override
+        public int hashCode() {
+          return Objects.hash(id, Arrays.hashCode(value));
         }
       }
 
@@ -3198,6 +3208,11 @@ public class OracleStatementImplTest {
           return other instanceof IdVector
             && ((IdVector)other).id == id
             && Objects.equals(((IdVector)other).vector, vector);
+        }
+
+        @Override
+        public int hashCode() {
+          return Objects.hash(id, vector);
         }
       }
 

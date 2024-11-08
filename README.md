@@ -25,12 +25,12 @@ Project Reactor, RxJava, and Akka Streams.
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
 
 # About This Version
-The 1.2.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
+The 1.3.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
 
 New features in this release:
-- [Pipelined Operations](https://github.com/oracle/oracle-r2dbc/pull/145)
-- [Vector Data Type](https://github.com/oracle/oracle-r2dbc/pull/146)
-- [Options for Fetch Size and Proxy Authentication](https://github.com/oracle/oracle-r2dbc/pull/155)
+- [Pipelining](#pipelining)
+- [Vector Data Type](#vector)
+- [Fetch Size and Proxy Authentication Options](https://github.com/oracle/oracle-r2dbc/pull/155)
 
 Updated dependencies:
 - Updated Oracle JDBC from 21.11.0.0 to 23.6.0.24.10
@@ -369,23 +369,28 @@ If this option is not configured, then the common
 A subset of Oracle JDBC's connection properties are defined as `Option` 
 constants in the
 [OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java) class.
-These connection properties may be configured as options having the same
-name as the Oracle JDBC connection property, and may have `CharSequence` value
-types.
+If an Oracle JDBC property is not defined as an `Option`, in most cases it can 
+instead be configured by a
+[connection properties file](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_CONFIG_FILE)
+or a JVM system property instead.
+[Pull requests to add missing options](https://github.com/oracle/oracle-r2dbc/pull/124)
+are also a welcome addition.
 
-For example, the following URL configures the `oracle.net.wallet_location` 
-connection property:
+When a connection property is defined in `OracleR2dbcOptions`, it may be
+configured as an R2DBC URL parameter. For example, the following URL configures
+the `oracle.net.wallet_location` connection property:
 ```
 r2dbcs:oracle://db.host.example.com:1522/db.service.name?oracle.net.wallet_location=/path/to/wallet/
 ```
-The same property can also be configured programmatically:
+And, the `OracleR2dbcOptions` constants can be used in programmatic 
+configuration:
 ```java
  ConnectionFactoryOptions.builder()
   .option(OracleR2dbcOptions.TLS_WALLET_LOCATION, "/path/to/wallet")
 ```
 
-The next sections list Oracle JDBC connection properties which are supported by
-Oracle R2DBC.
+All Oracle JDBC connection properties defined in `OracleR2dbcOptions` are listed
+in the next sections.
 
 ##### TLS/SSL Connection Properties
   - [oracle.net.tns_admin](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_TNS_ADMIN)

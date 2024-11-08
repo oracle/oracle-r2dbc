@@ -35,6 +35,7 @@ import java.io.InputStream;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.Properties;
 
 /**
@@ -178,14 +179,25 @@ public final class DatabaseConfig {
    * @return The major version number of the test database.
    */
   public static int databaseVersion() {
-    try (var jdbcConnection = DriverManager.getConnection(String.format(
-      "jdbc:oracle:thin:@%s:%s/%s", host(), port(), serviceName()),
-      user(), password())) {
+    try (
+      var jdbcConnection =
+        DriverManager.getConnection(jdbcUrl(), user(), password())) {
       return jdbcConnection.getMetaData().getDatabaseMajorVersion();
     }
     catch (SQLException sqlException) {
       throw new AssertionError(sqlException);
     }
+  }
+
+  /**
+   * Returns an Oracle JDBC URL for opening connections to the test database.
+   * @return URL for the Oracle JDBC Driver. Not null.
+   */
+  public static String jdbcUrl() {
+    return String.format(
+      "jdbc:oracle:thin:@%s%s:%d/%s",
+      protocol() == null ? "" : protocol() + ":",
+      host(), port(), serviceName());
   }
 
   /**
