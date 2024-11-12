@@ -1356,6 +1356,14 @@ public class OracleConnectionImplTest {
    */
   @Test
   public void testSetStatementTimeout() {
+    // Assume that oracle.jdbc.disablePipeline is only set to false when
+    // experimenting with pipelining on Mac OS. In this scenario, statement
+    // cancellation is known to not work.
+    String disabledProperty = System.getProperty("oracle.jdbc.disablePipeline");
+    assumeTrue(
+      disabledProperty == null || disabledProperty.equalsIgnoreCase("true"),
+      "oracle.jdbc.disablePipeline is set, and the value is not \"true\"");
+
     Connection connection =
       Mono.from(sharedConnection()).block(connectTimeout());
     try {

@@ -56,6 +56,9 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
  */
 final class OracleBatchImpl implements Batch {
 
+  /** The OracleConnectionImpl that created this Batch */
+  private final OracleConnectionImpl r2dbcConnection;
+
   /** Adapts Oracle JDBC Driver APIs into Reactive Streams APIs */
   private final ReactiveJdbcAdapter adapter;
 
@@ -83,12 +86,11 @@ final class OracleBatchImpl implements Batch {
    * @param jdbcConnection JDBC connection to an Oracle Database. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
-  OracleBatchImpl(
-    Duration timeout, Connection jdbcConnection, ReactiveJdbcAdapter adapter) {
+  OracleBatchImpl(Duration timeout, OracleConnectionImpl r2dbcConnection) {
     this.timeout = timeout;
-    this.jdbcConnection =
-      requireNonNull(jdbcConnection, "jdbcConnection is null");
-    this.adapter = requireNonNull(adapter, "adapter is null");
+    this.r2dbcConnection = r2dbcConnection;
+    this.jdbcConnection = r2dbcConnection.jdbcConnection();
+    this.adapter = r2dbcConnection.adapter();
   }
 
   /**
@@ -103,7 +105,7 @@ final class OracleBatchImpl implements Batch {
     requireOpenConnection(jdbcConnection);
     requireNonNull(sql, "sql is null");
     statements.add(
-      new OracleStatementImpl(sql, timeout, jdbcConnection, adapter));
+      new OracleStatementImpl(sql, timeout, r2dbcConnection));
     return this;
   }
 

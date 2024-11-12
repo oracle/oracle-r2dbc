@@ -198,6 +198,11 @@ final class OracleStatementImpl implements Statement {
   private final ReactiveJdbcAdapter adapter;
 
   /**
+   * The instance of OracleConnectionImpl that created this statement.
+   */
+  private final OracleConnectionImpl r2dbcConnection;
+
+  /**
    * SQL Language command that this statement executes. The command is
    * provided by user code and may include parameter markers.
    */
@@ -255,15 +260,15 @@ final class OracleStatementImpl implements Statement {
    * @param sql SQL Language statement that may include parameter markers.
    * @param timeout Timeout applied to the execution of the constructed
    * {@code Statement}. Not null. Not negative.
-   * @param jdbcConnection JDBC connection to an Oracle Database.
-   * @param adapter Adapts JDBC calls into reactive streams.
+   * @param r2dbcConnection The OracleConnectionImpl that is creating this
+   * statement. Not null.
    */
   OracleStatementImpl(
-    String sql, Duration timeout, Connection jdbcConnection,
-    ReactiveJdbcAdapter adapter) {
+    String sql, Duration timeout, OracleConnectionImpl r2dbcConnection) {
     this.sql = sql;
-    this.jdbcConnection = jdbcConnection;
-    this.adapter = adapter;
+    this.r2dbcConnection = r2dbcConnection;
+    this.jdbcConnection = r2dbcConnection.jdbcConnection();
+    this.adapter = r2dbcConnection.adapter();
 
     // The SQL string is parsed to identify parameter markers and allocate the
     // bindValues array accordingly
@@ -1015,13 +1020,25 @@ final class OracleStatementImpl implements Statement {
       this.preparedStatement = preparedStatement;
       this.binds = binds;
 
+      // Work around for Oracle JDBC bug #37160069: The JDBC statement must be
+      // closed before closeAsyncOracle is called. This bug should be fixed
+      // by the 23.7 release of Oracle JDBC. The fix can be verified by the
+      // OracleConnectionImplTest.testSetStatementTimeout method (test won't
+      // fail, but look for an error in stderr). Typically, statement closing
+      // is a no-op if the connection is closed. However, if the statement
+      // executes SELECT ... FOR UPDATE, then JDBC will implicitly execute a
+      // commit() when the Statement (or really the ResultSet) is closed. This
+      // commit operation fails if the JDBC connection is already closed.
+      Publisher<Void> closePublisher =
+        r2dbcConnection.addCloseTask(closeStatement());
+      dependentCounter = new DependentCounter(closePublisher);
+
       // Add this statement as a "party" (think j.u.c.Phaser) to the dependent
       // results by calling increment(). After the Result publisher returned by
       // execute() terminates, this statement "arrives" by calling decrement().
       // Calling decrement() after the Result publisher terminates ensures that
       // the JDBC statement can not be closed until all results have had a
       // chance to be emitted to user code.
-      dependentCounter = new DependentCounter(closeStatement());
       dependentCounter.increment();
     }
 
@@ -1273,7 +1290,8 @@ final class OracleStatementImpl implements Statement {
       return fromJdbc(() -> {
         if (isResultSet) {
           return createQueryResult(
-            dependentCounter, preparedStatement.getResultSet(), adapter);
+            r2dbcConnection, dependentCounter,
+            preparedStatement.getResultSet());
         }
         else {
           long updateCount = preparedStatement.getLargeUpdateCount();
@@ -1892,8 +1910,17 @@ final class OracleStatementImpl implements Statement {
           Mono.from(adapter.publishBlobWrite(r2dbcBlob.stream(), jdbcBlob))
             .thenReturn(jdbcBlob),
         jdbcBlob -> {
-          addDeallocation(adapter.publishBlobFree(jdbcBlob));
-          return r2dbcBlob.discard();
+          // Work around for Oracle JDBC bug #37160069: All LOBs need to be
+          // freed before closeAsyncOracle is called. This bug should be fixed
+          // by the 23.7 release of Oracle JDBC. The fix can be verified by the
+          // clobInsert and blobInsert methods in the TestKit class of the R2DBC
+          // SPI test: These tests will subscribe to Connection.close() before
+          // this freePublisher is subscribed to.
+          Publisher<Void> freePublisher =
+            r2dbcConnection.addCloseTask(adapter.publishBlobFree(jdbcBlob));
+          addDeallocation(freePublisher);
+
+          return Mono.empty();
         });
     }
 
@@ -1919,8 +1946,17 @@ final class OracleStatementImpl implements Statement {
           Mono.from(adapter.publishClobWrite(r2dbcClob.stream(), jdbcClob))
             .thenReturn(jdbcClob),
         jdbcClob -> {
-          addDeallocation(adapter.publishClobFree(jdbcClob));
-          return r2dbcClob.discard();
+          // Work around for Oracle JDBC bug #37160069: All LOBs need to be
+          // freed before closeAsyncOracle is called. This bug should be fixed
+          // by the 23.7 release of Oracle JDBC. The fix can be verified by the
+          // clobInsert and blobInsert methods in the TestKit class of the R2DBC
+          // SPI test: These tests will subscribe to Connection.close() before
+          // this freePublisher is subscribed to.
+          Publisher<Void> freePublisher =
+            r2dbcConnection.addCloseTask(adapter.publishClobFree(jdbcClob));
+          addDeallocation(freePublisher);
+
+          return Mono.empty();
         });
     }
 
@@ -2038,9 +2074,10 @@ final class OracleStatementImpl implements Statement {
         Mono.just(createCallResult(
           dependentCounter,
           createOutParameters(
-            fromJdbc(preparedStatement::getConnection),
+            r2dbcConnection,
             dependentCounter,
-            new JdbcOutParameters(), metadata, adapter),
+            new JdbcOutParameters(),
+            metadata),
           adapter)));
     }
 
@@ -2224,8 +2261,10 @@ final class OracleStatementImpl implements Statement {
 
               if (generatedKeys.isBeforeFirst()) {
                 return Mono.just(createGeneratedValuesResult(
-                  preparedStatement.getLargeUpdateCount(),
-                    dependentCounter, generatedKeys, adapter))
+                    r2dbcConnection,
+                    preparedStatement.getLargeUpdateCount(),
+                    dependentCounter,
+                    generatedKeys))
                   .concatWith(super.getResults(
                     preparedStatement.getMoreResults(KEEP_CURRENT_RESULT)));
               }

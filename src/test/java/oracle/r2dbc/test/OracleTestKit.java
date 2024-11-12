@@ -57,6 +57,7 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
 import static io.r2dbc.spi.ConnectionFactoryOptions.USER;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.host;
+import static oracle.r2dbc.test.DatabaseConfig.jdbcUrl;
 import static oracle.r2dbc.test.DatabaseConfig.password;
 import static oracle.r2dbc.test.DatabaseConfig.port;
 import static oracle.r2dbc.test.DatabaseConfig.protocol;
@@ -95,11 +96,7 @@ public class OracleTestKit implements TestKit<Integer> {
     try {
       OracleDataSource dataSource =
         new oracle.jdbc.datasource.impl.OracleDataSource();
-      dataSource.setURL(String.format("jdbc:oracle:thin:@%s%s:%d/%s",
-        Optional.ofNullable(protocol())
-          .map(protocol -> protocol + ":")
-          .orElse(""),
-        host(), port(), serviceName()));
+      dataSource.setURL(jdbcUrl());
       dataSource.setUser(user());
       dataSource.setPassword(password());
       this.jdbcOperations = new JdbcTemplate(dataSource);

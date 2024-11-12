@@ -640,10 +640,10 @@ public class OracleResultImplTest {
     Connection connection = awaitOne(sharedConnection());
     try {
 
-      // Expect a warning for forcing a view that references a non-existent
+      // Expect a warning for invalid PL/SQL
       // table
-      String sql = "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarning AS" +
-        " SELECT x FROM thisdoesnotexist";
+      String sql = "CREATE OR REPLACE PROCEDURE testOracleR2dbcWarning AS" +
+        " BEGIN this is not valid pl/sql; END;";
       Statement warningStatement = connection.createStatement(sql);
 
       // Collect the segments
@@ -684,7 +684,7 @@ public class OracleResultImplTest {
     }
     finally {
       tryAwaitExecution(
-        connection.createStatement("DROP VIEW testOracleR2dbcWarning"));
+        connection.createStatement("DROP PROCEDURE testOracleR2dbcWarning"));
       tryAwaitNone(connection.close());
     }
   }
@@ -697,11 +697,10 @@ public class OracleResultImplTest {
     Connection connection = awaitOne(sharedConnection());
     try {
 
-      // Expect a warning for forcing a view that references a non-existent
-      // table
+      // Expect a warning for invalid PL/SQL
       String sql =
-        "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarningIgnored AS" +
-          " SELECT x FROM thisdoesnotexist";
+        "CREATE OR REPLACE PROCEDURE testOracleR2dbcWarningIgnored AS" +
+          " BEGIN this is not valid pl/sql; END;";
       Statement warningStatement = connection.createStatement(sql);
 
       // Verify that an update count of 0 is returned.
@@ -719,7 +718,8 @@ public class OracleResultImplTest {
     }
     finally {
       tryAwaitExecution(
-        connection.createStatement("DROP VIEW testOracleR2dbcWarningIgnored"));
+        connection.createStatement(
+          "DROP PROCEDURE testOracleR2dbcWarningIgnored"));
       tryAwaitNone(connection.close());
     }
   }
@@ -732,11 +732,10 @@ public class OracleResultImplTest {
   public void testOracleR2dbcWarningNotIgnored() {
     Connection connection = awaitOne(sharedConnection());
     try {
-      // Expect a warning for forcing a view that references a non-existent
-      // table
+      // Expect a warning for invalid PL/SQL
       String sql =
-        "CREATE OR REPLACE FORCE VIEW testOracleR2dbcWarningIgnored AS" +
-          " SELECT x FROM thisdoesnotexist";
+        "CREATE OR REPLACE PROCEDURE testOracleR2dbcWarningIgnored AS" +
+          " BEGIN this is not valid pl/sql; END;";
       Statement warningStatement = connection.createStatement(sql);
       AtomicInteger segmentIndex = new AtomicInteger(0);
       awaitError(
@@ -754,7 +753,8 @@ public class OracleResultImplTest {
     }
     finally {
       tryAwaitExecution(
-        connection.createStatement("DROP VIEW testOracleR2dbcWarningIgnored"));
+        connection.createStatement(
+          "DROP PROCEDURE testOracleR2dbcWarningIgnored"));
       tryAwaitNone(connection.close());
     }
   }

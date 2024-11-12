@@ -46,6 +46,7 @@ import oracle.sql.INTERVALDS;
 import oracle.sql.INTERVALYM;
 import oracle.sql.TIMESTAMPLTZ;
 import oracle.sql.TIMESTAMPTZ;
+import org.reactivestreams.Publisher;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
@@ -93,6 +94,9 @@ import static oracle.r2dbc.impl.OracleR2dbcExceptions.toR2dbcException;
 class OracleReadableImpl implements io.r2dbc.spi.Readable {
 
 
+  /** The R2DBC connection that created this readable */
+  private final OracleConnectionImpl r2dbcConnection;
+
   /** The JDBC connection that created this readable */
   private final java.sql.Connection jdbcConnection;
 
@@ -117,21 +121,21 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * {@code jdbcReadable} and obtains metadata of the values from
    * {@code resultMetadata}.
    * </p>
-   * @param jdbcConnection JDBC connection that created the
+   * @param r2dbcConnection R2DBC connection that created the
    *   {@code jdbcReadable}. Not null.
    * @param jdbcReadable Readable values from a JDBC Driver. Not null.
    * @param readablesMetadata Metadata of each value. Not null.
    * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   private OracleReadableImpl(
-    java.sql.Connection jdbcConnection,  DependentCounter dependentCounter,
-    JdbcReadable jdbcReadable, ReadablesMetadata<?> readablesMetadata,
-    ReactiveJdbcAdapter adapter) {
-    this.jdbcConnection = jdbcConnection;
+    OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
+    JdbcReadable jdbcReadable, ReadablesMetadata<?> readablesMetadata) {
+    this.r2dbcConnection = r2dbcConnection;
+    this.jdbcConnection = r2dbcConnection.jdbcConnection();
     this.dependentCounter = dependentCounter;
     this.jdbcReadable = jdbcReadable;
     this.readablesMetadata = readablesMetadata;
-    this.adapter = adapter;
+    this.adapter = r2dbcConnection.adapter();
   }
 
   /**
@@ -151,11 +155,10 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    *   {@code metadata}. Not null.
    */
   static Row createRow(
-    java.sql.Connection jdbcConnection, DependentCounter dependentCounter,
-    JdbcReadable jdbcReadable, RowMetadataImpl metadata,
-    ReactiveJdbcAdapter adapter) {
+    OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
+    JdbcReadable jdbcReadable, RowMetadataImpl metadata) {
     return new RowImpl(
-      jdbcConnection, dependentCounter, jdbcReadable, metadata, adapter);
+      r2dbcConnection, dependentCounter, jdbcReadable, metadata);
   }
 
   /**
@@ -164,7 +167,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * the provided {@code jdbcReadable} and {@code rowMetadata}. The metadata
    * object is used to determine the default type mapping of column values.
    * </p>
-   * @param jdbcConnection JDBC connection that created the
+   * @param r2dbcConnection R2DBC connection that created the
    *   {@code jdbcReadable}. Not null.
    * @param dependentCounter Counter that is increased for each dependent
    * {@code Result} created by the returned {@code OutParameters}
@@ -175,11 +178,10 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    *   {@code metadata}. Not null.
    */
   static OutParameters createOutParameters(
-    java.sql.Connection jdbcConnection, DependentCounter dependentCounter,
-    JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata,
-    ReactiveJdbcAdapter adapter) {
+    OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
+    JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata) {
     return new OutParametersImpl(
-      jdbcConnection, dependentCounter, jdbcReadable, metadata, adapter);
+      r2dbcConnection, dependentCounter, jdbcReadable, metadata);
   }
 
   /**
@@ -335,11 +337,16 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    */
   private Blob getBlob(int index) {
     java.sql.Blob jdbcBlob = jdbcReadable.getObject(index, java.sql.Blob.class);
-    return jdbcBlob == null
-      ? null
-      : OracleLargeObjects.createBlob(
-          adapter.publishBlobRead(jdbcBlob),
-          adapter.publishBlobFree(jdbcBlob));
+
+    if (jdbcBlob == null)
+      return null;
+
+    Publisher<Void> freePublisher =
+      r2dbcConnection.addCloseTask(adapter.publishBlobFree(jdbcBlob));
+
+    return OracleLargeObjects.createBlob(
+      adapter.publishBlobRead(jdbcBlob),
+      freePublisher);
   }
 
   /**
@@ -367,11 +374,15 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       jdbcClob = jdbcReadable.getObject(index, java.sql.Clob.class);
     }
 
-    return jdbcClob == null
-      ? null
-      : OracleLargeObjects.createClob(
-          adapter.publishClobRead(jdbcClob),
-          adapter.publishClobFree(jdbcClob));
+    if (jdbcClob == null)
+      return null;
+
+    Publisher<Void> freePublisher =
+      r2dbcConnection.addCloseTask(adapter.publishClobFree(jdbcClob));
+
+    return OracleLargeObjects.createClob(
+      adapter.publishClobRead(jdbcClob),
+      freePublisher);
   }
 
   /**
@@ -685,11 +696,10 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
       return null;
 
     return new OracleR2dbcObjectImpl(
-      jdbcConnection,
+      r2dbcConnection,
       dependentCounter,
       new StructJdbcReadable(oracleStruct),
-      ReadablesMetadata.createAttributeMetadata(oracleStruct),
-      adapter);
+      ReadablesMetadata.createAttributeMetadata(oracleStruct));
   }
 
   /**
@@ -956,7 +966,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
 
     dependentCounter.increment();
     return OracleResultImpl.createQueryResult(
-      dependentCounter, resultSet, adapter);
+      r2dbcConnection, dependentCounter, resultSet);
   }
 
   /**
@@ -994,17 +1004,16 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * {@code jdbcReadable}, and uses the specified {@code rowMetadata} to
      * determine the default type mapping of column values.
      * </p>
-     * @param jdbcConnection JDBC connection that created the
+     * @param r2dbcConnection R2DBC connection that created the
      *   {@code jdbcReadable}. Not null.
      * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
      * @param metadata Meta-data for the specified row. Not null.
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private RowImpl(
-      java.sql.Connection jdbcConnection, DependentCounter dependentCounter,
-      JdbcReadable jdbcReadable, RowMetadataImpl metadata,
-      ReactiveJdbcAdapter adapter) {
-      super(jdbcConnection, dependentCounter, jdbcReadable, metadata, adapter);
+      OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
+      JdbcReadable jdbcReadable, RowMetadataImpl metadata) {
+      super(r2dbcConnection, dependentCounter, jdbcReadable, metadata);
       this.metadata = metadata;
     }
 
@@ -1044,10 +1053,9 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OutParametersImpl(
-      java.sql.Connection jdbcConnection, DependentCounter dependentCounter,
-      JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata,
-      ReactiveJdbcAdapter adapter) {
-      super(jdbcConnection, dependentCounter, jdbcReadable, metadata, adapter);
+      OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
+      JdbcReadable jdbcReadable, OutParametersMetadataImpl metadata) {
+      super(r2dbcConnection, dependentCounter, jdbcReadable, metadata);
       this.metadata = metadata;
     }
 
@@ -1068,20 +1076,18 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * {@code jdbcReadable} and obtains metadata of the values from
      * {@code outParametersMetaData}.
      * </p>
-     * @param jdbcConnection JDBC connection that created the
+     * @param r2dbcConnection R2DBC connection that created the
      *   {@code jdbcReadable}. Not null.
      * @param structJdbcReadable Readable values from a JDBC Driver. Not null.
      * @param metadata Metadata of each value. Not null.
      * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OracleR2dbcObjectImpl(
-      java.sql.Connection jdbcConnection,
+      OracleConnectionImpl r2dbcConnection,
       DependentCounter dependentCounter,
       StructJdbcReadable structJdbcReadable,
-      OracleR2dbcObjectMetadataImpl metadata,
-      ReactiveJdbcAdapter adapter) {
-      super(
-        jdbcConnection, dependentCounter, structJdbcReadable, metadata, adapter);
+      OracleR2dbcObjectMetadataImpl metadata) {
+      super(r2dbcConnection, dependentCounter, structJdbcReadable, metadata);
       this.metadata = metadata;
     }
 

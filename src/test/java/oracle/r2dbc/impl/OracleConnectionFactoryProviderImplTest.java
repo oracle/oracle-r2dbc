@@ -33,7 +33,6 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.DATABASE;
@@ -56,7 +55,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Verifies that
  * {@link OracleConnectionFactoryProviderImpl} implements behavior that
- * is specified in it's class and method level javadocs.
+ * is specified in its class and method level javadocs.
  */
 public class OracleConnectionFactoryProviderImplTest {
 
@@ -216,7 +215,7 @@ public class OracleConnectionFactoryProviderImplTest {
     Supplier<Integer> portSupplier = DatabaseConfig::port;
     Supplier<String> databaseSupplier = DatabaseConfig::serviceName;
     Supplier<String> userSupplier = DatabaseConfig::user;
-    TestSupplier<CharSequence> passwordSupplier = new TestSupplier(password());
+    TestSupplier<CharSequence> passwordSupplier = new TestSupplier<>(password());
 
     ConnectionFactoryOptions connectionFactoryOptions =
       connectionFactoryOptions()
@@ -326,7 +325,7 @@ public class OracleConnectionFactoryProviderImplTest {
     Publisher<Integer> portPublisher = Mono.fromSupplier(DatabaseConfig::port);
     Publisher<String> databasePublisher = Mono.fromSupplier(DatabaseConfig::serviceName);
     Publisher<String> userPublisher = Mono.fromSupplier(DatabaseConfig::user);
-    TestSupplier<CharSequence> passwordPublisher = new TestSupplier(password());
+    TestSupplier<CharSequence> passwordPublisher = new TestSupplier<>(password());
 
     ConnectionFactoryOptions connectionFactoryOptions =
       connectionFactoryOptions()

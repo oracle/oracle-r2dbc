@@ -25,19 +25,16 @@ Project Reactor, RxJava, and Akka Streams.
 [Reactive Streams Specification v1.0.3](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md)
 
 # About This Version
-The 1.2.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
-
-Fixes in this release:
- - [Fixed "Operator has been terminated" message](https://github.com/oracle/oracle-r2dbc/pull/134)
- - [Checking for Zero Threads in the common ForkJoinPool](https://github.com/oracle/oracle-r2dbc/pull/131)
+The 1.3.0 release Oracle R2DBC implements version 1.0.0.RELEASE of the R2DBC SPI.
 
 New features in this release:
-- [Supporting Option Values from Supplier and Publisher](https://github.com/oracle/oracle-r2dbc/pull/137)
-- [Added Options for Kerberos](https://github.com/oracle/oracle-r2dbc/pull/127)
+- [Pipelining](#pipelining)
+- [Vector Data Type](#vector)
+- [Fetch Size and Proxy Authentication Options](https://github.com/oracle/oracle-r2dbc/pull/155)
 
 Updated dependencies:
-- Updated Oracle JDBC from 21.7.0.0 to 21.11.0.0
-- Updated Project Reactor from 3.5.0 to 3.5.11
+- Updated Oracle JDBC from 21.11.0.0 to 23.6.0.24.10
+- Updated Project Reactor from 3.5.11 to 3.6.11
 
 ## Installation
 Oracle R2DBC can be obtained from Maven Central.
@@ -45,7 +42,7 @@ Oracle R2DBC can be obtained from Maven Central.
 <dependency>
   <groupId>com.oracle.database.r2dbc</groupId>
   <artifactId>oracle-r2dbc</artifactId>
-  <version>1.2.0</version>
+  <version>1.3.0</version>
 </dependency>
 ```
 
@@ -60,8 +57,8 @@ Oracle R2DBC can also be built from source using Maven:
 Oracle R2DBC is compatible with JDK 11 (or newer), and has the following runtime dependencies:
 - R2DBC SPI 1.0.0.RELEASE
 - Reactive Streams 1.0.3
-- Project Reactor 3.5.11
-- Oracle JDBC 21.11.0.0 for JDK 11 (ojdbc11.jar)
+- Project Reactor 3.6.11
+- Oracle JDBC 23.6.0.24.10 for JDK 11 (ojdbc11.jar)
   - Oracle R2DBC relies on the Oracle JDBC Driver's [Reactive Extensions
   ](https://docs.oracle.com/en/database/oracle/oracle-database/23/jjdbc/jdbc-reactive-extensions.html#GUID-1C40C43B-3823-4848-8B5A-D2F97A82F79B) APIs.
 
@@ -73,7 +70,7 @@ Oracle R2DBC can only interoperate with libraries that support the 1.0.0.RELEASE
 version of the R2DBC SPI. When using libraries like Spring and r2dbc-pool, be
 sure to use a version which supports the 1.0.0.RELEASE of the SPI.
 
-Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 21.11.0.0. Other
+Oracle R2DBC depends on the JDK 11 build of Oracle JDBC 23.6.0.24.10. Other
 libraries may depend on a different version of Oracle JDBC, and this version may
 be incompatible. To resolve incompatibilities, it may be necessary to explicitly
 declare the dependency in your project, ie:
@@ -81,11 +78,11 @@ declare the dependency in your project, ie:
 <dependency>
     <groupId>com.oracle.database.jdbc</groupId>
     <artifactId>ojdbc11</artifactId>
-    <version>21.11.0.0</version>
+    <version>23.6.0.24.10</version>
 </dependency>
 ```
 
-## Code Examples
+## Basic Code Examples
 
 The following method returns an Oracle R2DBC `ConnectionFactory`
 ```java
@@ -150,7 +147,8 @@ a greeting message. "France" is set as the bind value for `locale_name`, so the
 query should return a greeting like "Bonjour" when `row.get("greeting")`
 is called.
 
-Additional code examples can be found [here](sample).
+Additional code examples appear throughout this document, and can also be found
+[here](sample).
 
 ## Help
 For help programming with Oracle R2DBC, ask questions on Stack Overflow tagged with [[oracle] and [r2dbc]](https://stackoverflow.com/tags/oracle+r2dbc). The development team monitors Stack Overflow regularly.
@@ -169,7 +167,7 @@ vulnerability disclosure process.
 
 ## License
 
-Copyright (c) 2021, 2023 Oracle and/or its affiliates.
+Copyright (c) 2021, 2024 Oracle and/or its affiliates.
 
 This software is dual-licensed to you under the Universal Permissive License
 (UPL) 1.0 as shown at https://oss.oracle.com/licenses/upl or Apache License
@@ -366,25 +364,33 @@ ConnectionFactoryOptions.builder()
 
 If this option is not configured, then the common 
 `java.util.concurrent.ForkJoinPool` is used as a default.
-#### Configuring Oracle JDBC Connection Properties
-A subset of Oracle JDBC's connection properties are also supported by Oracle 
-R2DBC. These connection properties may be configured as options having the same
-name as the Oracle JDBC connection property, and may have `CharSequence` value
-types.
 
-For example, the following URL configures the `oracle.net.wallet_location` 
-connection property:
+#### Configuring Oracle JDBC Connection Properties
+A subset of Oracle JDBC's connection properties are defined as `Option` 
+constants in the
+[OracleR2dbcOptions](src/main/java/oracle/r2dbc/OracleR2dbcOptions.java) class.
+If an Oracle JDBC property is not defined as an `Option`, in most cases it can 
+instead be configured by a
+[connection properties file](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_CONFIG_FILE)
+or a JVM system property instead.
+[Pull requests to add missing options](https://github.com/oracle/oracle-r2dbc/pull/124)
+are also a welcome addition.
+
+When a connection property is defined in `OracleR2dbcOptions`, it may be
+configured as an R2DBC URL parameter. For example, the following URL configures
+the `oracle.net.wallet_location` connection property:
 ```
 r2dbcs:oracle://db.host.example.com:1522/db.service.name?oracle.net.wallet_location=/path/to/wallet/
 ```
-The same property can also be configured programmatically:
+And, the `OracleR2dbcOptions` constants can be used in programmatic 
+configuration:
 ```java
  ConnectionFactoryOptions.builder()
   .option(OracleR2dbcOptions.TLS_WALLET_LOCATION, "/path/to/wallet")
 ```
 
-The next sections list Oracle JDBC connection properties which are supported by
-Oracle R2DBC.
+All Oracle JDBC connection properties defined in `OracleR2dbcOptions` are listed
+in the next sections.
 
 ##### TLS/SSL Connection Properties
   - [oracle.net.tns_admin](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_TNS_ADMIN)
@@ -405,23 +411,6 @@ Oracle R2DBC.
   - [ssl.keyManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_SSL_KEYMANAGERFACTORY_ALGORITHM)
   - [ssl.trustManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_SSL_TRUSTMANAGERFACTORY_ALGORITHM)
   - [oracle.net.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_SSL_CONTEXT_PROTOCOL)
-
-##### Miscellaneous Connection Properties
-  - [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
-  - [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
-  - [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
-  - [oracle.net.disableOob](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK)
-    - Out of band (OOB) breaks effect statement timeouts. Set this to "true" if
-      statement timeouts are not working correctly. OOB breaks are a
-    - [requirement for pipelining](#requirements-for-pipelining)
-  - [oracle.jdbc.enableQueryResultCache](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_ENABLE_QUERY_RESULT_CACHE)
-    - Cached query results can cause phantom reads even if the serializable
-      transaction isolation level is set. Set this to "false" if using the
-      serializable isolation level.
-  - [oracle.jdbc.timezoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
-    - Setting this option to "false" may resolve "ORA-01882: timezone region not
-      found". The ORA-01882 error happens when Oracle Database doesn't recognize
-      the name returned by `java.util.TimeZone.getDefault().getId()`.
 
 ##### Database Tracing Connection Properties
   - [v$session.terminal](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_VSESSION_TERMINAL)
@@ -461,6 +450,25 @@ Oracle R2DBC.
   - [oracle.net.ldap.ssl.keyManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_KEYMANAGER_FACTORY_ALGORITHM)
   - [oracle.net.ldap.ssl.trustManagerFactory.algorithm](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_TRUSTMANAGER_FACTORY_ALGORITHM)
   - [oracle.net.ldap.ssl.ssl_context_protocol](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_THIN_LDAP_SSL_CONTEXT_PROTOCOL)
+
+##### Miscellaneous Connection Properties
+- [oracle.jdbc.fanEnabled](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_FAN_ENABLED)
+- [oracle.jdbc.implicitStatementCacheSize](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE)
+- [oracle.jdbc.defaultLobPrefetchSize](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE)
+- [oracle.net.disableOob](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html?is-external=true#CONNECTION_PROPERTY_THIN_NET_DISABLE_OUT_OF_BAND_BREAK)
+    - Out of band (OOB) breaks effect statement timeouts. Set this to "true" if
+      statement timeouts are not working correctly. OOB breaks are a
+      [requirement for pipelining](#requirements-for-pipelining)
+- [oracle.jdbc.enableQueryResultCache](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_ENABLE_QUERY_RESULT_CACHE)
+    - Cached query results can cause phantom reads even if the serializable
+      transaction isolation level is set. Set this to "false" if using the
+      serializable isolation level.
+- [oracle.jdbc.timezoneAsRegion](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_TIMEZONE_AS_REGION)
+    - Setting this option to "false" may resolve "ORA-01882: timezone region not
+      found". The ORA-01882 error happens when Oracle Database doesn't recognize
+      the name returned by `java.util.TimeZone.getDefault().getId()`.
+- [oracle.jdbc.defaultRowPrefetch](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_DEFAULT_ROW_PREFETCH)
+- [oracle.jdbc.proxyClientName](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/jdbc/OracleConnection.html#CONNECTION_PROPERTY_PROXY_CLIENT_NAME)
 
 ### Thread Safety
 Oracle R2DBC's `ConnectionFactory` and `ConnectionFactoryProvider` are the only 
@@ -772,14 +780,14 @@ for the out parameters is emitted last, after the `Result` for each cursor.
 Oracle R2DBC supports type mappings between Java and SQL for non-standard data 
 types of Oracle Database.
 
-| Oracle SQL Type                                                                                                                                         | Java Type                                                     |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------|
-| [JSON](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-E441F541-BA31-4E8C-B7B4-D2FB8C42D0DF)                   | `javax.json.JsonObject` or `oracle.sql.json.OracleJsonObject` |
-| [DATE](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-5405B652-C30E-4F4F-9D33-9A4CB2110F1B)                   | `java.time.LocalDateTime`                                     |
-| [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration`                                          |
-| [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period`                                            |
-| [SYS_REFCURSOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/lnpls/static-sql.html#GUID-470A7A99-888A-46C2-BDAF-D4710E650F27)          | `io.r2dbc.spi.Result`                                         |
-| [VECTOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-801FFE49-217D-4012-9C55-66DAE1BA806F)                 | `double[]`, `float[]`, `byte[]`, or `oracle.sql.VECTOR`       |
+| Oracle SQL Type                                                                                                                                         | Java Type                                                           |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| [JSON](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-E441F541-BA31-4E8C-B7B4-D2FB8C42D0DF)                   | `javax.json.JsonObject` or `oracle.sql.json.OracleJsonObject`       |
+| [DATE](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-5405B652-C30E-4F4F-9D33-9A4CB2110F1B)                   | `java.time.LocalDateTime`                                           |
+| [INTERVAL DAY TO SECOND](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-B03DD036-66F8-4BD3-AF26-6D4433EBEC1C) | `java.time.Duration`                                                |
+| [INTERVAL YEAR TO MONTH](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-ED59E1B3-BA8D-4711-B5C8-B0199C676A95) | `java.time.Period`                                                  |
+| [SYS_REFCURSOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/lnpls/static-sql.html#GUID-470A7A99-888A-46C2-BDAF-D4710E650F27)          | `io.r2dbc.spi.Result`                                               |
+| [VECTOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html#GUID-801FFE49-217D-4012-9C55-66DAE1BA806F)                 | `double[]`, `float[]`, `byte[]`, `boolean[]` or `oracle.sql.VECTOR` |
 > Unlike the standard SQL type named "DATE", the Oracle Database type named 
 > "DATE" stores values for year, month, day, hour, minute, and second. The 
 > standard SQL type only stores year, month, and day. LocalDateTime objects are able 
@@ -1011,7 +1019,7 @@ Publisher<ExampleObject> mapRefCursorRows(Result refCursorResult) {
 ```
 
 ### VECTOR
-The default mapping for `VECTOR` is the
+The default mapping for the VECTOR data type is the
 [oracle.sql.VECTOR](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/sql/VECTOR.html)
 class. Instances of this class may be passed to
 `Statement.bind(int/String, Object)`:
@@ -1027,24 +1035,16 @@ void bindVector(Statement statement, float[] floatArray) throws SQLException {
   statement.bind("vector", vector);
 }
 ```
-The `oracle.sql.VECTOR` class defines three factory methods: `ofFloat64Values`,
-`ofFloat32Values`, and `ofInt8Values`. These methods support Java to VECTOR 
-conversions of `boolean[]`, `byte[]`, `short[]`, `int[]`, `long[]`, 
-`float[]`, and `double[]`:
-```java
-void bindVector(Statement statement, int[] intArray) {
-  final VECTOR vector;
-  try {
-    vector = VECTOR.ofFloat64Values(intArray);
-  }
-  catch (SQLException sqlException) {
-    throw new IllegalArgumentException(sqlException);
-  }
-  statement.bind("vector", vector);
-}
-```
-The factory methods of `oracle.sql.VECTOR` may perform lossy conversions, such
-as when converting a `double[]` into a VECTOR of 32-bit floating point numbers. 
+The `oracle.sql.VECTOR` class defines factory methods that convert a
+`double[]`, `float[]`, `long[]`, `int[]`, `short[]`, `byte[]`, or `boolean[]`
+into a VECTOR of a specific dimension type:
+- `ofFloat64Values`
+- `ofFloat32Values`
+- `ofInt8Values`
+- `ofBinaryValues` (only supports `boolean[]` and `byte[]`)
+
+These factory methods may perform a lossy conversion, such
+as when converting a `double[]` into a VECTOR of FLOAT32 dimensions. 
 [The JavaDocs of these methods specify which conversions are lossy](https://docs.oracle.com/en/database/oracle/oracle-database/23/jajdb/oracle/sql/VECTOR.html).
 
 The `OracleR2dbcTypes.VECTOR` type descriptor can be used to register an OUT or 
@@ -1052,57 +1052,32 @@ IN/OUT parameter:
 ```java
 void registerOutVector(Statement statement) {
   Parameter outVector = Parameters.out(OracleR2dbcTypes.VECTOR);
-  statement.bind("vector", outVector);
+  statement.bind("out_vector", outVector);
 }
 ```
-The `OracleR2dbcTypes.VECTOR` type descriptor can also be used as an alternative to
-`oracle.sql.VECTOR` when binding an IN parameter to a `double[]`, `float[]`, or
-`byte[]`:
+The `OracleR2dbcTypes.VECTOR` type descriptor can also be used as an alternative
+to `oracle.sql.VECTOR` for binding a `double[]`, `float[]`, `byte[]`, or
+`boolean[]`. Arrays of these types are respectively converted into a VECTOR of 
+FLOAT64, FLOAT32, INT8, or BINARY dimensions.
 ```java
 void bindVector(Statement statement, float[] floatArray) {
   Parameter inVector = Parameters.in(OracleR2dbcTypes.VECTOR, floatArray);
-  statement.bind("vector", inVector);
+  statement.bind("in_vector", inVector);
 }
 ```
-Note that `double[]`, `float[]`, and `byte[]` can NOT be passed directly to
-`Statement.bind(int/String, Object)` when binding `VECTOR` data. The R2DBC 
-Specification defines `ARRAY` as the default mapping for Java arrays.
+Note that passing arrays directly into `Statement.bind(int/String, Object)` will 
+NOT create a VECTOR bind. The R2DBC Specification already defines ARRAY as
+the default mapping for Java arrays, not VECTOR.
 
-A `VECTOR` column or OUT parameter is converted to `oracle.sql.VECTOR` by 
-default. The column or OUT parameter can also be converted to `double[]`, 
-`float[]`, or `byte[]` by passing the corresponding array class to the `get`
-methods:
+A VECTOR column or OUT parameter is converted to `oracle.sql.VECTOR` by 
+default. But a VECTOR column or OUT parameter having FLOAT64, FLOAT32, or INT8
+dimensions may also be converted to
+`double[]`, `float[]`, `long[]`, `int[]`, `short[]`, `byte[]`, or `boolean[]`. 
+A VECTOR of BINARY dimensions may only be converted to `boolean[]` or `byte[]`.
+These array classes may be passed to the `get` methods of a `Readable`:
 ```java
 float[] getVector(io.r2dbc.Readable readable) {
   return readable.get("vector", float[].class);
-}
-```
-
-#### Returning VECTOR from DML
-Returning a VECTOR column with `Statement.returningGeneratedValues(String...)`
-is not supported due to a defect in the 23.4 release of Oracle JDBC. Attempting
-to return a `VECTOR` column will result in a `Subscriber` that never receives 
-`onComplete` or `onError`. The defect will be fixed in the next release of 
-Oracle JDBC.
-
-A `RETURNING ... INTO` clause can be used as a temporary workaround. This clause
-must appear within a PL/SQL block, denoted by the `BEGIN` and `END;` keywords.
-In the following example, a `VECTOR` column named "embedding" is returned:
-```java
-Publisher<double[]> returningVectorExample(Connection connection, String vectorString) {
-
-  Statement statement = connection.createStatement(
-      "BEGIN INSERT INTO example(embedding)"
-      + " VALUES (TO_VECTOR(:vectorString, 999, FLOAT64))"
-      + " RETURNING embedding INTO :embedding;"
-      + " END;")
-    .bind("vectorString", vectorString)
-    .bind("embedding", Parameters.out(OracleR2dbcTypes.VECTOR));
-
-    return Flux.from(statement.execute())
-      .flatMap(result ->
-        result.map(outParameters ->
-          outParameters.get("embedding", double[].class)));
 }
 ```
 

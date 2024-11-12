@@ -31,6 +31,7 @@ import io.r2dbc.spi.R2dbcType;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Result.Message;
 import io.r2dbc.spi.Result.UpdateCount;
+import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcOptions;
@@ -76,12 +77,11 @@ import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.connectionFactoryOptions;
 import static oracle.r2dbc.test.DatabaseConfig.databaseVersion;
 import static oracle.r2dbc.test.DatabaseConfig.jdbcMinorVersion;
-import static oracle.r2dbc.test.DatabaseConfig.jdbcVersion;
 import static oracle.r2dbc.test.DatabaseConfig.newConnection;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
+import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.test.TestUtils.constructObject;
 import static oracle.r2dbc.test.TestUtils.showErrors;
-import static oracle.r2dbc.test.DatabaseConfig.sqlTimeout;
 import static oracle.r2dbc.util.Awaits.awaitError;
 import static oracle.r2dbc.util.Awaits.awaitExecution;
 import static oracle.r2dbc.util.Awaits.awaitMany;
@@ -2476,6 +2476,11 @@ public class OracleStatementImplTest {
         public String toString() {
           return id + ", " + Arrays.toString(value);
         }
+
+        @Override
+        public int hashCode() {
+          return Objects.hash(id, Arrays.hashCode(value));
+        }
       }
 
       TestRow row0 = new TestRow(0L, new int[]{1, 2, 3});
@@ -2683,6 +2688,11 @@ public class OracleStatementImplTest {
         @Override
         public String toString() {
           return id + ", " + Arrays.toString(value);
+        }
+
+        @Override
+        public int hashCode() {
+          return Objects.hash(id, Arrays.hashCode(value));
         }
       }
 
@@ -3199,6 +3209,11 @@ public class OracleStatementImplTest {
             && ((IdVector)other).id == id
             && Objects.equals(((IdVector)other).vector, vector);
         }
+
+        @Override
+        public int hashCode() {
+          return Objects.hash(id, vector);
+        }
       }
 
       // Round 1: Use PL/SQL to return column values
@@ -3231,10 +3246,10 @@ public class OracleStatementImplTest {
 
       // Oracle JDBC 23.4 has a defect which prevents the Subscriber from
       // receiving a terminal signal. The defect has been reported as bug
-      // #36607804, and is expected to be fixed in the 23.5 release.
+      // #36607804, it will be fixed in the 23.6 release.
       Assumptions.assumeTrue(
-        jdbcMinorVersion() >= 5,
-        "Oracle JDBC 23.4 does not support generated keys for VECTOR");
+        jdbcMinorVersion() >= 6,
+        "Oracle JDBC 23.5 does not support generated keys for VECTOR");
 
       IdVector expected2 = new IdVector(
         0,
@@ -3257,12 +3272,11 @@ public class OracleStatementImplTest {
                 return Mono.just(((UpdateCount) segment).value());
               }
               else if (segment instanceof Result.RowSegment) {
-                OutParameters outParameters =
-                  ((Result.OutSegment)segment).outParameters();
+                Row generatedRow = ((Result.RowSegment)segment).row();
 
                 return Mono.just(new IdVector(
-                  outParameters.get("outId", Integer.class),
-                  outParameters.get("outVector", VECTOR.class)));
+                  generatedRow.get("id", Integer.class),
+                  generatedRow.get("value", VECTOR.class)));
               }
               else if (segment instanceof Message) {
                 throw ((Message)segment).exception();
