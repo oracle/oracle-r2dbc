@@ -411,6 +411,8 @@ final class OracleConnectionImpl implements Connection, Lifecycle {
    * publisher when there is no obligation to do so.
    * </p>
    *
+   * @param <T> the type of element signaled by the publisher.
+   *
    * @param publisher Publisher that must be subscribed to before closing the
    * JDBC connection. Not null.
    *

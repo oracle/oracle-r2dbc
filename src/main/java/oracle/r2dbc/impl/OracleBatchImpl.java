@@ -21,18 +21,15 @@
 
 package oracle.r2dbc.impl;
 
-import java.sql.Connection;
-import java.sql.Statement;
-import java.time.Duration;
-import java.util.LinkedList;
-import java.util.Queue;
-import java.util.concurrent.atomic.AtomicReference;
-
 import io.r2dbc.spi.Batch;
 import io.r2dbc.spi.R2dbcException;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
+
+import java.sql.Connection;
+import java.time.Duration;
+import java.util.LinkedList;
+import java.util.Queue;
 
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireNonNull;
 import static oracle.r2dbc.impl.OracleR2dbcExceptions.requireOpenConnection;
@@ -59,9 +56,6 @@ final class OracleBatchImpl implements Batch {
   /** The OracleConnectionImpl that created this Batch */
   private final OracleConnectionImpl r2dbcConnection;
 
-  /** Adapts Oracle JDBC Driver APIs into Reactive Streams APIs */
-  private final ReactiveJdbcAdapter adapter;
-
   /**
    * JDBC connection to an Oracle Database which executes this batch.
    */
@@ -83,14 +77,12 @@ final class OracleBatchImpl implements Batch {
    * SQL statements with a {@code jdbcConnection}.
    * @param timeout Timeout applied to each statement this batch executes.
    * Not null. Not negative.
-   * @param jdbcConnection JDBC connection to an Oracle Database. Not null.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null.
+   * @param r2dbcConnection R2DBC connection that created this batch. Not null.
    */
   OracleBatchImpl(Duration timeout, OracleConnectionImpl r2dbcConnection) {
     this.timeout = timeout;
     this.r2dbcConnection = r2dbcConnection;
     this.jdbcConnection = r2dbcConnection.jdbcConnection();
-    this.adapter = r2dbcConnection.adapter();
   }
 
   /**
