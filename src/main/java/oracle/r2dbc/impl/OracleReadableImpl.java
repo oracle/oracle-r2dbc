@@ -63,14 +63,10 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.Period;
-import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.Objects;
 import java.util.TreeMap;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 
@@ -125,7 +121,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    *   {@code jdbcReadable}. Not null.
    * @param jdbcReadable Readable values from a JDBC Driver. Not null.
    * @param readablesMetadata Metadata of each value. Not null.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   private OracleReadableImpl(
     OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
@@ -144,13 +139,12 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * provided {@code jdbcReadable} and {@code metadata}. The metadata
    * object is used to determine the default type mapping of column values.
    * </p>
-   * @param jdbcConnection JDBC connection that created the
+   * @param r2dbcConnection R2DBC connection that created the
    *   {@code jdbcReadable}. Not null.
    * @param dependentCounter Counter that is increased for each dependent
    * {@code Result} created by the returned {@code Row}
    * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
    * @param metadata Meta-data for the specified row. Not null.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null.
    * @return A {@code Row} backed by the {@code jdbcReadable} and
    *   {@code metadata}. Not null.
    */
@@ -173,7 +167,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    * {@code Result} created by the returned {@code OutParameters}
    * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
    * @param metadata Meta-data for the specified row. Not null.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null.
    * @return An {@code OutParameters} backed by the {@code jdbcReadable} and
    *   {@code metadata}. Not null.
    */
@@ -406,17 +399,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
    */
   private LocalDateTime getLocalDateTime(int index) {
     return jdbcReadable.getObject(index, LocalDateTime.class);
-    /*
-    if (OracleR2dbcTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE
-          .equals(readablesMetadata.get(index).getType())) {
-      // TODO: Remove this when Oracle JDBC implements a correct conversion
-      Timestamp timestamp = jdbcReadable.getObject(index, Timestamp.class);
-      return timestamp == null ? null : timestamp.toLocalDateTime();
-    }
-    else {
-      return jdbcReadable.getObject(index, LocalDateTime.class);
-    }
-     */
   }
 
   /**
@@ -741,7 +723,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
   private <T,U> Function<T,U> getMappingFunction(
     Class<T> fromType, Class<U> toType) {
 
-    Function<? extends Object, Object> mappingFunction = null;
+    Function<?, Object> mappingFunction = null;
 
     if (toType.isAssignableFrom(fromType)) {
       return toType::cast;
@@ -857,20 +839,7 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
     }
     else if (INTERVALDS.class.isAssignableFrom(fromType)
       && toType.isAssignableFrom(Duration.class)) {
-      mappingFunction = (INTERVALDS intervalds) -> {
-          // The binary representation is specified in the JavaDoc of
-          // oracle.sql.INTERVALDS. In 21.x, the JavaDoc has bug: It neglects
-          // to mention that the day and fractional second values are offset by
-          // 0x80000000
-          ByteBuffer byteBuffer = ByteBuffer.wrap(intervalds.shareBytes());
-          return Duration.of(
-            TimeUnit.DAYS.toNanos(byteBuffer.getInt() - 0x80000000)// 4 byte day
-              + TimeUnit.HOURS.toNanos(byteBuffer.get() - 60) // 1 byte hour
-              + TimeUnit.MINUTES.toNanos(byteBuffer.get() - 60) // 1 byte minute
-              + TimeUnit.SECONDS.toNanos(byteBuffer.get() - 60) // 1 byte second
-              + byteBuffer.getInt() - 0x80000000, // 4 byte fractional second
-            ChronoUnit.NANOS);
-        };
+      mappingFunction = (INTERVALDS intervalds) -> intervalds.getDuration();
     }
     else if (java.sql.Blob.class.isAssignableFrom(fromType)
       && byte[].class.equals(toType)) {
@@ -1008,7 +977,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      *   {@code jdbcReadable}. Not null.
      * @param jdbcReadable Row data from the Oracle JDBC Driver. Not null.
      * @param metadata Meta-data for the specified row. Not null.
-     * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private RowImpl(
       OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
@@ -1046,11 +1014,10 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      * {@code jdbcReadable} and obtains metadata of the values from
      * {@code outParametersMetaData}.
      * </p>
-     * @param jdbcConnection JDBC connection that created the
+     * @param r2dbcConnection R2DBC connection that created the
      *   {@code jdbcReadable}. Not null.
      * @param jdbcReadable Readable values from a JDBC Driver. Not null.
      * @param metadata Metadata of each value. Not null.
-     * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OutParametersImpl(
       OracleConnectionImpl r2dbcConnection, DependentCounter dependentCounter,
@@ -1080,7 +1047,6 @@ class OracleReadableImpl implements io.r2dbc.spi.Readable {
      *   {@code jdbcReadable}. Not null.
      * @param structJdbcReadable Readable values from a JDBC Driver. Not null.
      * @param metadata Metadata of each value. Not null.
-     * @param adapter Adapts JDBC calls into reactive streams. Not null.
      */
     private OracleR2dbcObjectImpl(
       OracleConnectionImpl r2dbcConnection,

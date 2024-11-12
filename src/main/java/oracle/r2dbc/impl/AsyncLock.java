@@ -25,12 +25,6 @@ import oracle.r2dbc.impl.OracleR2dbcExceptions.JdbcSupplier;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
-import reactor.core.publisher.Mono;
-
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
 
 /**
  * <p>
@@ -70,12 +64,6 @@ import java.util.function.Function;
  * immediately, before {@code lock(Runnable)} returns if the lock is
  * available. Otherwise, the {@code Runnable} is executed asynchronously
  * after the lock becomes available.
- * </p><p>
- * The {@code Runnable} provided to {@link #lock(Runnable)} <i>MUST</i> ensure
- * that a single invocation of {@link #unlock()} will occur after its
- * {@code run()} method is invoked. The call to {@code unlock} may occur
- * within the scope of the {@code Runnable.run()} method. It may also occur
- * asynchronously, after the {@code run()} method has returned.
  * </p>
  * <h3>Locking for Synchronous JDBC Calls</h3>
  * <p>
@@ -96,7 +84,7 @@ import java.util.function.Function;
  * methods.
  * </p>
  */
-public interface AsyncLock {
+interface AsyncLock {
 
   /**
    * Acquires this lock, executes a {@code callback}, and then releases this

@@ -268,7 +268,6 @@ abstract class OracleResultImpl implements Result {
    * statement which created the {@code ResultSet} to remain open until all
    * results are consumed.
    * @param resultSet {@code ResultSet} to publish. Not null.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null.
    * @return A {@code Result} for a ResultSet
    */
   public static OracleResultImpl createQueryResult(
@@ -305,7 +304,6 @@ abstract class OracleResultImpl implements Result {
    * statement which created the {@code generatedKeys} {@code ResultSet} to
    * remain open until all results are consumed.
    * @param generatedKeys Generated values to publish. Not null.
-   * @param adapter Adapts JDBC calls into reactive streams. Not null.
    */
   static OracleResultImpl createGeneratedValuesResult(
     OracleConnectionImpl r2dbcConnection, long updateCount,
