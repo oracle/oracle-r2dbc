@@ -46,8 +46,6 @@ import java.nio.ByteBuffer;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.Connection;
-import java.sql.Driver;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -658,7 +656,7 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     // value requested as a ByteBuffer or String.
     setPropertyIfAbsent(oracleDataSource,
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
-      "1048576");
+      "1073741824");
 
     // TODO: Disable the result set cache? This is needed to support the
     //  SERIALIZABLE isolation level, which requires result set caching to be
