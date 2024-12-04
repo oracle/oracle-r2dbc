@@ -784,7 +784,7 @@ public class OracleReactiveJdbcAdapterTest {
       OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE, "25");
     defaultProperties.setProperty(
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
-      "1048576");
+      "1000000000");
     defaultProperties.setProperty(
       OracleConnection.CONNECTION_PROPERTY_THIN_NET_USE_ZERO_COPY_IO,
       "false");

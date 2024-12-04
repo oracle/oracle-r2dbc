@@ -46,8 +46,6 @@ import java.nio.ByteBuffer;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.Connection;
-import java.sql.Driver;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -650,15 +648,13 @@ final class OracleReactiveJdbcAdapter implements ReactiveJdbcAdapter {
     setPropertyIfAbsent(oracleDataSource,
       OracleConnection.CONNECTION_PROPERTY_IMPLICIT_STATEMENT_CACHE_SIZE, "25");
 
-    // Prefetch LOB values by default. The database's maximum supported
-    // prefetch size, 1GB, is configured by default. This is done so that
-    // Row.get(...) can map LOB values into ByteBuffer/String without a
-    // blocking database call. If the entire value is prefetched, then JDBC
-    // won't need to fetch the remainder from the database when the entire is
-    // value requested as a ByteBuffer or String.
+    // Prefetch LOB values by default. This allows Row.get(...) to map most LOB
+    // values into ByteBuffer/String without a blocking database call to fetch
+    // the remaining bytes. 1GB is configured by default, as this is close to
+    // the maximum allowed by the Autonomous Database service.
     setPropertyIfAbsent(oracleDataSource,
       OracleConnection.CONNECTION_PROPERTY_DEFAULT_LOB_PREFETCH_SIZE,
-      "1048576");
+      "1000000000");
 
     // TODO: Disable the result set cache? This is needed to support the
     //  SERIALIZABLE isolation level, which requires result set caching to be
