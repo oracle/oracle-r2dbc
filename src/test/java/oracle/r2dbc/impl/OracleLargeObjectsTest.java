@@ -729,9 +729,8 @@ public class OracleLargeObjectsTest {
             + " PRIMARY KEY(id))"));
 
         // Insert two rows of LOBs larger than 1MB
-        byte[] bytes = new byte[lobSize];
+        byte[] bytes = getBytes(lobSize);
         ByteBuffer blobValue = ByteBuffer.wrap(bytes);
-        Arrays.fill(bytes, (byte)'a');
         String clobValue = new String(bytes, US_ASCII);
         awaitUpdate(List.of(1,1), connection.createStatement(
           "INSERT INTO testLobPrefetch (blobValue, clobValue)"
