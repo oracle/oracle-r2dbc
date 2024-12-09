@@ -24,25 +24,33 @@ package oracle.r2dbc.impl;
 import io.r2dbc.spi.Blob;
 import io.r2dbc.spi.Clob;
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.Parameters;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.Statement;
 import oracle.r2dbc.OracleR2dbcObject;
 import oracle.r2dbc.OracleR2dbcTypes;
 import oracle.r2dbc.test.DatabaseConfig;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.r2dbc.spi.ConnectionFactoryOptions.HOST;
+import static io.r2dbc.spi.ConnectionFactoryOptions.PORT;
+import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.util.Arrays.asList;
 import static oracle.r2dbc.test.DatabaseConfig.connectTimeout;
 import static oracle.r2dbc.test.DatabaseConfig.sharedConnection;
@@ -540,7 +548,7 @@ public class OracleLargeObjectsTest {
 
     class TestClob implements Clob {
       final CharBuffer clobData =
-        CharBuffer.wrap(new String(data, StandardCharsets.US_ASCII));
+        CharBuffer.wrap(new String(data, US_ASCII));
 
       boolean isDiscarded = false;
 
@@ -637,6 +645,131 @@ public class OracleLargeObjectsTest {
       tryAwaitExecution(connection.createStatement(
         "DROP TABLE testNullLob"));
       tryAwaitNone(connection.close());
+    }
+  }
+
+  /**
+   * Verifies that the default LOB prefetch size is at least large enough to
+   * fully prefetch 1MB of data.
+   */
+  @Test
+  public void testDefaultLobPrefetch() throws Exception {
+    Assumptions.assumeTrue(
+      null == DatabaseConfig.protocol(), "Test requires TCP protocol");
+
+    // A local server will monitor network I/O
+    try (ServerSocketChannel localServer = ServerSocketChannel.open()) {
+      localServer.configureBlocking(true);
+      localServer.bind(null);
+
+      class TestThread extends Thread {
+
+        /** Count of bytes exchanged between JDBC and the database */
+        int ioCount = 0;
+
+        @Override
+        public void run() {
+          InetSocketAddress databaseAddress =
+            new InetSocketAddress(DatabaseConfig.host(), DatabaseConfig.port());
+
+          try (
+            SocketChannel jdbcChannel = localServer.accept();
+            SocketChannel databaseChannel =
+              SocketChannel.open(databaseAddress)){
+
+            jdbcChannel.configureBlocking(false);
+            databaseChannel.configureBlocking(false);
+
+            ByteBuffer byteBuffer = ByteBuffer.allocateDirect(8192);
+            while (true) {
+
+              byteBuffer.clear();
+              if (-1 == jdbcChannel.read(byteBuffer))
+                break;
+              byteBuffer.flip();
+              ioCount += byteBuffer.remaining();
+
+              while (byteBuffer.hasRemaining())
+                databaseChannel.write(byteBuffer);
+
+              byteBuffer.clear();
+              databaseChannel.read(byteBuffer);
+              byteBuffer.flip();
+              ioCount += byteBuffer.remaining();
+
+              while (byteBuffer.hasRemaining())
+                jdbcChannel.write(byteBuffer);
+            }
+          }
+          catch (Exception exception) {
+            exception.printStackTrace();
+          }
+        }
+      }
+
+      TestThread testThread = new TestThread();
+      testThread.start();
+
+
+      int lobSize = 99 + (1024 * 1024); // <-- 99 + 1MB
+      Connection connection = awaitOne(ConnectionFactories.get(
+        DatabaseConfig.connectionFactoryOptions()
+          .mutate()
+          .option(HOST, "localhost")
+          .option(PORT,
+            ((InetSocketAddress)localServer.getLocalAddress()).getPort())
+          .build())
+        .create());
+      try {
+        awaitExecution(connection.createStatement(
+          "CREATE TABLE testLobPrefetch ("
+            + " id NUMBER GENERATED ALWAYS AS IDENTITY,"
+            + " blobValue BLOB,"
+            + " clobValue CLOB,"
+            + " PRIMARY KEY(id))"));
+
+        // Insert two rows of LOBs larger than 1MB
+        byte[] bytes = getBytes(lobSize);
+        ByteBuffer blobValue = ByteBuffer.wrap(bytes);
+        String clobValue = new String(bytes, US_ASCII);
+        awaitUpdate(List.of(1,1), connection.createStatement(
+          "INSERT INTO testLobPrefetch (blobValue, clobValue)"
+            + " VALUES (:blobValue, :clobValue)")
+          .bind("blobValue", blobValue)
+          .bind("clobValue", clobValue)
+          .add()
+          .bind("blobValue", blobValue)
+          .bind("clobValue", clobValue));
+
+        // Query two rows of LOBs larger than 1MB
+        awaitQuery(
+          List.of(
+            List.of(blobValue, clobValue),
+            List.of(blobValue, clobValue)),
+          row -> {
+            try {
+              // Expect no I/O to result from mapping a fully prefetched BLOB or
+              // CLOB:
+              int ioCount = testThread.ioCount;
+              var result = List.of(row.get("blobValue"), row.get("clobValue"));
+              assertEquals(ioCount, testThread.ioCount);
+              return result;
+            }
+            catch (Exception exception) {
+              throw new RuntimeException(exception);
+            }
+          },
+          connection.createStatement(
+            "SELECT blobValue, clobValue FROM testLobPrefetch ORDER BY id")
+            .fetchSize(1));
+      }
+      finally {
+        tryAwaitExecution(connection.createStatement(
+          "DROP TABLE testLobPrefetch"));
+        tryAwaitNone(connection.close());
+        testThread.join(10_000);
+        testThread.interrupt();
+      }
     }
   }
 
