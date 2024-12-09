@@ -70,7 +70,7 @@
     <reactor.version>3.6.11</reactor.version>
     <reactive-streams.version>1.0.3</reactive-streams.version>
     <junit.version>5.9.1</junit.version>
-    <spring-jdbc.version>6.1.14</spring-jdbc.version>
+    <spring-jdbc.version>5.3.19</spring-jdbc.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
